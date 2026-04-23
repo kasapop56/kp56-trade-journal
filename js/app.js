@@ -338,6 +338,14 @@ function openTradeModal(t) {
     document.getElementById('tradeModal').classList.remove('open');
     loadTradeIntoForm(t);
   };
+  document.getElementById('deleteModal').onclick = async () => {
+    if (!confirm('Delete this trade? This cannot be undone.')) return;
+    await db.from('positions').delete().eq('trade_idea_id', t.id);
+    await db.from('trade_ideas').delete().eq('id', t.id);
+    document.getElementById('tradeModal').classList.remove('open');
+    showToast('Trade deleted', 'error');
+    loadHistory();
+  };
 }
 
 document.getElementById('closeModal').addEventListener('click', () => {
