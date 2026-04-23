@@ -32,6 +32,7 @@ function initToggleGroup(selector, dataKey) {
     });
   });
 }
+initToggleGroup('.bias-btn[data-group="direction"]', 'direction');
 initToggleGroup('.bias-btn[data-group="h1"]', 'bias_h1');
 initToggleGroup('.bias-btn[data-group="m5"]', 'bias_m5');
 initToggleGroup('.result-btn', 'result');
@@ -152,6 +153,7 @@ document.getElementById('tradeForm').addEventListener('submit', async e => {
 
     const payload = {
       date, session,
+      direction: formState.direction || null,
       bias_h1: formState.bias_h1 || null,
       bias_m5: formState.bias_m5 || null,
       key_levels: keyLevels,
@@ -228,7 +230,8 @@ function loadTradeIntoForm(t) {
   document.getElementById('postNotes').value = t.post_trade_notes || '';
 
   // Bias buttons
-  window.formState = { bias_h1: t.bias_h1, bias_m5: t.bias_m5, result: t.result };
+  window.formState = { direction: t.direction, bias_h1: t.bias_h1, bias_m5: t.bias_m5, result: t.result };
+  if (t.direction) document.querySelector(`.bias-btn[data-group="direction"][data-val="${t.direction}"]`)?.classList.add('selected');
   if (t.bias_h1) document.querySelector(`.bias-btn[data-group="h1"][data-val="${t.bias_h1}"]`)?.classList.add('selected');
   if (t.bias_m5) document.querySelector(`.bias-btn[data-group="m5"][data-val="${t.bias_m5}"]`)?.classList.add('selected');
   if (t.result) document.querySelector(`.result-btn[data-val="${t.result}"]`)?.classList.add('selected');
@@ -293,6 +296,7 @@ async function loadHistory() {
         <span class="pnl ${pnlClass}">${pnlText}</span>
       </div>
       <div class="tags">
+        ${t.direction ? `<span class="tag ${t.direction.toLowerCase()}">${t.direction}</span>` : ''}
         ${t.bias_h1 ? `<span class="tag ${t.bias_h1.toLowerCase()}">H1 ${t.bias_h1}</span>` : ''}
         ${t.bias_m5 ? `<span class="tag ${t.bias_m5.toLowerCase()}">M5 ${t.bias_m5}</span>` : ''}
         ${t.result ? `<span class="tag ${t.result.toLowerCase()}">${t.result}</span>` : ''}
@@ -308,7 +312,7 @@ async function loadHistory() {
 // ── Trade Modal ────────────────────────────────────────────────────────────────
 function openTradeModal(t) {
   document.getElementById('modalDate').textContent = `${t.date} — ${t.session || ''}`;
-  document.getElementById('modalBias').textContent = `H1: ${t.bias_h1 || '—'} | M5: ${t.bias_m5 || '—'}`;
+  document.getElementById('modalBias').textContent = `${t.direction || '—'} | H1: ${t.bias_h1 || '—'} | M5: ${t.bias_m5 || '—'}`;
   document.getElementById('modalLevels').textContent = `SL: ${t.sl_level || '—'} | TP: ${t.tp_target || '—'} | Key: ${t.key_levels || '—'}`;
   document.getElementById('modalResult').textContent = `${t.result || '—'} | P&L: ${t.total_pnl != null ? t.total_pnl : '—'}`;
   document.getElementById('modalDrawdown').textContent = t.max_drawdown != null ? `Max Drawdown: -${t.max_drawdown}` : '';

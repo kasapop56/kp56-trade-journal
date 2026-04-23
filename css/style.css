@@ -94,6 +94,8 @@ select option { background: var(--surface2); }
 .bias-btn.bull.selected { background: var(--bull); border-color: var(--bull); color: #fff; }
 .bias-btn.bear.selected { background: var(--bear); border-color: var(--bear); color: #fff; }
 .bias-btn.wait.selected { background: var(--gold-dim); border-color: var(--gold); color: #fff; }
+.bias-btn.buy.selected  { background: var(--bull); border-color: var(--bull); color: #fff; }
+.bias-btn.sell.selected { background: var(--bear); border-color: var(--bear); color: #fff; }
 .bias-btn:hover { border-color: var(--text-dim); }
 
 /* POSITIONS */
