@@ -132,6 +132,7 @@ document.getElementById('tradeForm').addEventListener('submit', async e => {
     const sl = document.getElementById('slLevel').value;
     const tp = document.getElementById('tpTarget').value;
     const pnl = document.getElementById('totalPnl').value;
+    const drawdown = document.getElementById('maxDrawdown').value;
     const keyLevels = document.getElementById('keyLevels').value;
     const memo = document.getElementById('memo').value;
     const postNotes = document.getElementById('postNotes').value;
@@ -158,6 +159,7 @@ document.getElementById('tradeForm').addEventListener('submit', async e => {
       tp_target: tp ? parseFloat(tp) : null,
       result: formState.result || null,
       total_pnl: pnl ? parseFloat(pnl) : null,
+      max_drawdown: drawdown ? parseFloat(drawdown) : null,
       memo, post_trade_notes: postNotes,
       screenshots: screenshotUrls
     };
@@ -221,6 +223,7 @@ function loadTradeIntoForm(t) {
   document.getElementById('slLevel').value = t.sl_level || '';
   document.getElementById('tpTarget').value = t.tp_target || '';
   document.getElementById('totalPnl').value = t.total_pnl || '';
+  document.getElementById('maxDrawdown').value = t.max_drawdown || '';
   document.getElementById('memo').value = t.memo || '';
   document.getElementById('postNotes').value = t.post_trade_notes || '';
 
@@ -308,6 +311,7 @@ function openTradeModal(t) {
   document.getElementById('modalBias').textContent = `H1: ${t.bias_h1 || '—'} | M5: ${t.bias_m5 || '—'}`;
   document.getElementById('modalLevels').textContent = `SL: ${t.sl_level || '—'} | TP: ${t.tp_target || '—'} | Key: ${t.key_levels || '—'}`;
   document.getElementById('modalResult').textContent = `${t.result || '—'} | P&L: ${t.total_pnl != null ? t.total_pnl : '—'}`;
+  document.getElementById('modalDrawdown').textContent = t.max_drawdown != null ? `Max Drawdown: -${t.max_drawdown}` : '';
   document.getElementById('modalMemo').textContent = t.memo || '—';
   document.getElementById('modalPostNotes').textContent = t.post_trade_notes || '—';
 

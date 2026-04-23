@@ -121,10 +121,14 @@
           <div class="result-btn manual" data-val="MANUAL">Manual Close</div>
         </div>
       </div>
-      <div class="row" style="margin-top:12px">
+      <div class="row col2" style="margin-top:12px">
         <div>
           <label>Total P&L (USD)</label>
           <input type="number" step="0.01" id="totalPnl" placeholder="e.g. +25.00 or -10.00" />
+        </div>
+        <div>
+          <label>Max Drawdown (USD)</label>
+          <input type="number" step="0.01" id="maxDrawdown" placeholder="e.g. 15.00" />
         </div>
       </div>
       <div style="margin-top:12px">
@@ -198,6 +202,7 @@
     <div class="modal-section">
       <h4>Result</h4>
       <p id="modalResult"></p>
+      <p id="modalDrawdown" style="font-size:13px;color:var(--text-dim);margin-top:4px"></p>
     </div>
     <div class="modal-section">
       <h4>Memo</h4>
