@@ -148,32 +148,72 @@
   </div>
 </div>
 
-<!-- ── STATS ──────────────────────────────────────────────────────────────── -->
+<!-- ── DASHBOARD ──────────────────────────────────────────────────────────── -->
 <div id="stats" class="page">
-  <div class="stats-grid">
-    <div class="stat-box">
-      <div class="val" id="statWinRate">—</div>
-      <div class="lbl">Win Rate</div>
+
+  <div class="filter-bar">
+    <button class="filter-btn active" data-range="all">All Time</button>
+    <button class="filter-btn" data-range="month">30 Days</button>
+    <button class="filter-btn" data-range="week">7 Days</button>
+    <button class="filter-btn" data-range="today">Today</button>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-box"><div class="kpi-val" id="kpiPnl">—</div><div class="kpi-lbl">Total P&L</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiWinRate">—</div><div class="kpi-lbl">Win Rate</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiPF">—</div><div class="kpi-lbl">Profit Factor</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiRR">—</div><div class="kpi-lbl">Avg P&L / DD</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiTrades">—</div><div class="kpi-lbl">Trades</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiBE">—</div><div class="kpi-lbl">Break Even</div></div>
+    <div class="kpi-box"><div class="kpi-val pos" id="kpiBest">—</div><div class="kpi-lbl">Best Trade</div></div>
+    <div class="kpi-box"><div class="kpi-val neg" id="kpiWorst">—</div><div class="kpi-lbl">Worst Trade</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Equity Curve</h2>
+    <div class="chart-wrap tall"><canvas id="equityChart"></canvas></div>
+  </div>
+
+  <div class="chart-row">
+    <div class="card">
+      <h2>Result Breakdown</h2>
+      <div class="chart-wrap"><canvas id="resultChart"></canvas></div>
     </div>
-    <div class="stat-box">
-      <div class="val" id="statTotalPnl">—</div>
-      <div class="lbl">Total P&L</div>
-    </div>
-    <div class="stat-box">
-      <div class="val" id="statTrades">—</div>
-      <div class="lbl">Trades Logged</div>
-    </div>
-    <div class="stat-box">
-      <div class="val" id="statRR">—</div>
-      <div class="lbl">Avg R:R</div>
+    <div class="card">
+      <h2>P&L by Session</h2>
+      <div class="chart-wrap"><canvas id="sessionChart"></canvas></div>
     </div>
   </div>
+
+  <div class="chart-row">
+    <div class="card">
+      <h2>P&L by Day of Week</h2>
+      <div class="chart-wrap"><canvas id="dowChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Bias Win Rate</h2>
+      <div class="chart-wrap"><canvas id="biasChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Drawdown vs P&L</h2>
+    <div class="chart-wrap"><canvas id="scatterChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>Session Breakdown</h2>
+    <table class="dash-table">
+      <thead><tr><th>Session</th><th>Trades</th><th>Win Rate</th><th>P&L</th><th>Avg Drawdown</th></tr></thead>
+      <tbody id="sessionTableBody"></tbody>
+    </table>
+  </div>
+
   <div class="card">
     <h2>AI Review</h2>
-    <p style="color:var(--text-dim);font-size:13px;line-height:1.7">
-      Share your trade history with Claude to get a performance review — patterns in your wins, mistakes in your losses, and suggestions for improvement.
-    </p>
+    <p style="color:var(--text-dim);font-size:13px;line-height:1.7">Share your trade history with Claude to get a performance review — patterns in your wins, mistakes in your losses, and suggestions for improvement.</p>
   </div>
+
 </div>
 
 <!-- ── TRADE DETAIL MODAL ──────────────────────────────────────────────────── -->
@@ -222,6 +262,8 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="js/app.js"></script>
+<script src="js/dashboard.js"></script>
 </body>
 </html>

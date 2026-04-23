@@ -12,7 +12,7 @@ function navigate(pageId) {
   pages.forEach(p => p.classList.toggle('active', p.id === pageId));
   navLinks.forEach(a => a.classList.toggle('active', a.dataset.page === pageId));
   if (pageId === 'history') loadHistory();
-  if (pageId === 'stats') loadStats();
+  if (pageId === 'stats') { allDashboardData = []; loadDashboard(); }
 }
 
 navLinks.forEach(a => a.addEventListener('click', e => {
@@ -356,24 +356,6 @@ document.getElementById('closeModal').addEventListener('click', () => {
   document.getElementById('tradeModal').classList.remove('open');
 });
 
-// ── Stats ──────────────────────────────────────────────────────────────────────
-async function loadStats() {
-  const { data, error } = await db.from('trade_ideas').select('*');
-  if (error || !data?.length) return;
-
-  const trades = data.filter(t => t.result);
-  const wins = trades.filter(t => t.result === 'TP').length;
-  const losses = trades.filter(t => t.result === 'SL').length;
-  const winRate = trades.length ? ((wins / trades.length) * 100).toFixed(1) : 0;
-  const totalPnl = data.reduce((s, t) => s + (t.total_pnl || 0), 0);
-  const avgWin = wins ? (data.filter(t => t.result === 'TP').reduce((s, t) => s + (t.total_pnl || 0), 0) / wins).toFixed(2) : 0;
-  const avgLoss = losses ? Math.abs(data.filter(t => t.result === 'SL').reduce((s, t) => s + (t.total_pnl || 0), 0) / losses).toFixed(2) : 0;
-
-  document.getElementById('statWinRate').textContent = winRate + '%';
-  document.getElementById('statTotalPnl').textContent = (totalPnl > 0 ? '+' : '') + totalPnl.toFixed(2);
-  document.getElementById('statTrades').textContent = trades.length;
-  document.getElementById('statRR').textContent = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) : '—';
-}
 
 // ── Toast ──────────────────────────────────────────────────────────────────────
 function showToast(msg, type = '') {

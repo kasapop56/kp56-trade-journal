@@ -302,9 +302,37 @@ select option { background: var(--surface2); }
 /* EMPTY STATE */
 .empty { text-align: center; padding: 60px 20px; color: var(--text-dim); font-size: 14px; }
 
+/* FILTER BAR */
+.filter-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+.filter-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 7px 16px; font-size: 13px; cursor: pointer; }
+.filter-btn.active, .filter-btn:hover { border-color: var(--gold-dim); color: var(--gold); }
+
+/* KPI GRID */
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+.kpi-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 12px; text-align: center; }
+.kpi-val { font-size: 22px; font-weight: 700; color: var(--gold); }
+.kpi-val.pos { color: var(--bull); }
+.kpi-val.neg { color: var(--bear); }
+.kpi-lbl { font-size: 11px; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+
+/* CHART LAYOUT */
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 0; }
+.chart-row .card { margin-bottom: 16px; }
+.chart-wrap { position: relative; height: 200px; }
+.chart-wrap.tall { height: 260px; }
+
+/* SESSION TABLE */
+.dash-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dash-table th { color: var(--text-dim); text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+.dash-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.dash-table tr:last-child td { border-bottom: none; }
+.dash-table td.pos { color: var(--bull); font-weight: 600; }
+.dash-table td.neg { color: var(--bear); font-weight: 600; }
+
 /* MOBILE */
 @media (max-width: 600px) {
   .row.col2, .row.col3 { grid-template-columns: 1fr; }
-  .stats-grid { grid-template-columns: 1fr 1fr; }
   .position-row { grid-template-columns: 1fr 1fr auto; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .chart-row { grid-template-columns: 1fr; }
 }
