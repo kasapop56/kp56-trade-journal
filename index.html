@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KP56 Trade Journal</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<nav>
+  <span class="logo">KP56 Journal</span>
+  <a href="#" data-page="new" class="active">New Trade</a>
+  <a href="#" data-page="history">History</a>
+  <a href="#" data-page="stats">Stats</a>
+</nav>
+
+<!-- ── NEW TRADE ──────────────────────────────────────────────────────────── -->
+<div id="new" class="page active">
+  <form id="tradeForm">
+
+    <div class="card">
+      <h2>Session Info</h2>
+      <div class="row col2">
+        <div>
+          <label>Date</label>
+          <input type="date" id="tradeDate" required />
+        </div>
+        <div>
+          <label>Session</label>
+          <select id="session">
+            <option value="">— Select —</option>
+            <option value="ASIA">Asia</option>
+            <option value="LONDON">London</option>
+            <option value="NY">New York</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Bias</h2>
+      <div class="row col2">
+        <div>
+          <label>H1 Direction</label>
+          <div class="bias-group">
+            <div class="bias-btn bull" data-group="h1" data-val="BULL">Bull</div>
+            <div class="bias-btn bear" data-group="h1" data-val="BEAR">Bear</div>
+            <div class="bias-btn wait" data-group="h1" data-val="WAIT">Wait</div>
+          </div>
+        </div>
+        <div>
+          <label>M5 Direction</label>
+          <div class="bias-group">
+            <div class="bias-btn bull" data-group="m5" data-val="BULL">Bull</div>
+            <div class="bias-btn bear" data-group="m5" data-val="BEAR">Bear</div>
+            <div class="bias-btn wait" data-group="m5" data-val="WAIT">Wait</div>
+          </div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div>
+          <label>Key Levels (OB, FVG, Liquidity)</label>
+          <input type="text" id="keyLevels" placeholder="e.g. Sell OB 4763, Liquidity 4700" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Positions</h2>
+      <div id="positionsContainer">
+        <div class="position-row">
+          <div>
+            <label>Entry Price</label>
+            <input type="number" step="0.01" placeholder="e.g. 4720.50" class="pos-entry" />
+          </div>
+          <div>
+            <label>Lot Size</label>
+            <input type="number" step="0.01" placeholder="e.g. 0.10" class="pos-lot" />
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button type="button" class="btn-icon" onclick="this.closest('.position-row').remove()">×</button>
+          </div>
+        </div>
+        <button type="button" class="btn-add" id="addPosition">+ Add Position</button>
+      </div>
+      <div class="row col2" style="margin-top:16px">
+        <div>
+          <label>SL Level</label>
+          <input type="number" step="0.01" id="slLevel" placeholder="e.g. 4690.00" />
+        </div>
+        <div>
+          <label>TP Target</label>
+          <input type="number" step="0.01" id="tpTarget" placeholder="e.g. 4780.00" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Memo</h2>
+      <textarea id="memo" placeholder="Your reasoning before the trade — why you entered, what you saw..."></textarea>
+      <div style="margin-top:12px">
+        <label>Screenshot (paste, drag & drop, or click)</label>
+        <div class="drop-zone" id="dropZone">
+          Paste screenshot here, drag & drop, or click to upload
+          <input type="file" accept="image/*" multiple />
+        </div>
+        <div class="screenshots-preview" id="screenshotPreview"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Result</h2>
+      <div>
+        <label>Outcome</label>
+        <div class="result-group">
+          <div class="result-btn tp" data-val="TP">TP Hit</div>
+          <div class="result-btn sl" data-val="SL">SL Hit</div>
+          <div class="result-btn manual" data-val="MANUAL">Manual Close</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div>
+          <label>Total P&L (USD)</label>
+          <input type="number" step="0.01" id="totalPnl" placeholder="e.g. +25.00 or -10.00" />
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <label>Post-Trade Notes</label>
+        <textarea id="postNotes" placeholder="What happened? What did you learn?"></textarea>
+      </div>
+    </div>
+
+    <button type="submit" class="btn-submit" id="submitBtn">Save Trade</button>
+  </form>
+</div>
+
+<!-- ── HISTORY ─────────────────────────────────────────────────────────────── -->
+<div id="history" class="page">
+  <div id="historyList">
+    <p class="empty">Loading trades...</p>
+  </div>
+</div>
+
+<!-- ── STATS ──────────────────────────────────────────────────────────────── -->
+<div id="stats" class="page">
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="val" id="statWinRate">—</div>
+      <div class="lbl">Win Rate</div>
+    </div>
+    <div class="stat-box">
+      <div class="val" id="statTotalPnl">—</div>
+      <div class="lbl">Total P&L</div>
+    </div>
+    <div class="stat-box">
+      <div class="val" id="statTrades">—</div>
+      <div class="lbl">Trades Logged</div>
+    </div>
+    <div class="stat-box">
+      <div class="val" id="statRR">—</div>
+      <div class="lbl">Avg R:R</div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>AI Review</h2>
+    <p style="color:var(--text-dim);font-size:13px;line-height:1.7">
+      Share your trade history with Claude to get a performance review — patterns in your wins, mistakes in your losses, and suggestions for improvement.
+    </p>
+  </div>
+</div>
+
+<!-- ── TRADE DETAIL MODAL ──────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="tradeModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalDate"></h3>
+      <button class="btn-close" id="closeModal">×</button>
+    </div>
+    <div class="modal-section">
+      <h4>Bias</h4>
+      <p id="modalBias"></p>
+    </div>
+    <div class="modal-section">
+      <h4>Levels</h4>
+      <p id="modalLevels"></p>
+    </div>
+    <div class="modal-section">
+      <h4>Positions</h4>
+      <div id="modalPositions"></div>
+    </div>
+    <div class="modal-section">
+      <h4>Result</h4>
+      <p id="modalResult"></p>
+    </div>
+    <div class="modal-section">
+      <h4>Memo</h4>
+      <p id="modalMemo"></p>
+    </div>
+    <div class="modal-section">
+      <h4>Post-Trade Notes</h4>
+      <p id="modalPostNotes"></p>
+    </div>
+    <div class="modal-section">
+      <h4>Screenshots</h4>
+      <div class="modal-imgs" id="modalImgs"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
