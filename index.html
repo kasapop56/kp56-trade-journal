@@ -117,6 +117,7 @@
         <div class="result-group">
           <div class="result-btn tp" data-val="TP">TP Hit</div>
           <div class="result-btn sl" data-val="SL">SL Hit</div>
+          <div class="result-btn be" data-val="BE">Break Even</div>
           <div class="result-btn manual" data-val="MANUAL">Manual Close</div>
         </div>
       </div>
@@ -176,7 +177,10 @@
   <div class="modal">
     <div class="modal-header">
       <h3 id="modalDate"></h3>
-      <button class="btn-close" id="closeModal">×</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn-edit" id="editModal">Edit</button>
+        <button class="btn-close" id="closeModal">×</button>
+      </div>
     </div>
     <div class="modal-section">
       <h4>Bias</h4>

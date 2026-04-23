@@ -188,6 +188,7 @@ select option { background: var(--surface2); }
 }
 .result-btn.tp.selected { background: var(--bull); border-color: var(--bull); color: #fff; }
 .result-btn.sl.selected { background: var(--bear); border-color: var(--bear); color: #fff; }
+.result-btn.be.selected { background: #1a5c8a; border-color: #2196f3; color: #fff; }
 .result-btn.manual.selected { background: #7c6f00; border-color: var(--gold); color: #fff; }
 
 /* SUBMIT */
@@ -252,6 +253,7 @@ select option { background: var(--surface2); }
 .tag.bear { background: rgba(239,83,80,0.15); color: var(--bear); }
 .tag.tp { background: rgba(38,166,154,0.15); color: var(--bull); }
 .tag.sl { background: rgba(239,83,80,0.15); color: var(--bear); }
+.tag.be { background: rgba(33,150,243,0.15); color: #2196f3; }
 .tag.manual { background: rgba(240,180,41,0.1); color: var(--gold); }
 .tag.wait { background: rgba(240,180,41,0.1); color: var(--gold); }
 .tag.session { background: var(--surface2); color: var(--text-dim); }
@@ -287,6 +289,8 @@ select option { background: var(--surface2); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .modal-header h3 { color: var(--gold); font-size: 16px; }
 .btn-close { background: none; border: none; color: var(--text-dim); font-size: 22px; cursor: pointer; }
+.btn-edit { background: none; border: 1px solid var(--gold-dim); color: var(--gold); border-radius: 6px; padding: 5px 14px; font-size: 13px; cursor: pointer; }
+.btn-edit:hover { background: var(--gold-dim); color: #fff; }
 .modal-section { margin-bottom: 16px; }
 .modal-section h4 { font-size: 12px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 8px; }
 .modal-section p { font-size: 14px; line-height: 1.6; }

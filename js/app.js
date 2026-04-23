@@ -116,11 +116,14 @@ window.openImg = url => window.open(url, '_blank');
 initDropZone('dropZone', 'screenshotPreview', screenshotFiles);
 
 // ── Form Submit ────────────────────────────────────────────────────────────────
+let editingTradeId = null;
+let existingScreenshots = [];
+
 document.getElementById('tradeForm').addEventListener('submit', async e => {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
   btn.disabled = true;
-  btn.textContent = 'Saving...';
+  btn.textContent = editingTradeId ? 'Updating...' : 'Saving...';
 
   try {
     const formState = window.formState || {};
@@ -133,37 +136,44 @@ document.getElementById('tradeForm').addEventListener('submit', async e => {
     const memo = document.getElementById('memo').value;
     const postNotes = document.getElementById('postNotes').value;
 
-    // Upload screenshots
-    const screenshotUrls = [];
+    // Upload new screenshots
+    const newUrls = [];
     const validFiles = screenshotFiles.filter(Boolean);
     for (const file of validFiles) {
       const filename = `${Date.now()}_${file.name}`;
       const { error } = await db.storage.from('screenshots').upload(filename, file);
       if (!error) {
         const { data } = db.storage.from('screenshots').getPublicUrl(filename);
-        screenshotUrls.push(data.publicUrl);
+        newUrls.push(data.publicUrl);
       }
     }
+    const screenshotUrls = [...existingScreenshots, ...newUrls];
 
-    // Insert trade idea
-    const { data: trade, error: tradeErr } = await db
-      .from('trade_ideas')
-      .insert({
-        date, session,
-        bias_h1: formState.bias_h1 || null,
-        bias_m5: formState.bias_m5 || null,
-        key_levels: keyLevels,
-        sl_level: sl ? parseFloat(sl) : null,
-        tp_target: tp ? parseFloat(tp) : null,
-        result: formState.result || null,
-        total_pnl: pnl ? parseFloat(pnl) : null,
-        memo, post_trade_notes: postNotes,
-        screenshots: screenshotUrls
-      })
-      .select()
-      .single();
+    const payload = {
+      date, session,
+      bias_h1: formState.bias_h1 || null,
+      bias_m5: formState.bias_m5 || null,
+      key_levels: keyLevels,
+      sl_level: sl ? parseFloat(sl) : null,
+      tp_target: tp ? parseFloat(tp) : null,
+      result: formState.result || null,
+      total_pnl: pnl ? parseFloat(pnl) : null,
+      memo, post_trade_notes: postNotes,
+      screenshots: screenshotUrls
+    };
 
-    if (tradeErr) throw tradeErr;
+    let tradeId;
+    if (editingTradeId) {
+      const { error } = await db.from('trade_ideas').update(payload).eq('id', editingTradeId);
+      if (error) throw error;
+      tradeId = editingTradeId;
+      // Replace positions
+      await db.from('positions').delete().eq('trade_idea_id', tradeId);
+    } else {
+      const { data: trade, error: tradeErr } = await db.from('trade_ideas').insert(payload).select().single();
+      if (tradeErr) throw tradeErr;
+      tradeId = trade.id;
+    }
 
     // Insert positions
     const posRows = document.querySelectorAll('.position-row');
@@ -171,13 +181,11 @@ document.getElementById('tradeForm').addEventListener('submit', async e => {
     posRows.forEach(row => {
       const entry = row.querySelector('.pos-entry')?.value;
       const lot = row.querySelector('.pos-lot')?.value;
-      if (entry && lot) {
-        positions.push({ trade_idea_id: trade.id, entry_price: parseFloat(entry), lot_size: parseFloat(lot) });
-      }
+      if (entry && lot) positions.push({ trade_idea_id: tradeId, entry_price: parseFloat(entry), lot_size: parseFloat(lot) });
     });
     if (positions.length) await db.from('positions').insert(positions);
 
-    showToast('Trade saved!', 'success');
+    showToast(editingTradeId ? 'Trade updated!' : 'Trade saved!', 'success');
     resetForm();
   } catch (err) {
     showToast('Error: ' + err.message, 'error');
@@ -190,14 +198,69 @@ document.getElementById('tradeForm').addEventListener('submit', async e => {
 function resetForm() {
   document.getElementById('tradeForm').reset();
   window.formState = {};
+  editingTradeId = null;
+  existingScreenshots = [];
   document.querySelectorAll('.bias-btn, .result-btn').forEach(b => b.classList.remove('selected'));
   document.getElementById('screenshotPreview').innerHTML = '';
   screenshotFiles.length = 0;
   document.querySelectorAll('.position-row').forEach((r, i) => { if (i > 0) r.remove(); });
   document.querySelector('.pos-entry').value = '';
   document.querySelector('.pos-lot').value = '';
-  // Set today's date
+  document.getElementById('submitBtn').textContent = 'Save Trade';
   document.getElementById('tradeDate').value = new Date().toISOString().split('T')[0];
+}
+
+function loadTradeIntoForm(t) {
+  resetForm();
+  editingTradeId = t.id;
+  existingScreenshots = t.screenshots || [];
+
+  document.getElementById('tradeDate').value = t.date || '';
+  document.getElementById('session').value = t.session || '';
+  document.getElementById('keyLevels').value = t.key_levels || '';
+  document.getElementById('slLevel').value = t.sl_level || '';
+  document.getElementById('tpTarget').value = t.tp_target || '';
+  document.getElementById('totalPnl').value = t.total_pnl || '';
+  document.getElementById('memo').value = t.memo || '';
+  document.getElementById('postNotes').value = t.post_trade_notes || '';
+
+  // Bias buttons
+  window.formState = { bias_h1: t.bias_h1, bias_m5: t.bias_m5, result: t.result };
+  if (t.bias_h1) document.querySelector(`.bias-btn[data-group="h1"][data-val="${t.bias_h1}"]`)?.classList.add('selected');
+  if (t.bias_m5) document.querySelector(`.bias-btn[data-group="m5"][data-val="${t.bias_m5}"]`)?.classList.add('selected');
+  if (t.result) document.querySelector(`.result-btn[data-val="${t.result}"]`)?.classList.add('selected');
+
+  // Positions
+  const container = document.getElementById('positionsContainer');
+  document.querySelectorAll('.position-row').forEach((r, i) => { if (i > 0) r.remove(); });
+  const firstEntry = container.querySelector('.pos-entry');
+  const firstLot = container.querySelector('.pos-lot');
+  if (t.positions?.length) {
+    firstEntry.value = t.positions[0].entry_price || '';
+    firstLot.value = t.positions[0].lot_size || '';
+    for (let i = 1; i < t.positions.length; i++) {
+      positionCount++;
+      addPositionRow(container, positionCount);
+      const rows = container.querySelectorAll('.position-row');
+      rows[i].querySelector('.pos-entry').value = t.positions[i].entry_price || '';
+      rows[i].querySelector('.pos-lot').value = t.positions[i].lot_size || '';
+    }
+  }
+
+  // Show existing screenshots
+  const preview = document.getElementById('screenshotPreview');
+  existingScreenshots.forEach((url, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'img-wrap';
+    wrap.innerHTML = `
+      <img src="${url}" onclick="openImg('${url}')" />
+      <button class="img-remove" onclick="existingScreenshots.splice(${i},1);this.closest('.img-wrap').remove()">×</button>
+    `;
+    preview.appendChild(wrap);
+  });
+
+  document.getElementById('submitBtn').textContent = 'Update Trade';
+  navigate('new');
 }
 
 // ── History ────────────────────────────────────────────────────────────────────
@@ -271,6 +334,10 @@ function openTradeModal(t) {
   }
 
   document.getElementById('tradeModal').classList.add('open');
+  document.getElementById('editModal').onclick = () => {
+    document.getElementById('tradeModal').classList.remove('open');
+    loadTradeIntoForm(t);
+  };
 }
 
 document.getElementById('closeModal').addEventListener('click', () => {
