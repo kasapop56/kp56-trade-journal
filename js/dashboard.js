@@ -286,6 +286,58 @@ function renderBias(trades) {
   });
 }
 
+// ── Direction Stats ────────────────────────────────────────────────────────────
+function renderDirection(trades) {
+  destroyChart('direction');
+  const dir = {
+    BUY:  { pnl: 0, prof: 0, total: 0 },
+    SELL: { pnl: 0, prof: 0, total: 0 },
+  };
+  trades.forEach(t => {
+    if (!t.direction || !dir[t.direction]) return;
+    dir[t.direction].pnl += (t.total_pnl || 0);
+    if (t.total_pnl != null) {
+      dir[t.direction].total++;
+      if (t.total_pnl > 0) dir[t.direction].prof++;
+    }
+  });
+
+  // KPI cards
+  ['BUY','SELL'].forEach(d => {
+    const rate = dir[d].total ? ((dir[d].prof / dir[d].total) * 100).toFixed(0) + '%' : '—';
+    const pnl  = dir[d].pnl.toFixed(2);
+    const el   = document.getElementById(`kpiDir${d}`);
+    if (el) el.innerHTML =
+      `<span class="${d === 'BUY' ? 'pos' : 'neg'}" style="font-weight:700">${d}</span> &nbsp;
+       <span style="font-size:13px">${rate} profitable</span><br>
+       <span style="font-size:12px;color:var(--text-dim)">P&L: ${dir[d].pnl >= 0 ? '+' : ''}${pnl}</span>`;
+  });
+
+  // Bar chart
+  const vals = [parseFloat(dir.BUY.pnl.toFixed(2)), parseFloat(dir.SELL.pnl.toFixed(2))];
+  charts.direction = new Chart(document.getElementById('directionChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: ['BUY', 'SELL'],
+      datasets: [{
+        label: 'Total P&L (USD)',
+        data: vals,
+        backgroundColor: [
+          vals[0] >= 0 ? 'rgba(38,166,154,0.7)' : 'rgba(239,83,80,0.7)',
+          vals[1] >= 0 ? 'rgba(38,166,154,0.7)' : 'rgba(239,83,80,0.7)',
+        ],
+        borderRadius: 6,
+        barThickness: 60,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: baseScales('', 'USD'),
+    }
+  });
+}
+
 // ── Session Table ──────────────────────────────────────────────────────────────
 function renderSessionTable(trades) {
   const sessions = ['ASIA', 'LONDON', 'NY'];
@@ -338,6 +390,7 @@ function renderDashboard(range) {
   renderDayOfWeek(trades);
   renderScatter(trades);
   renderBias(trades);
+  renderDirection(trades);
   renderSessionTable(trades);
 }
 
