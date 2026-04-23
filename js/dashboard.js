@@ -57,24 +57,27 @@ function baseLegend() {
 
 // ── KPIs ───────────────────────────────────────────────────────────────────────
 function renderKPIs(trades) {
-  const closed = trades.filter(t => t.result);
-  const wins   = closed.filter(t => t.result === 'TP');
-  const losses = closed.filter(t => t.result === 'SL');
-  const be     = closed.filter(t => t.result === 'BE');
+  const closed      = trades.filter(t => t.result);
+  const tpWins      = closed.filter(t => t.result === 'TP');
+  const profWins    = trades.filter(t => t.total_pnl != null && t.total_pnl > 0);
+  const losses      = closed.filter(t => t.result === 'SL');
+  const be          = closed.filter(t => t.result === 'BE');
 
-  const totalPnl   = trades.reduce((s, t) => s + (t.total_pnl || 0), 0);
-  const grossWin   = wins.reduce((s, t) => s + (t.total_pnl || 0), 0);
-  const grossLoss  = Math.abs(losses.reduce((s, t) => s + (t.total_pnl || 0), 0));
+  const totalPnl    = trades.reduce((s, t) => s + (t.total_pnl || 0), 0);
+  const grossWin    = profWins.reduce((s, t) => s + (t.total_pnl || 0), 0);
+  const grossLoss   = Math.abs(trades.filter(t => t.total_pnl < 0).reduce((s, t) => s + t.total_pnl, 0));
   const profitFactor = grossLoss > 0 ? (grossWin / grossLoss).toFixed(2) : '∞';
-  const winRate    = closed.length ? ((wins.length / closed.length) * 100).toFixed(1) : '0';
-  const avgDD      = trades.filter(t => t.max_drawdown).reduce((s, t) => s + t.max_drawdown, 0) /
-                     (trades.filter(t => t.max_drawdown).length || 1);
-  const avgPnl     = trades.filter(t => t.total_pnl != null).reduce((s, t) => s + t.total_pnl, 0) /
-                     (trades.filter(t => t.total_pnl != null).length || 1);
-  const rr         = avgDD > 0 ? (avgPnl / avgDD).toFixed(2) : '—';
-  const pnls       = trades.map(t => t.total_pnl).filter(v => v != null);
-  const best       = pnls.length ? Math.max(...pnls) : null;
-  const worst      = pnls.length ? Math.min(...pnls) : null;
+  const tpRate      = closed.length ? ((tpWins.length / closed.length) * 100).toFixed(1) : '0';
+  const profRate    = trades.filter(t => t.total_pnl != null).length
+                      ? ((profWins.length / trades.filter(t => t.total_pnl != null).length) * 100).toFixed(1) : '0';
+  const avgDD       = trades.filter(t => t.max_drawdown).reduce((s, t) => s + t.max_drawdown, 0) /
+                      (trades.filter(t => t.max_drawdown).length || 1);
+  const avgPnl      = trades.filter(t => t.total_pnl != null).reduce((s, t) => s + t.total_pnl, 0) /
+                      (trades.filter(t => t.total_pnl != null).length || 1);
+  const rr          = avgDD > 0 ? (avgPnl / avgDD).toFixed(2) : '—';
+  const pnls        = trades.map(t => t.total_pnl).filter(v => v != null);
+  const best        = pnls.length ? Math.max(...pnls) : null;
+  const worst       = pnls.length ? Math.min(...pnls) : null;
 
   const set = (id, val, cls) => {
     const el = document.getElementById(id);
@@ -83,16 +86,15 @@ function renderKPIs(trades) {
     if (cls) el.className = 'kpi-val ' + cls;
   };
 
-  set('kpiWinRate',      winRate + '%');
-  set('kpiTrades',       closed.length);
-  set('kpiPnl',          (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2),
-      totalPnl >= 0 ? 'pos' : 'neg');
-  set('kpiPF',           profitFactor,
-      parseFloat(profitFactor) >= 1 ? 'pos' : 'neg');
-  set('kpiRR',           rr);
-  set('kpiBE',           be.length);
-  set('kpiBest',         best != null ? (best >= 0 ? '+' : '') + best.toFixed(2) : '—', 'pos');
-  set('kpiWorst',        worst != null ? worst.toFixed(2) : '—', 'neg');
+  set('kpiTpRate',    tpRate + '%');
+  set('kpiProfRate',  profRate + '%');
+  set('kpiTrades',    closed.length);
+  set('kpiPnl',       (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2), totalPnl >= 0 ? 'pos' : 'neg');
+  set('kpiPF',        profitFactor, parseFloat(profitFactor) >= 1 ? 'pos' : 'neg');
+  set('kpiRR',        rr);
+  set('kpiBE',        be.length);
+  set('kpiBest',      best != null ? (best >= 0 ? '+' : '') + best.toFixed(2) : '—', 'pos');
+  set('kpiWorst',     worst != null ? worst.toFixed(2) : '—', 'neg');
 }
 
 // ── Equity Curve ───────────────────────────────────────────────────────────────
@@ -294,17 +296,20 @@ function renderSessionTable(trades) {
   sessions.forEach(s => {
     const t = trades.filter(x => x.session === s);
     const closed = t.filter(x => x.result);
-    const wins = closed.filter(x => x.result === 'TP').length;
-    const pnl = t.reduce((sum, x) => sum + (x.total_pnl || 0), 0);
+    const tpW   = closed.filter(x => x.result === 'TP').length;
+    const profW = t.filter(x => x.total_pnl > 0).length;
+    const hasPnl = t.filter(x => x.total_pnl != null).length;
+    const pnl   = t.reduce((sum, x) => sum + (x.total_pnl || 0), 0);
     const avgDD = t.filter(x => x.max_drawdown).reduce((sum, x) => sum + x.max_drawdown, 0) /
                   (t.filter(x => x.max_drawdown).length || 1);
-    const wr = closed.length ? ((wins / closed.length) * 100).toFixed(0) + '%' : '—';
+    const tpRate   = closed.length ? ((tpW / closed.length) * 100).toFixed(0) + '%' : '—';
+    const profRate = hasPnl ? ((profW / hasPnl) * 100).toFixed(0) + '%' : '—';
     const pnlClass = pnl >= 0 ? 'pos' : 'neg';
     tbody.innerHTML += `
       <tr>
         <td>${s}</td>
         <td>${closed.length}</td>
-        <td>${wr}</td>
+        <td><span style="color:var(--bull)">${profRate}</span> <span style="color:var(--text-dim);font-size:11px">/ TP ${tpRate}</span></td>
         <td class="${pnlClass}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
         <td>${t.filter(x => x.max_drawdown).length ? '$' + avgDD.toFixed(2) : '—'}</td>
       </tr>`;
