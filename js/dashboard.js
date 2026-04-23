@@ -86,15 +86,48 @@ function renderKPIs(trades) {
     if (cls) el.className = 'kpi-val ' + cls;
   };
 
+  // Recovery Factor = Net P&L / Max single drawdown
+  const maxDD = trades.filter(t => t.max_drawdown).reduce((m, t) => Math.max(m, t.max_drawdown), 0);
+  const recovery = maxDD > 0 ? (totalPnl / maxDD).toFixed(2) : '—';
+
+  // Trades per week
+  const dates = trades.map(t => new Date(t.date)).filter(Boolean);
+  const spanWeeks = dates.length > 1
+    ? Math.max(1, (Math.max(...dates) - Math.min(...dates)) / (7 * 86400000))
+    : 1;
+  const perWeek = (trades.length / spanWeeks).toFixed(1);
+
+  // Avg hold time (minutes)
+  const holdTimes = trades.filter(t => t.entry_time && t.exit_time).map(t => {
+    const [eh, em] = t.entry_time.split(':').map(Number);
+    const [xh, xm] = t.exit_time.split(':').map(Number);
+    return (xh * 60 + xm) - (eh * 60 + em);
+  }).filter(m => m > 0);
+  const avgHold = holdTimes.length
+    ? holdTimes.reduce((s, m) => s + m, 0) / holdTimes.length
+    : null;
+  const holdStr = avgHold != null
+    ? avgHold >= 60 ? `${Math.floor(avgHold/60)}h ${Math.round(avgHold%60)}m` : `${Math.round(avgHold)}m`
+    : '—';
+
+  // Gross profit / loss
+  const grossProfit = trades.filter(t => t.total_pnl > 0).reduce((s, t) => s + t.total_pnl, 0);
+  const grossLossAmt = Math.abs(trades.filter(t => t.total_pnl < 0).reduce((s, t) => s + t.total_pnl, 0));
+
   set('kpiTpRate',    tpRate + '%');
   set('kpiProfRate',  profRate + '%');
   set('kpiTrades',    closed.length);
   set('kpiPnl',       (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2), totalPnl >= 0 ? 'pos' : 'neg');
   set('kpiPF',        profitFactor, parseFloat(profitFactor) >= 1 ? 'pos' : 'neg');
+  set('kpiRecovery',  recovery, parseFloat(recovery) >= 1 ? 'pos' : 'neg');
   set('kpiRR',        rr);
   set('kpiBE',        be.length);
+  set('kpiPerWeek',   perWeek);
+  set('kpiHoldTime',  holdStr);
   set('kpiBest',      best != null ? (best >= 0 ? '+' : '') + best.toFixed(2) : '—', 'pos');
   set('kpiWorst',     worst != null ? worst.toFixed(2) : '—', 'neg');
+  const grossEl = document.getElementById('kpiGross');
+  if (grossEl) grossEl.innerHTML = `<span style="color:var(--bull)">+${grossProfit.toFixed(2)}</span> <span style="color:var(--text-dim);font-size:12px">/</span> <span style="color:var(--bear)">-${grossLossAmt.toFixed(2)}</span>`;
 }
 
 // ── Equity Curve ───────────────────────────────────────────────────────────────
@@ -286,6 +319,41 @@ function renderBias(trades) {
   });
 }
 
+// ── P&L by Hour ────────────────────────────────────────────────────────────────
+function renderHour(trades) {
+  destroyChart('hour');
+  const hours = {};
+  trades.forEach(t => {
+    if (!t.entry_time || t.total_pnl == null) return;
+    const h = parseInt(t.entry_time.split(':')[0]);
+    if (!hours[h]) hours[h] = 0;
+    hours[h] += t.total_pnl;
+  });
+  if (!Object.keys(hours).length) return;
+
+  const allHours = Array.from({ length: 24 }, (_, i) => i);
+  const vals = allHours.map(h => parseFloat((hours[h] || 0).toFixed(2)));
+  const labels = allHours.map(h => `${String(h).padStart(2,'0')}:00`);
+
+  charts.hour = new Chart(document.getElementById('hourChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'P&L (USD)',
+        data: vals,
+        backgroundColor: vals.map(v => v > 0 ? 'rgba(38,166,154,0.7)' : v < 0 ? 'rgba(239,83,80,0.7)' : 'rgba(80,80,80,0.3)'),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: baseScales('Hour (Thai Time)', 'USD'),
+    }
+  });
+}
+
 // ── Direction Stats ────────────────────────────────────────────────────────────
 function renderDirection(trades) {
   destroyChart('direction');
@@ -390,6 +458,7 @@ function renderDashboard(range) {
   renderDayOfWeek(trades);
   renderScatter(trades);
   renderBias(trades);
+  renderHour(trades);
   renderDirection(trades);
   renderSessionTable(trades);
 }

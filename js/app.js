@@ -134,6 +134,8 @@ document.getElementById('tradeForm').addEventListener('submit', async e => {
     const tp = document.getElementById('tpTarget').value;
     const pnl = document.getElementById('totalPnl').value;
     const drawdown = document.getElementById('maxDrawdown').value;
+    const entryTime = document.getElementById('entryTime').value;
+    const exitTime = document.getElementById('exitTime').value;
     const keyLevels = document.getElementById('keyLevels').value;
     const memo = document.getElementById('memo').value;
     const postNotes = document.getElementById('postNotes').value;
@@ -162,6 +164,8 @@ document.getElementById('tradeForm').addEventListener('submit', async e => {
       result: formState.result || null,
       total_pnl: pnl ? parseFloat(pnl) : null,
       max_drawdown: drawdown ? parseFloat(drawdown) : null,
+      entry_time: entryTime || null,
+      exit_time: exitTime || null,
       memo, post_trade_notes: postNotes,
       screenshots: screenshotUrls
     };
@@ -226,6 +230,8 @@ function loadTradeIntoForm(t) {
   document.getElementById('tpTarget').value = t.tp_target || '';
   document.getElementById('totalPnl').value = t.total_pnl || '';
   document.getElementById('maxDrawdown').value = t.max_drawdown || '';
+  document.getElementById('entryTime').value = t.entry_time ? t.entry_time.slice(0,5) : '';
+  document.getElementById('exitTime').value = t.exit_time ? t.exit_time.slice(0,5) : '';
   document.getElementById('memo').value = t.memo || '';
   document.getElementById('postNotes').value = t.post_trade_notes || '';
 
@@ -316,6 +322,9 @@ function openTradeModal(t) {
   document.getElementById('modalLevels').textContent = `SL: ${t.sl_level || '—'} | TP: ${t.tp_target || '—'} | Key: ${t.key_levels || '—'}`;
   document.getElementById('modalResult').textContent = `${t.result || '—'} | P&L: ${t.total_pnl != null ? t.total_pnl : '—'}`;
   document.getElementById('modalDrawdown').textContent = t.max_drawdown != null ? `Max Drawdown: -${t.max_drawdown}` : '';
+  document.getElementById('modalTime').textContent = (t.entry_time || t.exit_time)
+    ? `Entry: ${t.entry_time ? t.entry_time.slice(0,5) : '—'}  →  Exit: ${t.exit_time ? t.exit_time.slice(0,5) : '—'}`
+    : '';
   document.getElementById('modalMemo').textContent = t.memo || '—';
   document.getElementById('modalPostNotes').textContent = t.post_trade_notes || '—';
 

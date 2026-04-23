@@ -36,6 +36,16 @@
           </select>
         </div>
       </div>
+      <div class="row col2" style="margin-top:12px">
+        <div>
+          <label>Entry Time</label>
+          <input type="time" id="entryTime" />
+        </div>
+        <div>
+          <label>Exit Time</label>
+          <input type="time" id="exitTime" />
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -175,11 +185,15 @@
       <div style="font-size:11px;color:var(--text-dim);margin-top:2px">TP Rate: <span id="kpiTpRate">—</span></div>
     </div>
     <div class="kpi-box"><div class="kpi-val" id="kpiPF">—</div><div class="kpi-lbl">Profit Factor</div></div>
-    <div class="kpi-box"><div class="kpi-val" id="kpiRR">—</div><div class="kpi-lbl">Avg P&L / DD</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiRecovery">—</div><div class="kpi-lbl">Recovery Factor</div></div>
     <div class="kpi-box"><div class="kpi-val" id="kpiTrades">—</div><div class="kpi-lbl">Trades</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiPerWeek">—</div><div class="kpi-lbl">Trades / Week</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiHoldTime">—</div><div class="kpi-lbl">Avg Hold Time</div></div>
     <div class="kpi-box"><div class="kpi-val" id="kpiBE">—</div><div class="kpi-lbl">Break Even</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiRR">—</div><div class="kpi-lbl">Avg P&L / DD</div></div>
     <div class="kpi-box"><div class="kpi-val pos" id="kpiBest">—</div><div class="kpi-lbl">Best Trade</div></div>
     <div class="kpi-box"><div class="kpi-val neg" id="kpiWorst">—</div><div class="kpi-lbl">Worst Trade</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiGross">—</div><div class="kpi-lbl">Gross Profit / Loss</div></div>
   </div>
 
   <div class="card">
@@ -207,6 +221,11 @@
       <h2>Bias Win Rate</h2>
       <div class="chart-wrap"><canvas id="biasChart"></canvas></div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>P&L by Hour (Entry Time)</h2>
+    <div class="chart-wrap tall"><canvas id="hourChart"></canvas></div>
   </div>
 
   <div class="card">
@@ -248,6 +267,10 @@
         <button class="btn-delete" id="deleteModal">Delete</button>
         <button class="btn-close" id="closeModal">×</button>
       </div>
+    </div>
+    <div class="modal-section">
+      <h4>Time</h4>
+      <p id="modalTime" style="font-size:13px;color:var(--text-dim)"></p>
     </div>
     <div class="modal-section">
       <h4>Bias</h4>

@@ -311,6 +311,7 @@ select option { background: var(--surface2); }
 
 /* KPI GRID */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+.kpi-grid .kpi-box:last-child { grid-column: span 1; }
 .kpi-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 12px; text-align: center; }
 .kpi-val { font-size: 22px; font-weight: 700; color: var(--gold); }
 .kpi-val.pos { color: var(--bull); }
