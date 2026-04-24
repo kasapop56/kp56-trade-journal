@@ -92,7 +92,7 @@ function navigate(pageId) {
   pages.forEach(p => p.classList.toggle('active', p.id === pageId));
   navLinks.forEach(a => a.classList.toggle('active', a.dataset.page === pageId));
   if (pageId === 'history') loadHistory();
-  if (pageId === 'stats') { allDashboardData = []; loadDashboard(); }
+  if (pageId === 'stats') { allDashboardData = []; loadDashboard(); loadPortfolio(); }
 }
 
 navLinks.forEach(a => a.addEventListener('click', e => {

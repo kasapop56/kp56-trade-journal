@@ -1,0 +1,9 @@
+{
+  "name": "kp56-trade-journal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serverless API deps for the Vercel webhook (static site, no build step).",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}

@@ -247,6 +247,18 @@
     </select>
   </div>
 
+  <div class="card" id="portfolioCard">
+    <h2>Portfolio <span style="font-size:12px;color:var(--text-dim);font-weight:400">— live from MT5 account <span id="kpiAcct">—</span></span></h2>
+    <div class="kpi-grid" style="margin-bottom:14px">
+      <div class="kpi-box"><div class="kpi-val" id="kpiBalance">—</div><div class="kpi-lbl">Balance</div></div>
+      <div class="kpi-box"><div class="kpi-val" id="kpiEquity">—</div><div class="kpi-lbl">Equity</div></div>
+      <div class="kpi-box"><div class="kpi-val" id="kpiPeak">—</div><div class="kpi-lbl">Peak Balance</div></div>
+      <div class="kpi-box"><div class="kpi-val" id="kpiDD">—</div><div class="kpi-lbl">Current Drawdown</div></div>
+      <div class="kpi-box"><div class="kpi-val" id="kpiNetRet">—</div><div class="kpi-lbl">Net Return</div></div>
+    </div>
+    <div class="chart-wrap tall"><canvas id="balanceChart"></canvas></div>
+  </div>
+
   <div class="card risk-card-wrap">
     <div class="progress-header">
       <h2>Progress Tracker <span style="font-size:12px;color:var(--text-dim);font-weight:400">— process over outcome</span></h2>
@@ -417,6 +429,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="js/app.js"></script>
 <script src="js/dashboard.js"></script>
+<script src="js/balance.js"></script>
 <script src="js/import.js"></script>
 </body>
 </html>
