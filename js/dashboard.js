@@ -9,19 +9,6 @@ function toLocalYMD(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-// Hold time in minutes (uses entry_time + exit_time, same day assumed).
-function holdMinutes(t) {
-  if (!t.entry_time || !t.exit_time) return null;
-  const [eh, em] = t.entry_time.split(':').map(Number);
-  const [xh, xm] = t.exit_time.split(':').map(Number);
-  let diff = (xh * 60 + xm) - (eh * 60 + em);
-  if (diff < 0) diff += 24 * 60; // crossed midnight
-  return diff;
-}
-
-function hasStopLoss(t) {
-  return t.sl_level != null && t.sl_level !== 0 && t.sl_level !== '';
-}
 
 function filterByRange(data, range) {
   const now = new Date();
@@ -474,6 +461,188 @@ function renderSessionTable(trades) {
   });
 }
 
+// ── Progress Tracker ──────────────────────────────────────────────────────────
+// Process > outcome. Shows: (1) discipline rate, (2) before/after baseline split,
+// (3) rolling 50-trade profit factor trend. Designed so improvement shows up in
+// days, not quarters.
+function renderProgress(tradesInFilter, allTrades) {
+  renderDisciplineScore(tradesInFilter);
+  renderBeforeAfter(allTrades);
+  renderRollingPF(allTrades);
+}
+
+function renderDisciplineScore(trades) {
+  const el = document.getElementById('discScore');
+  if (!el) return;
+  if (!trades.length) {
+    el.innerHTML = '<div class="risk-title">Discipline Score</div><div class="risk-sub">No trades in range.</div>';
+    return;
+  }
+  let slOk = 0, holdOk = 0, soloOk = 0, allOk = 0, holdDenom = 0, allDenom = 0;
+  for (const t of trades) {
+    const d = tradeDiscipline(t);
+    if (d.sl) slOk++;
+    if (d.solo) soloOk++;
+    if (d.hold != null) { holdDenom++; if (d.hold) holdOk++; }
+    if (d.all != null)  { allDenom++;  if (d.all)  allOk++; }
+  }
+  const N = trades.length;
+  const pct = (n, d) => d ? (n / d * 100) : 0;
+  const overall = allDenom ? pct(allOk, allDenom) : null;
+  const klass = overall == null ? 'neutral' : overall >= 80 ? 'good' : overall >= 50 ? 'neutral' : 'bad';
+  el.className = 'risk-card ' + klass;
+  el.innerHTML = `
+    <div class="risk-title">Discipline Score <span style="text-transform:none;color:var(--text-dim);font-weight:400">(rules followed)</span></div>
+    <div class="risk-big">${overall != null ? overall.toFixed(0) + '%' : '—'}</div>
+    <div class="risk-sub">
+      <div class="disc-row"><span>SL set</span><span><b>${slOk}</b>/${N} · ${pct(slOk,N).toFixed(0)}%</span></div>
+      <div class="disc-row"><span>Exit &lt;15m</span><span><b>${holdOk}</b>/${holdDenom || 0} · ${pct(holdOk, holdDenom).toFixed(0)}%</span></div>
+      <div class="disc-row"><span>Single entry</span><span><b>${soloOk}</b>/${N} · ${pct(soloOk,N).toFixed(0)}%</span></div>
+    </div>
+    <div class="risk-verdict">${overall == null ? 'Need exit times on more trades.'
+      : overall >= 80 ? 'Strong discipline.'
+      : overall >= 50 ? 'Partial — pick the weakest rule and tighten it.'
+      : 'Weakest rule is where losses come from. Fix it first.'}</div>`;
+}
+
+function computeStats(trades) {
+  const withPnl = trades.filter(t => t.total_pnl != null);
+  const wins = withPnl.filter(t => t.total_pnl > 0);
+  const losses = withPnl.filter(t => t.total_pnl < 0);
+  const net = withPnl.reduce((s, t) => s + t.total_pnl, 0);
+  const gp = wins.reduce((s, t) => s + t.total_pnl, 0);
+  const gl = Math.abs(losses.reduce((s, t) => s + t.total_pnl, 0));
+  const avgW = wins.length ? gp / wins.length : 0;
+  const avgL = losses.length ? -gl / losses.length : 0;
+  const ratio = avgL !== 0 ? Math.abs(avgW / avgL) : 0;
+  const pf = gl > 0 ? gp / gl : (gp > 0 ? Infinity : 0);
+  let discAllOk = 0, discDenom = 0;
+  for (const t of trades) {
+    const d = tradeDiscipline(t);
+    if (d.all != null) { discDenom++; if (d.all) discAllOk++; }
+  }
+  const disc = discDenom ? (discAllOk / discDenom) * 100 : null;
+  return { n: trades.length, net, ratio, pf, disc };
+}
+
+function renderBeforeAfter(allTrades) {
+  const baseline = getBaselineDate();
+  const picker = document.getElementById('baselineDate');
+  if (picker && picker.value !== baseline) picker.value = baseline;
+
+  const wrap = document.getElementById('beforeAfter');
+  if (!wrap) return;
+  if (!baseline) {
+    wrap.innerHTML = `<div class="risk-title">Before vs After Rules</div>
+      <div class="risk-sub" style="padding:8px 0">Pick a <b>"Rules started"</b> date above to see your progress split.</div>
+      <div class="risk-verdict">Tip: set it to today, then check back in a week.</div>`;
+    wrap.className = 'risk-card neutral';
+    return;
+  }
+  const before = allTrades.filter(t => t.date < baseline);
+  const after  = allTrades.filter(t => t.date >= baseline);
+  const b = computeStats(before);
+  const a = computeStats(after);
+
+  const fmtPct = v => v == null ? '—' : v.toFixed(0) + '%';
+  const fmtNum = v => !isFinite(v) ? '∞' : v.toFixed(2);
+  const fmtMoney = v => (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(0);
+  const delta = (aV, bV) => {
+    if (aV == null || bV == null || !isFinite(aV) || !isFinite(bV)) return '';
+    if (aV > bV) return '<span class="delta up">↑</span>';
+    if (aV < bV) return '<span class="delta down">↓</span>';
+    return '<span class="delta">→</span>';
+  };
+
+  const row = (label, bV, aV, fmt) => `
+    <tr>
+      <td>${label}</td>
+      <td>${fmt(bV)}</td>
+      <td>${fmt(aV)} ${delta(aV, bV)}</td>
+    </tr>`;
+
+  wrap.className = 'risk-card ' + (a.n === 0 ? 'neutral' : (a.pf >= b.pf && a.ratio >= b.ratio ? 'good' : 'bad'));
+  wrap.innerHTML = `
+    <div class="risk-title">Before vs After Rules <span style="text-transform:none;color:var(--text-dim);font-weight:400">(baseline ${baseline})</span></div>
+    <table class="ba-table">
+      <thead><tr><th></th><th>Before (${b.n})</th><th>After (${a.n})</th></tr></thead>
+      <tbody>
+        ${row('Net P&L',        b.net,   a.net,   fmtMoney)}
+        ${row('Win/Loss ratio', b.ratio, a.ratio, fmtNum)}
+        ${row('Profit factor',  b.pf,    a.pf,    fmtNum)}
+        ${row('Discipline',     b.disc,  a.disc,  fmtPct)}
+      </tbody>
+    </table>
+    <div class="risk-verdict">${a.n === 0
+      ? 'No trades after baseline yet. Set baseline, then trade.'
+      : a.pf > b.pf && a.ratio > b.ratio
+        ? 'Clear improvement on both payoff and profit factor.'
+        : a.pf < b.pf
+          ? 'Post-baseline profit factor is still weaker — rules need tightening.'
+          : 'Partial improvement — keep going.'}</div>`;
+}
+
+// Rolling profit factor over a sliding window (default 50 trades).
+function renderRollingPF(allTrades) {
+  destroyChart('rollingPF');
+  const ctx = document.getElementById('rollingPFChart');
+  if (!ctx) return;
+  const sorted = [...allTrades]
+    .filter(t => t.total_pnl != null)
+    .sort((a, b) => (a.date + (a.entry_time || '')).localeCompare(b.date + (b.entry_time || '')));
+
+  const WIN = 50;
+  if (sorted.length < WIN) {
+    ctx.parentElement.innerHTML = `<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:40px 0">Need at least ${WIN} trades to plot rolling profit factor. You have ${sorted.length}.</div>`;
+    return;
+  }
+  const labels = [], vals = [];
+  for (let i = WIN - 1; i < sorted.length; i++) {
+    const slice = sorted.slice(i - WIN + 1, i + 1);
+    const gp = slice.filter(t => t.total_pnl > 0).reduce((s, t) => s + t.total_pnl, 0);
+    const gl = Math.abs(slice.filter(t => t.total_pnl < 0).reduce((s, t) => s + t.total_pnl, 0));
+    const pf = gl > 0 ? gp / gl : (gp > 0 ? 3 : 0); // clamp ∞ display at 3
+    labels.push(sorted[i].date);
+    vals.push(parseFloat(Math.min(pf, 3).toFixed(2)));
+  }
+
+  const baseline = getBaselineDate();
+  // Color points after baseline differently
+  const pointColors = labels.map(d => baseline && d >= baseline ? CHART_DEFAULTS.bull : CHART_DEFAULTS.gold);
+
+  charts.rollingPF = new Chart(ctx.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: `Profit Factor (rolling ${WIN})`,
+        data: vals,
+        borderColor: CHART_DEFAULTS.gold,
+        backgroundColor: 'rgba(240,180,41,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointBackgroundColor: pointColors,
+        segment: {
+          borderColor: c => baseline && labels[c.p1DataIndex] >= baseline ? CHART_DEFAULTS.bull : CHART_DEFAULTS.gold,
+        }
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `PF: ${ctx.raw}${ctx.raw >= 3 ? ' (capped)' : ''}` } },
+      },
+      scales: {
+        ...baseScales('', 'Profit Factor'),
+        y: { ...baseScales().y, suggestedMin: 0, suggestedMax: 3 },
+      },
+    }
+  });
+}
+
 // ── Risk Analysis ──────────────────────────────────────────────────────────────
 // The 4 findings that explain most P&L leaks:
 //   1. Avg-win vs Avg-loss ratio   (payoff asymmetry)
@@ -636,6 +805,7 @@ async function loadDashboard() {
 function renderDashboard(range) {
   currentRange = range;
   const trades = filterByRange(allDashboardData, range);
+  renderProgress(trades, allDashboardData);
   renderKPIs(trades);
   renderRiskAnalysis(trades);
   renderEquity(trades);
@@ -660,7 +830,35 @@ function initTimezonePicker() {
     renderDashboard(currentRange);
   });
 }
-document.addEventListener('DOMContentLoaded', initTimezonePicker);
+
+// Baseline picker — "Rules started" date used by the Before/After split.
+function initBaselinePicker() {
+  const input = document.getElementById('baselineDate');
+  const todayBtn = document.getElementById('baselineToday');
+  const clearBtn = document.getElementById('baselineClear');
+  if (!input) return;
+  input.value = getBaselineDate();
+  input.addEventListener('change', () => {
+    setBaselineDate(input.value);
+    renderDashboard(currentRange);
+  });
+  if (todayBtn) todayBtn.addEventListener('click', () => {
+    const today = toLocalYMD(new Date());
+    input.value = today;
+    setBaselineDate(today);
+    renderDashboard(currentRange);
+  });
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    input.value = '';
+    setBaselineDate('');
+    renderDashboard(currentRange);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initTimezonePicker();
+  initBaselinePicker();
+});
 
 // Filter buttons
 document.querySelectorAll('.filter-btn').forEach(btn => {

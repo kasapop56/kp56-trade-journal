@@ -30,6 +30,45 @@ function tradeSession(t) {
   return deriveSession(t.entry_time);
 }
 
+// ── Progress / Discipline ─────────────────────────────────────────────────────
+// Baseline = the date the user started trading with the new rules. Before/after
+// comparison anchors on this. Stored in localStorage as YYYY-MM-DD.
+function getBaselineDate() {
+  return localStorage.getItem('kp56_baseline_date') || '';
+}
+function setBaselineDate(d) {
+  if (d) localStorage.setItem('kp56_baseline_date', d);
+  else localStorage.removeItem('kp56_baseline_date');
+}
+
+// Hold time in minutes (entry_time + exit_time, same-day assumed, wraps at midnight).
+function holdMinutes(t) {
+  if (!t.entry_time || !t.exit_time) return null;
+  const [eh, em] = t.entry_time.split(':').map(Number);
+  const [xh, xm] = t.exit_time.split(':').map(Number);
+  let diff = (xh * 60 + xm) - (eh * 60 + em);
+  if (diff < 0) diff += 24 * 60;
+  return diff;
+}
+
+function hasStopLoss(t) {
+  return t.sl_level != null && t.sl_level !== 0 && t.sl_level !== '';
+}
+
+// Per-trade discipline — did the trade follow the 3 rules?
+// sl   : stop loss was set
+// hold : exited within 15 min (requires entry+exit times)
+// solo : single entry (no averaging-down)
+function tradeDiscipline(t) {
+  const sl   = hasStopLoss(t);
+  const m    = holdMinutes(t);
+  const hold = m != null ? m < 15 : null;   // null = unknown (no exit time)
+  const solo = (t.positions?.length || 1) === 1;
+  // "all" only counts trades with enough info to judge
+  const all = (hold == null) ? null : (sl && hold && solo);
+  return { sl, hold, solo, all };
+}
+
 // Paginated fetch — Supabase caps each response at 1000 rows by default.
 // configure() is a builder fn: (query) => query.select(...).order(...) etc.
 async function fetchAllPaged(table, configure, pageSize = 1000) {

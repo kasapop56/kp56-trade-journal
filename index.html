@@ -248,6 +248,28 @@
   </div>
 
   <div class="card risk-card-wrap">
+    <div class="progress-header">
+      <h2>Progress Tracker <span style="font-size:12px;color:var(--text-dim);font-weight:400">— process over outcome</span></h2>
+      <div class="baseline-bar">
+        <label for="baselineDate" class="tz-label" title="The date you started trading with the new rules. Splits your stats into before vs after.">Rules started</label>
+        <input type="date" id="baselineDate" class="filter-date" />
+        <button type="button" id="baselineToday" class="baseline-btn">Today</button>
+        <button type="button" id="baselineClear" class="baseline-btn">Clear</button>
+      </div>
+    </div>
+    <div class="risk-grid progress-grid">
+      <div id="discScore"    class="risk-card">—</div>
+      <div id="beforeAfter"  class="risk-card">—</div>
+    </div>
+    <div class="chart-wrap tall" style="margin-top:14px">
+      <canvas id="rollingPFChart"></canvas>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:6px">
+      Rolling 50-trade profit factor — <span style="color:var(--gold)">●</span> pre-baseline / <span style="color:var(--bull)">●</span> post-baseline. Above 1.0 = winning.
+    </div>
+  </div>
+
+  <div class="card risk-card-wrap">
     <h2>Risk Analysis <span style="font-size:12px;color:var(--text-dim);font-weight:400">— the 4 biggest levers on your P&L</span></h2>
     <div class="risk-grid">
       <div id="riskPayoff" class="risk-card">—</div>

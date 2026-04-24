@@ -352,6 +352,34 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 .dash-table td.pos { color: var(--bull); font-weight: 600; }
 .dash-table td.neg { color: var(--bear); font-weight: 600; }
 
+/* PROGRESS TRACKER */
+.progress-header {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.baseline-bar {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface2); padding: 6px 10px; border-radius: 8px;
+}
+.baseline-btn {
+  background: var(--border); color: var(--text); border: 0;
+  padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.baseline-btn:hover { background: var(--gold-dim); color: #fff; }
+.progress-grid { grid-template-columns: 1fr 1.4fr !important; }
+.disc-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 12px; }
+.disc-row b { color: var(--text); }
+.ba-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.ba-table th { text-align: left; padding: 6px 8px; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+.ba-table th:first-child { width: 120px; }
+.ba-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); color: var(--text); }
+.ba-table td:first-child { color: var(--text-dim); }
+.ba-table tr:last-child td { border-bottom: none; }
+.ba-table .delta { display: inline-block; margin-left: 4px; font-size: 13px; font-weight: 700; }
+.ba-table .delta.up   { color: var(--bull); }
+.ba-table .delta.down { color: var(--bear); }
+
 /* RISK ANALYSIS */
 .tz-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; cursor: help; }
 .risk-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 10px; }
@@ -380,4 +408,7 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .chart-row { grid-template-columns: 1fr; }
   .risk-grid { grid-template-columns: 1fr 1fr; }
+  .progress-grid { grid-template-columns: 1fr !important; }
+  .progress-header { flex-direction: column; align-items: stretch; }
+  .baseline-bar { justify-content: flex-start; flex-wrap: wrap; }
 }
