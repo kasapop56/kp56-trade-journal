@@ -216,8 +216,10 @@
   // ── Existing-trade lookup to flag duplicates ─────────────────────────────
   async function loadExistingKeys() {
     existingKeys = new Set();
-    const { data } = await db.from('trade_ideas').select('date,entry_time,total_pnl');
-    (data || []).forEach(r => {
+    const data = await fetchAllPaged('trade_ideas', q =>
+      q.select('date,entry_time,total_pnl')
+    );
+    data.forEach(r => {
       existingKeys.add(dupKey(r.date, r.entry_time, r.total_pnl));
     });
   }

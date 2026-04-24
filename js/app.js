@@ -4,6 +4,21 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Paginated fetch — Supabase caps each response at 1000 rows by default.
+// configure() is a builder fn: (query) => query.select(...).order(...) etc.
+async function fetchAllPaged(table, configure, pageSize = 1000) {
+  let all = [];
+  for (let page = 0; ; page++) {
+    const q = configure(db.from(table)).range(page * pageSize, (page + 1) * pageSize - 1);
+    const { data, error } = await q;
+    if (error) throw error;
+    if (!data || !data.length) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+  }
+  return all;
+}
+
 // ── Navigation ─────────────────────────────────────────────────────────────────
 const pages = document.querySelectorAll('.page');
 const navLinks = document.querySelectorAll('nav a[data-page]');
@@ -280,12 +295,16 @@ async function loadHistory() {
   const container = document.getElementById('historyList');
   container.innerHTML = '<p class="empty">Loading...</p>';
 
-  const { data, error } = await db
-    .from('trade_ideas')
-    .select('*, positions(*)')
-    .order('date', { ascending: false });
-
-  if (error || !data?.length) {
+  let data;
+  try {
+    data = await fetchAllPaged('trade_ideas', q =>
+      q.select('*, positions(*)').order('date', { ascending: false })
+    );
+  } catch (err) {
+    container.innerHTML = `<p class="empty">Error loading trades: ${err.message}</p>`;
+    return;
+  }
+  if (!data.length) {
     container.innerHTML = '<p class="empty">No trades yet. Start logging!</p>';
     return;
   }

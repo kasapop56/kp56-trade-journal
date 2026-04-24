@@ -461,8 +461,14 @@ let currentRange = 'all';
 
 async function loadDashboard() {
   if (!allDashboardData.length) {
-    const { data } = await db.from('trade_ideas').select('*, positions(*)').order('date', { ascending: true });
-    allDashboardData = data || [];
+    try {
+      allDashboardData = await fetchAllPaged('trade_ideas', q =>
+        q.select('*, positions(*)').order('date', { ascending: true })
+      );
+    } catch (err) {
+      console.error('loadDashboard failed', err);
+      allDashboardData = [];
+    }
   }
   renderDashboard(currentRange);
 }
