@@ -51,7 +51,7 @@
   // ── File → parse → group → preview ───────────────────────────────────────
   async function handleFile(file) {
     try {
-      const text = await file.text();
+      const text = await readFileSmart(file);
       const raw = parseMt5Report(text);
       const symbol = symbolInput.value.trim().toUpperCase();
       const filtered = symbol ? raw.filter(t => t.symbol.toUpperCase().includes(symbol)) : raw;
@@ -100,6 +100,23 @@
     return [...map.values()].sort((a, b) => a.openTime.localeCompare(b.openTime));
   }
 
+  // MT5 exports HTML as UTF-16 LE (with BOM). Blob.text() assumes UTF-8, which
+  // produces garbage. Detect BOM and decode with the right encoding.
+  async function readFileSmart(file) {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let encoding = 'utf-8';
+    let offset = 0;
+    if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+      encoding = 'utf-16le'; offset = 2;
+    } else if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+      encoding = 'utf-16be'; offset = 2;
+    } else if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      offset = 3; // UTF-8 BOM
+    }
+    return new TextDecoder(encoding).decode(bytes.slice(offset));
+  }
+
   function parseMt5Report(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const rows = [...doc.querySelectorAll('tr')];
@@ -107,8 +124,12 @@
     const diag = { totalRows: rows.length, twoDt: 0, noType: 0, missingVals: 0, samples: [] };
 
     for (const tr of rows) {
-      // Normalize internal whitespace (newlines, nbsp, tabs) into single spaces
-      const cells = [...tr.children].map(c =>
+      // HF Markets reports inject <td class="hidden" colspan="8"> spacer cells.
+      // Strip those before indexing so the layout matches the header row.
+      const visibleTds = [...tr.children].filter(c =>
+        c.tagName === 'TD' || c.tagName === 'TH'
+      ).filter(c => !c.classList.contains('hidden'));
+      const cells = visibleTds.map(c =>
         c.textContent.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim()
       );
       if (cells.length < 10) continue;
