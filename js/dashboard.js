@@ -5,11 +5,30 @@ function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
 }
 
+function toLocalYMD(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function filterByRange(data, range) {
   const now = new Date();
+
+  if (range === 'custom') {
+    const from = document.getElementById('dateFrom')?.value;
+    const to   = document.getElementById('dateTo')?.value;
+    return data.filter(t => {
+      if (from && t.date < from) return false;
+      if (to && t.date > to) return false;
+      return true;
+    });
+  }
+
   return data.filter(t => {
     const d = new Date(t.date);
     if (range === 'today') return d.toDateString() === now.toDateString();
+    if (range === 'yesterday') {
+      const y = new Date(now); y.setDate(now.getDate() - 1);
+      return t.date === toLocalYMD(y);
+    }
     if (range === 'week') {
       const start = new Date(now); start.setDate(now.getDate() - 6); start.setHours(0,0,0,0);
       return d >= start;
@@ -468,6 +487,22 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    const fromEl = document.getElementById('dateFrom');
+    const toEl = document.getElementById('dateTo');
+    if (fromEl) { fromEl.value = ''; fromEl.classList.remove('active'); }
+    if (toEl)   { toEl.value = '';   toEl.classList.remove('active'); }
     renderDashboard(btn.dataset.range);
+  });
+});
+
+// Custom date range
+['dateFrom', 'dateTo'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('change', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('dateFrom').classList.toggle('active', !!document.getElementById('dateFrom').value);
+    document.getElementById('dateTo').classList.toggle('active', !!document.getElementById('dateTo').value);
+    renderDashboard('custom');
   });
 });

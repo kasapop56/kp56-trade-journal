@@ -321,9 +321,13 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 .empty { text-align: center; padding: 60px 20px; color: var(--text-dim); font-size: 14px; }
 
 /* FILTER BAR */
-.filter-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+.filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
 .filter-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 7px 16px; font-size: 13px; cursor: pointer; }
 .filter-btn.active, .filter-btn:hover { border-color: var(--gold-dim); color: var(--gold); }
+.filter-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.filter-date { width: auto; padding: 6px 8px; font-size: 12px; color-scheme: dark; }
+.filter-date.active { border-color: var(--gold-dim); color: var(--gold); }
+.filter-to { font-size: 12px; color: var(--text-dim); }
 
 /* KPI GRID */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
