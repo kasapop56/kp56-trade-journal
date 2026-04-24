@@ -289,6 +289,16 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 .history-summary .pos { color: var(--bull); font-weight: 600; }
 .history-summary .neg { color: var(--bear); font-weight: 600; }
 
+.btn-load-more {
+  display: block; width: 100%; margin-top: 12px; padding: 10px;
+  background: var(--surface2); color: var(--gold);
+  border: 1px dashed var(--gold-dim); border-radius: 8px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-load-more:hover:not(:disabled) { background: rgba(240,180,41,0.08); }
+.btn-load-more:disabled { opacity: 0.5; cursor: default; }
+
 /* STATS */
 .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }
 .stat-box { background: var(--surface2); border-radius: 8px; padding: 16px; text-align: center; }

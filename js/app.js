@@ -91,7 +91,7 @@ const navLinks = document.querySelectorAll('nav a[data-page]');
 function navigate(pageId) {
   pages.forEach(p => p.classList.toggle('active', p.id === pageId));
   navLinks.forEach(a => a.classList.toggle('active', a.dataset.page === pageId));
-  if (pageId === 'history') loadHistory();
+  if (pageId === 'history') loadHistory();  // fires a fresh query (offset 0)
   if (pageId === 'stats') { allDashboardData = []; loadDashboard(); loadPortfolio(); }
 }
 
@@ -357,11 +357,14 @@ function loadTradeIntoForm(t) {
 
 // ── History ────────────────────────────────────────────────────────────────────
 // Unified chronological view across `trade_ideas` (manual logs) and `mt5_trades`
-// (auto-synced closed positions). Both tables are fetched once, normalized to a
-// common card shape, cached in memory, and re-rendered on filter change. Data is
-// only re-fetched when callers invalidate the cache (delete, import) or on hard
-// refresh.
-let historyCache = null;
+// (auto-synced closed positions). Queries the `v_trades_unified` Postgres view
+// with server-side filter pushdown + pagination. Filter changes re-query
+// Supabase from offset 0; "Load more" fetches the next page.
+const HISTORY_PAGE_SIZE = 50;
+let historyRows   = [];     // rows loaded so far (grows with "Load more")
+let historyOffset = 0;
+let historyTotal  = 0;      // total rows matching current filters (from count)
+
 const historyFilters = {
   direction: 'ALL',   // ALL | BUY | SELL
   outcome:   'ALL',   // ALL | WIN | LOSS | BE
@@ -372,193 +375,148 @@ const historyFilters = {
   search:    ''
 };
 
-async function loadHistory(forceRefresh = false) {
-  const container = document.getElementById('historyList');
+function buildHistoryQuery() {
+  let q = db.from('v_trades_unified').select('*', { count: 'exact' });
+  const f = historyFilters;
+  if (f.direction !== 'ALL') q = q.eq('direction', f.direction);
+  if (f.source    !== 'ALL') q = q.eq('source',    f.source);
+  if (f.outcome   !== 'ALL') q = q.eq('outcome',   f.outcome);
+  if (f.dateFrom) q = q.gte('display_date', f.dateFrom);
+  if (f.dateTo)   q = q.lte('display_date', f.dateTo);
+  if (f.search) {
+    // search_blob is stored lowercased in the view; also escape LIKE wildcards.
+    const esc = f.search.toLowerCase().replace(/[%_]/g, '\\$&');
+    q = q.ilike('search_blob', `%${esc}%`);
+  }
+  switch (f.sort) {
+    case 'oldest':   q = q.order('sort_key',  { ascending: true  }); break;
+    case 'bestpnl':  q = q.order('total_pnl', { ascending: false, nullsFirst: false }); break;
+    case 'worstpnl': q = q.order('total_pnl', { ascending: true,  nullsFirst: false }); break;
+    default:         q = q.order('sort_key',  { ascending: false });
+  }
+  return q;
+}
 
-  if (!forceRefresh && historyCache) {
-    applyHistoryFilters();
-    return;
+async function loadHistory({ append = false } = {}) {
+  const container = document.getElementById('historyList');
+  const moreBtn   = document.getElementById('loadMoreBtn');
+
+  if (!append) {
+    historyRows   = [];
+    historyOffset = 0;
+    container.innerHTML = '<p class="empty">Loading...</p>';
+    if (moreBtn) moreBtn.style.display = 'none';
+  } else if (moreBtn) {
+    moreBtn.disabled = true;
+    moreBtn.textContent = 'Loading...';
   }
 
-  container.innerHTML = '<p class="empty">Loading...</p>';
-
-  let manualData = [], mt5Data = [];
   try {
-    [manualData, mt5Data] = await Promise.all([
-      fetchAllPaged('trade_ideas', q => q.select('*, positions(*)').order('date', { ascending: false })),
-      fetchAllPaged('mt5_trades',  q => q.select('*').order('close_time', { ascending: false }))
-    ]);
+    const q = buildHistoryQuery().range(historyOffset, historyOffset + HISTORY_PAGE_SIZE - 1);
+    const { data, count, error } = await q;
+    if (error) throw error;
+    historyRows   = historyRows.concat(data || []);
+    historyOffset = historyRows.length;
+    if (count != null) historyTotal = count;
   } catch (err) {
     container.innerHTML = `<p class="empty">Error loading trades: ${err.message}</p>`;
+    if (moreBtn) moreBtn.style.display = 'none';
     return;
   }
-
-  historyCache = [
-    ...manualData.map(normalizeManualTrade),
-    ...mt5Data.map(normalizeMT5Trade)
-  ];
-
-  applyHistoryFilters();
+  renderHistoryCards();
 }
 
-function normalizeManualTrade(t) {
-  // Sort key is a `YYYY-MM-DDTHH:MM` string in server-time reference frame,
-  // sortable lexicographically. Manual times are entered in server time by
-  // convention; MT5 times are converted to server time in normalizeMT5Trade.
-  // Supabase returns `time` columns as "HH:MM:SS" — slice to HH:MM.
-  const rawTime = (t.exit_time || t.entry_time || '00:00').slice(0, 5);
-  const sortKey = `${t.date}T${rawTime}`;
-  let outcome = null;
-  if (t.result === 'BE') outcome = 'BE';
-  else if (t.total_pnl != null && t.total_pnl > 0) outcome = 'WIN';
-  else if (t.total_pnl != null && t.total_pnl < 0) outcome = 'LOSS';
-  const searchBlob = [t.key_levels, t.memo, t.post_trade_notes, 'manual']
-    .filter(Boolean).join(' ').toLowerCase();
-  return {
-    _source: 'MANUAL',
-    _raw: t,
-    date: t.date,
-    direction: t.direction,
-    entryTime: t.entry_time ? t.entry_time.slice(0,5) : null,
-    exitTime:  t.exit_time  ? t.exit_time.slice(0,5)  : null,
-    session: tradeSession(t),
-    totalPnl: t.total_pnl,
-    outcome,
-    sortKey,
-    symbol: null,
-    volume: t.positions?.[0]?.lot_size ?? null,
-    searchBlob
-  };
-}
-
-function normalizeMT5Trade(t) {
-  // Convert UTC close_time to broker-server local date/time using the user's TZ
-  // setting — so date grouping matches the Session filter on Stats.
-  const closeUtc = new Date(t.close_time);
-  const openUtc  = new Date(t.open_time);
-  const tzOff    = getServerTzOffset();
-  const closeLocal = new Date(closeUtc.getTime() + tzOff * 3600 * 1000);
-  const openLocal  = new Date(openUtc.getTime()  + tzOff * 3600 * 1000);
-  const pad = n => String(n).padStart(2, '0');
-  const dateStr   = closeLocal.getUTCFullYear() + '-' + pad(closeLocal.getUTCMonth()+1) + '-' + pad(closeLocal.getUTCDate());
-  const exitTime  = pad(closeLocal.getUTCHours()) + ':' + pad(closeLocal.getUTCMinutes());
-  const entryTime = pad(openLocal.getUTCHours())  + ':' + pad(openLocal.getUTCMinutes());
-  const session   = deriveSession(exitTime);
-
-  const pnl = (Number(t.profit)||0) + (Number(t.swap)||0) + (Number(t.commission)||0);
-  // BE auto-detect: if close is within a small distance of entry, treat as
-  // break-even regardless of P&L sign. Catches the common "SL moved to
-  // breakeven and hit" case — the trade didn't complete, it was flat.
-  // $0.50 ≈ 5 pips of gold; roughly the spread on XAU. Tune if needed.
-  const BE_PRICE_TOLERANCE = 0.50;
-  const priceMove = Math.abs(Number(t.close_price) - Number(t.open_price));
-  let outcome;
-  if (priceMove <= BE_PRICE_TOLERANCE) outcome = 'BE';
-  else if (pnl > 0)                    outcome = 'WIN';
-  else                                 outcome = 'LOSS';
-  const searchBlob = [t.symbol, t.comment, 'mt5', String(t.deal_ticket), String(t.position_id)]
-    .filter(Boolean).join(' ').toLowerCase();
-
-  return {
-    _source: 'MT5',
-    _raw: t,
-    date: dateStr,
-    direction: (t.type || '').toUpperCase(),
-    entryTime, exitTime, session,
-    totalPnl: pnl,
-    outcome,
-    sortKey: `${dateStr}T${exitTime}`,
-    symbol: t.symbol,
-    volume: Number(t.volume),
-    searchBlob
-  };
-}
-
-function applyHistoryFilters() {
-  if (!historyCache) return;
-  const f = historyFilters;
-  let rows = historyCache.slice();
-
-  if (f.direction !== 'ALL') rows = rows.filter(r => r.direction === f.direction);
-  if (f.source    !== 'ALL') rows = rows.filter(r => r._source  === f.source);
-  if (f.outcome   !== 'ALL') rows = rows.filter(r => r.outcome  === f.outcome);
-  if (f.dateFrom)            rows = rows.filter(r => r.date && r.date >= f.dateFrom);
-  if (f.dateTo)              rows = rows.filter(r => r.date && r.date <= f.dateTo);
-  if (f.search) {
-    const q = f.search.toLowerCase();
-    rows = rows.filter(r => r.searchBlob.includes(q));
-  }
-
-  switch (f.sort) {
-    case 'oldest':   rows.sort((a,b) => a.sortKey.localeCompare(b.sortKey)); break;
-    case 'bestpnl':  rows.sort((a,b) => (b.totalPnl ?? -Infinity) - (a.totalPnl ?? -Infinity)); break;
-    case 'worstpnl': rows.sort((a,b) => (a.totalPnl ??  Infinity) - (b.totalPnl ??  Infinity)); break;
-    default:         rows.sort((a,b) => b.sortKey.localeCompare(a.sortKey));
-  }
-
-  renderHistoryCards(rows);
-}
-
-function renderHistoryCards(rows) {
+function renderHistoryCards() {
   const container = document.getElementById('historyList');
   const summary   = document.getElementById('historySummary');
+  const moreBtn   = document.getElementById('loadMoreBtn');
+  const rows      = historyRows;
 
-  const net  = rows.reduce((s,r) => s + (r.totalPnl || 0), 0);
+  const net  = rows.reduce((s,r) => s + (Number(r.total_pnl) || 0), 0);
   const wins = rows.filter(r => r.outcome === 'WIN').length;
   const netCls = net > 0 ? 'pos' : net < 0 ? 'neg' : '';
-  summary.innerHTML = rows.length === 0
+  summary.innerHTML = historyTotal === 0 && rows.length === 0
     ? ''
-    : `${rows.length} trade${rows.length!==1?'s':''} · <span class="${netCls}">Net ${net>=0?'+':''}$${net.toFixed(2)}</span> · ${wins} win${wins!==1?'s':''}`;
+    : `Showing <b>${rows.length}</b> of <b>${historyTotal}</b> · ` +
+      `<span class="${netCls}">Loaded P&amp;L ${net>=0?'+':''}$${net.toFixed(2)}</span> · ` +
+      `${wins} win${wins!==1?'s':''} in loaded page`;
 
   if (!rows.length) {
-    container.innerHTML = historyCache && historyCache.length
+    container.innerHTML = historyTotal > 0
       ? '<p class="empty">No trades match your filters.</p>'
       : '<p class="empty">No trades yet. Start logging!</p>';
+    if (moreBtn) moreBtn.style.display = 'none';
     return;
   }
 
   container.innerHTML = '';
   rows.forEach(r => {
-    const pnlClass = r.totalPnl > 0 ? 'pos' : r.totalPnl < 0 ? 'neg' : '';
-    const pnlText  = r.totalPnl != null ? (r.totalPnl > 0 ? '+' : '') + '$' + Number(r.totalPnl).toFixed(2) : '—';
+    const pnl      = Number(r.total_pnl);
+    const pnlClass = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '';
+    const pnlText  = r.total_pnl != null ? (pnl > 0 ? '+' : '') + '$' + pnl.toFixed(2) : '—';
     const card = document.createElement('div');
     card.className = 'trade-card';
 
-    const srcTag = r._source === 'MT5'
+    const srcTag = r.source === 'MT5'
       ? '<span class="tag src-mt5">MT5</span>'
       : '<span class="tag src-manual">Manual</span>';
     const dirTag = r.direction
       ? `<span class="tag ${r.direction === 'BUY' ? 'bull' : 'bear'}">${r.direction}</span>`
       : '';
-    const raw = r._raw;
-    const extraTags = r._source === 'MT5'
+    const extraTags = r.source === 'MT5'
       ? [
           r.symbol ? `<span class="tag session">${r.symbol}</span>` : '',
-          r.volume ? `<span class="tag session">${r.volume.toFixed(2)} lots</span>` : ''
+          r.volume ? `<span class="tag session">${Number(r.volume).toFixed(2)} lots</span>` : ''
         ]
       : [
-          raw.bias_h1 ? `<span class="tag ${raw.bias_h1.toLowerCase()}">M15 ${raw.bias_h1}</span>` : '',
-          raw.bias_m5 ? `<span class="tag ${raw.bias_m5.toLowerCase()}">M5 ${raw.bias_m5}</span>` : '',
-          raw.result  ? `<span class="tag ${raw.result.toLowerCase()}">${raw.result}</span>`   : '',
-          raw.positions?.length ? `<span class="tag session">${raw.positions.length} pos</span>` : ''
+          r.bias_h1 ? `<span class="tag ${r.bias_h1.toLowerCase()}">M15 ${r.bias_h1}</span>` : '',
+          r.bias_m5 ? `<span class="tag ${r.bias_m5.toLowerCase()}">M5 ${r.bias_m5}</span>` : '',
+          r.manual_result ? `<span class="tag ${r.manual_result.toLowerCase()}">${r.manual_result}</span>` : '',
+          r.positions_count > 1 ? `<span class="tag session">${r.positions_count} pos</span>` : ''
         ];
-    const sessionTag = r.session ? `<span class="tag session">${r.session}</span>` : '';
+    // MT5 rows have no stored session — derive from exit_time as before.
+    const sessionLabel = r.session || (r.exit_time ? deriveSession(r.exit_time) : null);
+    const sessionTag = sessionLabel ? `<span class="tag session">${sessionLabel}</span>` : '';
 
     card.innerHTML = `
       <div class="header">
-        <span class="date">${r.date}${r.exitTime ? ' · ' + r.exitTime : ''}</span>
+        <span class="date">${r.display_date}${r.exit_time ? ' · ' + r.exit_time : ''}</span>
         <span class="pnl ${pnlClass}">${pnlText}</span>
       </div>
       <div class="tags">
         ${srcTag}${dirTag}${extraTags.filter(Boolean).join('')}${sessionTag}
       </div>
     `;
-    card.addEventListener('click', () => {
-      if (r._source === 'MT5') openMT5Modal(r._raw);
-      else openTradeModal(r._raw);
-    });
+    card.addEventListener('click', () => openTradeCard(r));
     container.appendChild(card);
   });
+
+  if (moreBtn) {
+    const remaining = Math.max(0, historyTotal - historyOffset);
+    moreBtn.style.display = remaining > 0 ? 'block' : 'none';
+    moreBtn.disabled = false;
+    moreBtn.textContent = `Load more (${Math.min(HISTORY_PAGE_SIZE, remaining)} of ${remaining} left)`;
+  }
+}
+
+// On card click, fetch the full base-table row — the view only carries the
+// fields needed for the list render, not the full modal detail.
+async function openTradeCard(viewRow) {
+  try {
+    if (viewRow.source === 'MT5') {
+      const { data, error } = await db.from('mt5_trades')
+        .select('*').eq('id', viewRow.row_id).single();
+      if (error) throw error;
+      openMT5Modal(data);
+    } else {
+      const { data, error } = await db.from('trade_ideas')
+        .select('*, positions(*)').eq('id', viewRow.row_id).single();
+      if (error) throw error;
+      openTradeModal(data);
+    }
+  } catch (err) {
+    showToast('Error loading trade: ' + err.message, 'error');
+  }
 }
 
 // ── History filter wiring ─────────────────────────────────────────────────────
@@ -570,29 +528,31 @@ function initHistoryFilters() {
         .forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       historyFilters[group] = btn.dataset.val;
-      applyHistoryFilters();
+      loadHistory();
     });
   });
   document.getElementById('historySort').addEventListener('change', e => {
     historyFilters.sort = e.target.value;
-    applyHistoryFilters();
+    loadHistory();
   });
   document.getElementById('histDateFrom').addEventListener('change', e => {
     historyFilters.dateFrom = e.target.value;
-    applyHistoryFilters();
+    loadHistory();
   });
   document.getElementById('histDateTo').addEventListener('change', e => {
     historyFilters.dateTo = e.target.value;
-    applyHistoryFilters();
+    loadHistory();
   });
   let searchTimer = null;
   document.getElementById('histSearch').addEventListener('input', e => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       historyFilters.search = e.target.value.trim();
-      applyHistoryFilters();
-    }, 150);
+      loadHistory();
+    }, 300);
   });
+  const moreBtn = document.getElementById('loadMoreBtn');
+  if (moreBtn) moreBtn.addEventListener('click', () => loadHistory({ append: true }));
 }
 initHistoryFilters();
 
@@ -642,8 +602,7 @@ function openTradeModal(t) {
     await db.from('trade_ideas').delete().eq('id', t.id);
     document.getElementById('tradeModal').classList.remove('open');
     showToast('Trade deleted', 'error');
-    historyCache = null;
-    loadHistory(true);
+    loadHistory();
   };
 }
 

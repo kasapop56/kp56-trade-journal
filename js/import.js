@@ -303,8 +303,7 @@
     showToast(`Imported ${ok} trade${ok === 1 ? '' : 's'}${fail ? ` (${fail} failed)` : ''}`, fail ? 'error' : 'success');
     if (ok) {
       modal.classList.remove('open');
-      historyCache = null;
-      loadHistory(true);
+      loadHistory();
     }
   });
 
