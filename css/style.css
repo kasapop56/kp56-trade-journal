@@ -209,6 +209,22 @@ select option { background: var(--surface2); }
 .btn-submit:hover { background: #d4a020; }
 .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* IMPORT */
+.history-toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.btn-secondary {
+  background: var(--surface2); color: var(--gold); border: 1px solid var(--gold-dim);
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-secondary:hover { background: var(--gold-dim); color: #fff; }
+.import-modal { max-width: 920px; }
+.preview-wrap { max-height: 50vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.preview-table { font-size: 12px; }
+.preview-table th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.preview-table td, .preview-table th { padding: 6px 8px; white-space: nowrap; }
+.preview-table tr.dup td { opacity: 0.45; }
+.preview-table .tiny { color: var(--text-dim); font-size: 11px; }
+code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+
 /* TOAST */
 .toast {
   position: fixed;

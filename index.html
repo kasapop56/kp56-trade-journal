@@ -162,8 +162,65 @@
 
 <!-- ── HISTORY ─────────────────────────────────────────────────────────────── -->
 <div id="history" class="page">
+  <div class="history-toolbar">
+    <button type="button" class="btn-secondary" id="openImport">+ Import from MT5</button>
+  </div>
   <div id="historyList">
     <p class="empty">Loading trades...</p>
+  </div>
+</div>
+
+<!-- ── IMPORT MODAL ───────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="importModal">
+  <div class="modal import-modal">
+    <div class="modal-header">
+      <h3>Import from MT5</h3>
+      <button class="btn-close" id="closeImport">×</button>
+    </div>
+
+    <div class="modal-section" id="importStep1">
+      <h4>1. Export your MT5 history</h4>
+      <p style="font-size:13px;color:var(--text-dim);line-height:1.7;margin-bottom:10px">
+        In MT5: <b>History tab</b> → right-click → <b>Report</b> → <b>HTML</b>. Save the <code>.htm</code> file, then select it below.
+      </p>
+      <h4 style="margin-top:14px">2. Select the report file</h4>
+      <div class="drop-zone" id="importDrop">
+        Click to select <code>.htm</code> / <code>.html</code> file
+        <input type="file" accept=".htm,.html" id="importFile" />
+      </div>
+      <div style="margin-top:12px">
+        <label>Symbol filter (leave blank for all)</label>
+        <input type="text" id="importSymbol" value="XAUUSD" placeholder="e.g. XAUUSD" />
+      </div>
+    </div>
+
+    <div class="modal-section" id="importStep2" style="display:none">
+      <h4>Review &amp; import</h4>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px" id="importSummary"></p>
+      <div class="preview-wrap">
+        <table class="dash-table preview-table">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="selectAll" checked /></th>
+              <th>Date</th>
+              <th>Dir</th>
+              <th>Lot</th>
+              <th>Entry</th>
+              <th>SL</th>
+              <th>TP</th>
+              <th>Exit</th>
+              <th>P&amp;L</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="previewBody"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" class="btn-edit" id="backImport">Back</button>
+        <button type="button" class="btn-submit" id="confirmImport" style="width:auto;padding:10px 24px">Import Selected</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -310,5 +367,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="js/app.js"></script>
 <script src="js/dashboard.js"></script>
+<script src="js/import.js"></script>
 </body>
 </html>
