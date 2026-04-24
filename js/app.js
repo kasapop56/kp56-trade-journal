@@ -402,7 +402,12 @@ async function loadHistory(forceRefresh = false) {
 }
 
 function normalizeManualTrade(t) {
-  const sortTs = new Date(`${t.date}T${t.exit_time || t.entry_time || '00:00'}:00`).getTime();
+  // Sort key is a `YYYY-MM-DDTHH:MM` string in server-time reference frame,
+  // sortable lexicographically. Manual times are entered in server time by
+  // convention; MT5 times are converted to server time in normalizeMT5Trade.
+  // Supabase returns `time` columns as "HH:MM:SS" — slice to HH:MM.
+  const rawTime = (t.exit_time || t.entry_time || '00:00').slice(0, 5);
+  const sortKey = `${t.date}T${rawTime}`;
   let outcome = null;
   if (t.result === 'BE') outcome = 'BE';
   else if (t.total_pnl != null && t.total_pnl > 0) outcome = 'WIN';
@@ -419,7 +424,7 @@ function normalizeManualTrade(t) {
     session: tradeSession(t),
     totalPnl: t.total_pnl,
     outcome,
-    sortTs,
+    sortKey,
     symbol: null,
     volume: t.positions?.[0]?.lot_size ?? null,
     searchBlob
@@ -462,7 +467,7 @@ function normalizeMT5Trade(t) {
     entryTime, exitTime, session,
     totalPnl: pnl,
     outcome,
-    sortTs: closeUtc.getTime(),
+    sortKey: `${dateStr}T${exitTime}`,
     symbol: t.symbol,
     volume: Number(t.volume),
     searchBlob
@@ -485,10 +490,10 @@ function applyHistoryFilters() {
   }
 
   switch (f.sort) {
-    case 'oldest':   rows.sort((a,b) => a.sortTs - b.sortTs); break;
+    case 'oldest':   rows.sort((a,b) => a.sortKey.localeCompare(b.sortKey)); break;
     case 'bestpnl':  rows.sort((a,b) => (b.totalPnl ?? -Infinity) - (a.totalPnl ?? -Infinity)); break;
     case 'worstpnl': rows.sort((a,b) => (a.totalPnl ??  Infinity) - (b.totalPnl ??  Infinity)); break;
-    default:         rows.sort((a,b) => b.sortTs - a.sortTs);
+    default:         rows.sort((a,b) => b.sortKey.localeCompare(a.sortKey));
   }
 
   renderHistoryCards(rows);
