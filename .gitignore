@@ -1,1 +1,6 @@
 .DS_Store
+
+# MT5 trade history exports (account data)
+ReportHistory-*.htm
+ReportHistory-*.html
+*.htm
