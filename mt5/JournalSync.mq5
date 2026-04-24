@@ -123,20 +123,28 @@ void SendTradeClosed(ulong close_deal)
    // closing a BUY uses DEAL_TYPE_SELL and vice versa. Flip it to recover intent.
    string type_str = (deal_type == DEAL_TYPE_SELL) ? "buy" : "sell";
 
-   // Find the opening deal for this position to get open_time + open_price.
+   // Find the opening deal for this position. HistorySelectByPosition is the
+   // canonical way — it loads every deal tied to this position_id regardless
+   // of when it was opened. More reliable than a time-window HistorySelect.
    datetime open_t   = 0;
    double   open_px  = 0.0;
-   int total = HistoryDealsTotal();
-   for(int i = 0; i < total; i++)
+   if(HistorySelectByPosition(position_id))
    {
-      ulong tk = HistoryDealGetTicket(i);
-      if(tk == 0) continue;
-      if(HistoryDealGetInteger(tk, DEAL_POSITION_ID) != position_id) continue;
-      if(HistoryDealGetInteger(tk, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
-      open_t  = (datetime)HistoryDealGetInteger(tk, DEAL_TIME);
-      open_px = HistoryDealGetDouble(tk, DEAL_PRICE);
-      break;
+      int total = HistoryDealsTotal();
+      for(int i = 0; i < total; i++)
+      {
+         ulong tk = HistoryDealGetTicket(i);
+         if(tk == 0) continue;
+         if(HistoryDealGetInteger(tk, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
+         open_t  = (datetime)HistoryDealGetInteger(tk, DEAL_TIME);
+         open_px = HistoryDealGetDouble(tk, DEAL_PRICE);
+         break;
+      }
    }
+   // Last-resort fallback if the opening deal is somehow unavailable — use
+   // close values so the record is non-null and at least captures the close.
+   if(open_t == 0)  { open_t = close_t;  Print("[JournalSync] WARN: opening deal not found for pos ", position_id, " — using close_time as open_time"); }
+   if(open_px == 0) { open_px = close_px; }
 
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    double eq  = AccountInfoDouble(ACCOUNT_EQUITY);
