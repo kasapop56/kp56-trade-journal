@@ -9,6 +9,20 @@ function toLocalYMD(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
+// Hold time in minutes (uses entry_time + exit_time, same day assumed).
+function holdMinutes(t) {
+  if (!t.entry_time || !t.exit_time) return null;
+  const [eh, em] = t.entry_time.split(':').map(Number);
+  const [xh, xm] = t.exit_time.split(':').map(Number);
+  let diff = (xh * 60 + xm) - (eh * 60 + em);
+  if (diff < 0) diff += 24 * 60; // crossed midnight
+  return diff;
+}
+
+function hasStopLoss(t) {
+  return t.sl_level != null && t.sl_level !== 0 && t.sl_level !== '';
+}
+
 function filterByRange(data, range) {
   const now = new Date();
 
@@ -214,14 +228,19 @@ function renderResult(trades) {
 // ── P&L by Session ─────────────────────────────────────────────────────────────
 function renderSession(trades) {
   destroyChart('session');
-  const sessions = { ASIA: 0, LONDON: 0, NY: 0 };
-  trades.forEach(t => { if (t.session && sessions[t.session] !== undefined) sessions[t.session] += (t.total_pnl || 0); });
+  const sessions = { ASIA: 0, LONDON: 0, OVERLAP: 0, NY: 0, QUIET: 0 };
+  trades.forEach(t => {
+    const s = tradeSession(t);
+    if (s && sessions[s] !== undefined) sessions[s] += (t.total_pnl || 0);
+  });
 
-  const vals = Object.values(sessions).map(v => parseFloat(v.toFixed(2)));
+  const keys = ['ASIA', 'LONDON', 'OVERLAP', 'NY', 'QUIET'];
+  const labels = ['Asia', 'London', 'LDN+NY', 'NY', 'Quiet'];
+  const vals = keys.map(k => parseFloat(sessions[k].toFixed(2)));
   charts.session = new Chart(document.getElementById('sessionChart').getContext('2d'), {
     type: 'bar',
     data: {
-      labels: ['Asia', 'London', 'New York'],
+      labels,
       datasets: [{
         label: 'P&L (USD)',
         data: vals,
@@ -368,7 +387,7 @@ function renderHour(trades) {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: baseScales('Hour (Thai Time)', 'USD'),
+      scales: baseScales(`Hour (broker server time, GMT${getServerTzOffset() >= 0 ? '+' : ''}${getServerTzOffset()})`, 'USD'),
     }
   });
 }
@@ -427,13 +446,13 @@ function renderDirection(trades) {
 
 // ── Session Table ──────────────────────────────────────────────────────────────
 function renderSessionTable(trades) {
-  const sessions = ['ASIA', 'LONDON', 'NY'];
+  const sessions = ['ASIA', 'LONDON', 'OVERLAP', 'NY', 'QUIET'];
   const tbody = document.getElementById('sessionTableBody');
   if (!tbody) return;
   tbody.innerHTML = '';
 
   sessions.forEach(s => {
-    const t = trades.filter(x => x.session === s);
+    const t = trades.filter(x => tradeSession(x) === s);
     const closed = t.filter(x => x.result);
     const tpW   = closed.filter(x => x.result === 'TP').length;
     const profW = t.filter(x => x.total_pnl > 0).length;
@@ -452,6 +471,147 @@ function renderSessionTable(trades) {
         <td class="${pnlClass}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
         <td>${t.filter(x => x.max_drawdown).length ? '$' + avgDD.toFixed(2) : '—'}</td>
       </tr>`;
+  });
+}
+
+// ── Risk Analysis ──────────────────────────────────────────────────────────────
+// The 4 findings that explain most P&L leaks:
+//   1. Avg-win vs Avg-loss ratio   (payoff asymmetry)
+//   2. Hold-time cliff              (>15 min = losses)
+//   3. Scaled vs single entries     (averaging-down damage)
+//   4. Trades without SL            (no risk cap)
+function renderRiskAnalysis(trades) {
+  const withPnl = trades.filter(t => t.total_pnl != null);
+  const wins = withPnl.filter(t => t.total_pnl > 0);
+  const losses = withPnl.filter(t => t.total_pnl < 0);
+  const avgWin = wins.length ? wins.reduce((s, t) => s + t.total_pnl, 0) / wins.length : 0;
+  const avgLoss = losses.length ? losses.reduce((s, t) => s + t.total_pnl, 0) / losses.length : 0;
+  const ratio = avgLoss !== 0 ? Math.abs(avgWin / avgLoss) : 0;
+
+  // 1. Payoff card
+  const payoffEl = document.getElementById('riskPayoff');
+  if (payoffEl) {
+    const good = ratio >= 1;
+    payoffEl.className = 'risk-card ' + (good ? 'good' : 'bad');
+    payoffEl.innerHTML = `
+      <div class="risk-title">Win vs Loss Size</div>
+      <div class="risk-big">${ratio.toFixed(2)}×</div>
+      <div class="risk-sub">
+        Avg win <b class="pos">+$${avgWin.toFixed(2)}</b><br>
+        Avg loss <b class="neg">$${avgLoss.toFixed(2)}</b>
+      </div>
+      <div class="risk-verdict">${good
+        ? 'Wins at least cover losses — healthy.'
+        : `Losses are ${(1/ratio || 0).toFixed(1)}× bigger than wins. Cut losers earlier.`}</div>`;
+  }
+
+  // 2. Hold-time cliff: <15min vs >=15min
+  const withHold = withPnl.map(t => ({ t, m: holdMinutes(t) })).filter(x => x.m != null);
+  const quick = withHold.filter(x => x.m < 15);
+  const slow = withHold.filter(x => x.m >= 15);
+  const quickPnl = quick.reduce((s, x) => s + x.t.total_pnl, 0);
+  const slowPnl = slow.reduce((s, x) => s + x.t.total_pnl, 0);
+  const cliffEl = document.getElementById('riskCliff');
+  if (cliffEl) {
+    const bad = slowPnl < 0;
+    cliffEl.className = 'risk-card ' + (bad ? 'bad' : 'good');
+    cliffEl.innerHTML = `
+      <div class="risk-title">15-Minute Cliff</div>
+      <div class="risk-big ${slowPnl >= 0 ? 'pos' : 'neg'}">${slowPnl >= 0 ? '+' : ''}$${slowPnl.toFixed(0)}</div>
+      <div class="risk-sub">
+        <b>${quick.length}</b> quick (&lt;15m) → <b class="${quickPnl>=0?'pos':'neg'}">${quickPnl>=0?'+':''}$${quickPnl.toFixed(0)}</b><br>
+        <b>${slow.length}</b> held ≥15m → <b class="${slowPnl>=0?'pos':'neg'}">${slowPnl>=0?'+':''}$${slowPnl.toFixed(0)}</b>
+      </div>
+      <div class="risk-verdict">${bad
+        ? 'Holding past 15 min bleeds — set a time stop.'
+        : 'Long holds are working.'}</div>`;
+  }
+
+  // 3. Scaled vs Single (infer from positions[] count)
+  const single = withPnl.filter(t => (t.positions?.length || 1) === 1);
+  const scaled = withPnl.filter(t => (t.positions?.length || 1) > 1);
+  const singlePnl = single.reduce((s, t) => s + t.total_pnl, 0);
+  const scaledPnl = scaled.reduce((s, t) => s + t.total_pnl, 0);
+  const scaledEl = document.getElementById('riskScaled');
+  if (scaledEl) {
+    const bad = scaledPnl < 0 && scaled.length > 0;
+    scaledEl.className = 'risk-card ' + (bad ? 'bad' : scaled.length === 0 ? 'neutral' : 'good');
+    scaledEl.innerHTML = `
+      <div class="risk-title">Scaling Impact</div>
+      <div class="risk-big ${scaledPnl >= 0 ? 'pos' : 'neg'}">${scaledPnl >= 0 ? '+' : ''}$${scaledPnl.toFixed(0)}</div>
+      <div class="risk-sub">
+        <b>${single.length}</b> single → <b class="${singlePnl>=0?'pos':'neg'}">${singlePnl>=0?'+':''}$${singlePnl.toFixed(0)}</b><br>
+        <b>${scaled.length}</b> scaled → <b class="${scaledPnl>=0?'pos':'neg'}">${scaledPnl>=0?'+':''}$${scaledPnl.toFixed(0)}</b>
+      </div>
+      <div class="risk-verdict">${bad
+        ? 'Scaled entries are losing money. Stop averaging down.'
+        : scaled.length === 0 ? 'No scaled entries yet.' : 'Scaling is working.'}</div>`;
+  }
+
+  // 4. No-SL trades
+  const noSl = withPnl.filter(t => !hasStopLoss(t));
+  const noSlPnl = noSl.reduce((s, t) => s + t.total_pnl, 0);
+  const noSlPct = withPnl.length ? (noSl.length / withPnl.length) * 100 : 0;
+  const slEl = document.getElementById('riskNoSl');
+  if (slEl) {
+    const bad = noSlPct >= 20;
+    slEl.className = 'risk-card ' + (bad ? 'bad' : 'good');
+    slEl.innerHTML = `
+      <div class="risk-title">Trades Without SL</div>
+      <div class="risk-big">${noSl.length} <span style="font-size:15px;color:var(--text-dim)">(${noSlPct.toFixed(0)}%)</span></div>
+      <div class="risk-sub">
+        Net from no-SL trades:<br>
+        <b class="${noSlPnl>=0?'pos':'neg'}">${noSlPnl>=0?'+':''}$${noSlPnl.toFixed(2)}</b>
+      </div>
+      <div class="risk-verdict">${bad
+        ? 'Too many trades with no risk cap — one outlier can blow months of wins.'
+        : 'Good stop-loss discipline.'}</div>`;
+  }
+}
+
+// ── Hold-Duration Chart ────────────────────────────────────────────────────────
+function renderHoldDuration(trades) {
+  destroyChart('hold');
+  const buckets = [
+    { k: '<1m',   test: m => m < 1 },
+    { k: '1-5m',  test: m => m >= 1 && m < 5 },
+    { k: '5-15m', test: m => m >= 5 && m < 15 },
+    { k: '15-60m',test: m => m >= 15 && m < 60 },
+    { k: '1-4h',  test: m => m >= 60 && m < 240 },
+    { k: '4-24h', test: m => m >= 240 && m < 1440 },
+  ];
+  const stats = buckets.map(b => ({ k: b.k, pnl: 0, count: 0 }));
+  trades.forEach(t => {
+    if (t.total_pnl == null) return;
+    const m = holdMinutes(t);
+    if (m == null) return;
+    const idx = buckets.findIndex(b => b.test(m));
+    if (idx === -1) return;
+    stats[idx].pnl += t.total_pnl;
+    stats[idx].count++;
+  });
+  const ctx = document.getElementById('holdChart');
+  if (!ctx) return;
+
+  charts.hold = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: stats.map(s => `${s.k}\n(${s.count})`),
+      datasets: [{
+        label: 'P&L (USD)',
+        data: stats.map(s => parseFloat(s.pnl.toFixed(2))),
+        backgroundColor: stats.map(s => s.pnl >= 0 ? 'rgba(38,166,154,0.7)' : 'rgba(239,83,80,0.7)'),
+        borderRadius: 5,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `$${ctx.raw} — ${stats[ctx.dataIndex].count} trades` } },
+      },
+      scales: baseScales('Hold Duration', 'USD'),
+    }
   });
 }
 
@@ -477,16 +637,30 @@ function renderDashboard(range) {
   currentRange = range;
   const trades = filterByRange(allDashboardData, range);
   renderKPIs(trades);
+  renderRiskAnalysis(trades);
   renderEquity(trades);
   renderResult(trades);
   renderSession(trades);
   renderDayOfWeek(trades);
+  renderHoldDuration(trades);
   renderScatter(trades);
   renderBias(trades);
   renderHour(trades);
   renderDirection(trades);
   renderSessionTable(trades);
 }
+
+// Timezone picker — rebuilds session-dependent charts on change.
+function initTimezonePicker() {
+  const sel = document.getElementById('serverTz');
+  if (!sel) return;
+  sel.value = String(getServerTzOffset());
+  sel.addEventListener('change', () => {
+    setServerTzOffset(sel.value);
+    renderDashboard(currentRange);
+  });
+}
+document.addEventListener('DOMContentLoaded', initTimezonePicker);
 
 // Filter buttons
 document.querySelectorAll('.filter-btn').forEach(btn => {

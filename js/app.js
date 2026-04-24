@@ -4,6 +4,32 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// ── Timezone & Session Inference ──────────────────────────────────────────────
+// MT5 entry_time is broker server time; HF Markets is usually GMT+3 (summer) /
+// GMT+2 (winter). User picks once; default +3. Session is derived from UTC hour.
+function getServerTzOffset() {
+  const saved = localStorage.getItem('kp56_server_tz');
+  return saved == null ? 3 : parseInt(saved, 10);
+}
+function setServerTzOffset(h) { localStorage.setItem('kp56_server_tz', String(h)); }
+
+function deriveSession(entryTime) {
+  if (!entryTime) return null;
+  const [h] = entryTime.split(':').map(Number);
+  if (!Number.isFinite(h)) return null;
+  const utcH = ((h - getServerTzOffset()) % 24 + 24) % 24;
+  if (utcH < 6) return 'ASIA';
+  if (utcH < 12) return 'LONDON';
+  if (utcH < 16) return 'OVERLAP';
+  if (utcH < 21) return 'NY';
+  return 'QUIET';
+}
+
+function tradeSession(t) {
+  if (t.session) return t.session;
+  return deriveSession(t.entry_time);
+}
+
 // Paginated fetch — Supabase caps each response at 1000 rows by default.
 // configure() is a builder fn: (query) => query.select(...).order(...) etc.
 async function fetchAllPaged(table, configure, pageSize = 1000) {
@@ -317,7 +343,7 @@ async function loadHistory() {
     card.className = 'trade-card';
     card.innerHTML = `
       <div class="header">
-        <span class="date">${t.date} &nbsp;|&nbsp; ${t.session || '—'}</span>
+        <span class="date">${t.date} &nbsp;|&nbsp; ${tradeSession(t) || '—'}</span>
         <span class="pnl ${pnlClass}">${pnlText}</span>
       </div>
       <div class="tags">
@@ -325,7 +351,7 @@ async function loadHistory() {
         ${t.bias_h1 ? `<span class="tag ${t.bias_h1.toLowerCase()}">H1 ${t.bias_h1}</span>` : ''}
         ${t.bias_m5 ? `<span class="tag ${t.bias_m5.toLowerCase()}">M5 ${t.bias_m5}</span>` : ''}
         ${t.result ? `<span class="tag ${t.result.toLowerCase()}">${t.result}</span>` : ''}
-        ${t.session ? `<span class="tag session">${t.session}</span>` : ''}
+        ${tradeSession(t) ? `<span class="tag session">${tradeSession(t)}</span>` : ''}
         ${t.positions?.length ? `<span class="tag session">${t.positions.length} position${t.positions.length > 1 ? 's' : ''}</span>` : ''}
       </div>
     `;

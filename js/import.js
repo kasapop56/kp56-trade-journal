@@ -317,7 +317,7 @@
 
     const payload = {
       date: openDt.date,
-      session: null,
+      session: deriveSession(openDt.time),
       direction: g.direction,
       bias_h1: null,
       bias_m5: null,

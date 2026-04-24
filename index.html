@@ -237,6 +237,24 @@
     <input type="date" id="dateFrom" class="filter-date" title="From" />
     <span class="filter-to">to</span>
     <input type="date" id="dateTo" class="filter-date" title="To" />
+    <span class="filter-sep"></span>
+    <label class="tz-label" title="MT5 exports use broker server time. HF Markets is typically GMT+3 (summer) / GMT+2 (winter). Thai time is GMT+7.">Server TZ</label>
+    <select id="serverTz" class="filter-date" style="padding:6px 8px">
+      <option value="0">GMT+0 (UTC)</option>
+      <option value="2">GMT+2 (HF winter)</option>
+      <option value="3" selected>GMT+3 (HF summer)</option>
+      <option value="7">GMT+7 (Thai)</option>
+    </select>
+  </div>
+
+  <div class="card risk-card-wrap">
+    <h2>Risk Analysis <span style="font-size:12px;color:var(--text-dim);font-weight:400">— the 4 biggest levers on your P&L</span></h2>
+    <div class="risk-grid">
+      <div id="riskPayoff" class="risk-card">—</div>
+      <div id="riskCliff"  class="risk-card">—</div>
+      <div id="riskScaled" class="risk-card">—</div>
+      <div id="riskNoSl"   class="risk-card">—</div>
+    </div>
   </div>
 
   <div class="kpi-grid">
@@ -283,6 +301,11 @@
       <h2>Bias Win Rate</h2>
       <div class="chart-wrap"><canvas id="biasChart"></canvas></div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>P&L by Hold Duration <span style="font-size:12px;color:var(--text-dim);font-weight:400">— where losers get ugly</span></h2>
+    <div class="chart-wrap tall"><canvas id="holdChart"></canvas></div>
   </div>
 
   <div class="card">
