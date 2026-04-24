@@ -523,7 +523,7 @@ function renderHistoryCards(rows) {
           r.volume ? `<span class="tag session">${r.volume.toFixed(2)} lots</span>` : ''
         ]
       : [
-          raw.bias_h1 ? `<span class="tag ${raw.bias_h1.toLowerCase()}">H1 ${raw.bias_h1}</span>` : '',
+          raw.bias_h1 ? `<span class="tag ${raw.bias_h1.toLowerCase()}">M15 ${raw.bias_h1}</span>` : '',
           raw.bias_m5 ? `<span class="tag ${raw.bias_m5.toLowerCase()}">M5 ${raw.bias_m5}</span>` : '',
           raw.result  ? `<span class="tag ${raw.result.toLowerCase()}">${raw.result}</span>`   : '',
           raw.positions?.length ? `<span class="tag session">${raw.positions.length} pos</span>` : ''
@@ -585,7 +585,7 @@ initHistoryFilters();
 // ── Trade Modal ────────────────────────────────────────────────────────────────
 function openTradeModal(t) {
   document.getElementById('modalDate').textContent = `${t.date} — ${t.session || ''}`;
-  document.getElementById('modalBias').textContent = `${t.direction || '—'} | H1: ${t.bias_h1 || '—'} | M5: ${t.bias_m5 || '—'}`;
+  document.getElementById('modalBias').textContent = `${t.direction || '—'} | M15: ${t.bias_h1 || '—'} | M5: ${t.bias_m5 || '—'}`;
   document.getElementById('modalLevels').textContent = `SL: ${t.sl_level || '—'} | TP: ${t.tp_target || '—'} | Key: ${t.key_levels || '—'}`;
   document.getElementById('modalResult').textContent = `${t.result || '—'} | P&L: ${t.total_pnl != null ? t.total_pnl : '—'}`;
   document.getElementById('modalDrawdown').textContent = t.max_drawdown != null ? `Max Drawdown: -${t.max_drawdown}` : '';

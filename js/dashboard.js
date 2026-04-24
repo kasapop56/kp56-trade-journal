@@ -309,12 +309,12 @@ function renderScatter(trades) {
 // ── Bias Accuracy ──────────────────────────────────────────────────────────────
 function renderBias(trades) {
   destroyChart('bias');
-  const groups = { 'H1 BULL': { wins: 0, total: 0 }, 'H1 BEAR': { wins: 0, total: 0 }, 'M5 BULL': { wins: 0, total: 0 }, 'M5 BEAR': { wins: 0, total: 0 } };
+  const groups = { 'M15 BULL': { wins: 0, total: 0 }, 'M15 BEAR': { wins: 0, total: 0 }, 'M5 BULL': { wins: 0, total: 0 }, 'M5 BEAR': { wins: 0, total: 0 } };
   trades.forEach(t => {
     if (t.result !== 'TP' && t.result !== 'SL') return;
     const win = t.result === 'TP';
-    if (t.bias_h1 === 'BULL') { groups['H1 BULL'].total++; if (win) groups['H1 BULL'].wins++; }
-    if (t.bias_h1 === 'BEAR') { groups['H1 BEAR'].total++; if (win) groups['H1 BEAR'].wins++; }
+    if (t.bias_h1 === 'BULL') { groups['M15 BULL'].total++; if (win) groups['M15 BULL'].wins++; }
+    if (t.bias_h1 === 'BEAR') { groups['M15 BEAR'].total++; if (win) groups['M15 BEAR'].wins++; }
     if (t.bias_m5 === 'BULL') { groups['M5 BULL'].total++; if (win) groups['M5 BULL'].wins++; }
     if (t.bias_m5 === 'BEAR') { groups['M5 BEAR'].total++; if (win) groups['M5 BEAR'].wins++; }
   });
