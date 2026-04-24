@@ -275,6 +275,19 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 .tag.manual { background: rgba(240,180,41,0.1); color: var(--gold); }
 .tag.wait { background: rgba(240,180,41,0.1); color: var(--gold); }
 .tag.session { background: var(--surface2); color: var(--text-dim); }
+.tag.src-mt5    { background: rgba(240,180,41,0.15); color: var(--gold); border: 1px solid var(--gold-dim); }
+.tag.src-manual { background: rgba(120,120,120,0.12); color: #aaa; border: 1px solid var(--border); }
+
+/* HISTORY FILTERS */
+.history-filters { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.filter-input {
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 6px 10px; font-size: 12px; flex: 1; min-width: 180px;
+}
+.filter-input:focus { outline: none; border-color: var(--gold-dim); }
+.history-summary { font-size: 12px; color: var(--text-dim); margin: 6px 2px 10px; }
+.history-summary .pos { color: var(--bull); font-weight: 600; }
+.history-summary .neg { color: var(--bear); font-weight: 600; }
 
 /* STATS */
 .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }

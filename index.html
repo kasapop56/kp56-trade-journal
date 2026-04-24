@@ -165,8 +165,52 @@
   <div class="history-toolbar">
     <button type="button" class="btn-secondary" id="openImport">+ Import from MT5</button>
   </div>
+
+  <div class="filter-bar history-filters">
+    <button class="filter-btn active" data-hfilter="direction" data-val="ALL">All</button>
+    <button class="filter-btn" data-hfilter="direction" data-val="BUY">Buy</button>
+    <button class="filter-btn" data-hfilter="direction" data-val="SELL">Sell</button>
+    <span class="filter-sep"></span>
+    <button class="filter-btn active" data-hfilter="outcome" data-val="ALL">All Results</button>
+    <button class="filter-btn" data-hfilter="outcome" data-val="WIN">Win</button>
+    <button class="filter-btn" data-hfilter="outcome" data-val="LOSS">Loss</button>
+    <button class="filter-btn" data-hfilter="outcome" data-val="BE">BE</button>
+    <span class="filter-sep"></span>
+    <button class="filter-btn active" data-hfilter="source" data-val="ALL">All Sources</button>
+    <button class="filter-btn" data-hfilter="source" data-val="MT5">MT5</button>
+    <button class="filter-btn" data-hfilter="source" data-val="MANUAL">Manual</button>
+    <span class="filter-sep"></span>
+    <select id="historySort" class="filter-date" style="padding:6px 8px" title="Sort">
+      <option value="newest" selected>Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="bestpnl">Best P&amp;L</option>
+      <option value="worstpnl">Worst P&amp;L</option>
+    </select>
+    <span class="filter-sep"></span>
+    <input type="date" id="histDateFrom" class="filter-date" title="From" />
+    <span class="filter-to">to</span>
+    <input type="date" id="histDateTo" class="filter-date" title="To" />
+    <input type="text" id="histSearch" class="filter-input" placeholder="Search symbol, memo, notes…" />
+  </div>
+
+  <div id="historySummary" class="history-summary"></div>
+
   <div id="historyList">
     <p class="empty">Loading trades...</p>
+  </div>
+</div>
+
+<!-- ── MT5 TRADE DETAIL MODAL ──────────────────────────────────────────────── -->
+<div class="modal-overlay" id="mt5Modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="mt5ModalTitle"></h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="tag src-mt5">MT5 · read-only</span>
+        <button class="btn-close" id="closeMT5Modal">×</button>
+      </div>
+    </div>
+    <div id="mt5ModalBody"></div>
   </div>
 </div>
 

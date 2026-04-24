@@ -356,48 +356,231 @@ function loadTradeIntoForm(t) {
 }
 
 // ── History ────────────────────────────────────────────────────────────────────
-async function loadHistory() {
+// Unified chronological view across `trade_ideas` (manual logs) and `mt5_trades`
+// (auto-synced closed positions). Both tables are fetched once, normalized to a
+// common card shape, cached in memory, and re-rendered on filter change. Data is
+// only re-fetched when callers invalidate the cache (delete, import) or on hard
+// refresh.
+let historyCache = null;
+const historyFilters = {
+  direction: 'ALL',   // ALL | BUY | SELL
+  outcome:   'ALL',   // ALL | WIN | LOSS | BE
+  source:    'ALL',   // ALL | MT5 | MANUAL
+  sort:      'newest',
+  dateFrom:  '',
+  dateTo:    '',
+  search:    ''
+};
+
+async function loadHistory(forceRefresh = false) {
   const container = document.getElementById('historyList');
+
+  if (!forceRefresh && historyCache) {
+    applyHistoryFilters();
+    return;
+  }
+
   container.innerHTML = '<p class="empty">Loading...</p>';
 
-  let data;
+  let manualData = [], mt5Data = [];
   try {
-    data = await fetchAllPaged('trade_ideas', q =>
-      q.select('*, positions(*)').order('date', { ascending: false })
-    );
+    [manualData, mt5Data] = await Promise.all([
+      fetchAllPaged('trade_ideas', q => q.select('*, positions(*)').order('date', { ascending: false })),
+      fetchAllPaged('mt5_trades',  q => q.select('*').order('close_time', { ascending: false }))
+    ]);
   } catch (err) {
     container.innerHTML = `<p class="empty">Error loading trades: ${err.message}</p>`;
     return;
   }
-  if (!data.length) {
-    container.innerHTML = '<p class="empty">No trades yet. Start logging!</p>';
+
+  historyCache = [
+    ...manualData.map(normalizeManualTrade),
+    ...mt5Data.map(normalizeMT5Trade)
+  ];
+
+  applyHistoryFilters();
+}
+
+function normalizeManualTrade(t) {
+  const sortTs = new Date(`${t.date}T${t.exit_time || t.entry_time || '00:00'}:00`).getTime();
+  let outcome = null;
+  if (t.result === 'BE') outcome = 'BE';
+  else if (t.total_pnl != null && t.total_pnl > 0) outcome = 'WIN';
+  else if (t.total_pnl != null && t.total_pnl < 0) outcome = 'LOSS';
+  const searchBlob = [t.key_levels, t.memo, t.post_trade_notes, 'manual']
+    .filter(Boolean).join(' ').toLowerCase();
+  return {
+    _source: 'MANUAL',
+    _raw: t,
+    date: t.date,
+    direction: t.direction,
+    entryTime: t.entry_time ? t.entry_time.slice(0,5) : null,
+    exitTime:  t.exit_time  ? t.exit_time.slice(0,5)  : null,
+    session: tradeSession(t),
+    totalPnl: t.total_pnl,
+    outcome,
+    sortTs,
+    symbol: null,
+    volume: t.positions?.[0]?.lot_size ?? null,
+    searchBlob
+  };
+}
+
+function normalizeMT5Trade(t) {
+  // Convert UTC close_time to broker-server local date/time using the user's TZ
+  // setting — so date grouping matches the Session filter on Stats.
+  const closeUtc = new Date(t.close_time);
+  const openUtc  = new Date(t.open_time);
+  const tzOff    = getServerTzOffset();
+  const closeLocal = new Date(closeUtc.getTime() + tzOff * 3600 * 1000);
+  const openLocal  = new Date(openUtc.getTime()  + tzOff * 3600 * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  const dateStr   = closeLocal.getUTCFullYear() + '-' + pad(closeLocal.getUTCMonth()+1) + '-' + pad(closeLocal.getUTCDate());
+  const exitTime  = pad(closeLocal.getUTCHours()) + ':' + pad(closeLocal.getUTCMinutes());
+  const entryTime = pad(openLocal.getUTCHours())  + ':' + pad(openLocal.getUTCMinutes());
+  const session   = deriveSession(exitTime);
+
+  const pnl = (Number(t.profit)||0) + (Number(t.swap)||0) + (Number(t.commission)||0);
+  const outcome = Math.abs(pnl) < 0.005 ? 'BE' : (pnl > 0 ? 'WIN' : 'LOSS');
+  const searchBlob = [t.symbol, t.comment, 'mt5', String(t.deal_ticket), String(t.position_id)]
+    .filter(Boolean).join(' ').toLowerCase();
+
+  return {
+    _source: 'MT5',
+    _raw: t,
+    date: dateStr,
+    direction: (t.type || '').toUpperCase(),
+    entryTime, exitTime, session,
+    totalPnl: pnl,
+    outcome,
+    sortTs: closeUtc.getTime(),
+    symbol: t.symbol,
+    volume: Number(t.volume),
+    searchBlob
+  };
+}
+
+function applyHistoryFilters() {
+  if (!historyCache) return;
+  const f = historyFilters;
+  let rows = historyCache.slice();
+
+  if (f.direction !== 'ALL') rows = rows.filter(r => r.direction === f.direction);
+  if (f.source    !== 'ALL') rows = rows.filter(r => r._source  === f.source);
+  if (f.outcome   !== 'ALL') rows = rows.filter(r => r.outcome  === f.outcome);
+  if (f.dateFrom)            rows = rows.filter(r => r.date && r.date >= f.dateFrom);
+  if (f.dateTo)              rows = rows.filter(r => r.date && r.date <= f.dateTo);
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    rows = rows.filter(r => r.searchBlob.includes(q));
+  }
+
+  switch (f.sort) {
+    case 'oldest':   rows.sort((a,b) => a.sortTs - b.sortTs); break;
+    case 'bestpnl':  rows.sort((a,b) => (b.totalPnl ?? -Infinity) - (a.totalPnl ?? -Infinity)); break;
+    case 'worstpnl': rows.sort((a,b) => (a.totalPnl ??  Infinity) - (b.totalPnl ??  Infinity)); break;
+    default:         rows.sort((a,b) => b.sortTs - a.sortTs);
+  }
+
+  renderHistoryCards(rows);
+}
+
+function renderHistoryCards(rows) {
+  const container = document.getElementById('historyList');
+  const summary   = document.getElementById('historySummary');
+
+  const net  = rows.reduce((s,r) => s + (r.totalPnl || 0), 0);
+  const wins = rows.filter(r => r.outcome === 'WIN').length;
+  const netCls = net > 0 ? 'pos' : net < 0 ? 'neg' : '';
+  summary.innerHTML = rows.length === 0
+    ? ''
+    : `${rows.length} trade${rows.length!==1?'s':''} · <span class="${netCls}">Net ${net>=0?'+':''}$${net.toFixed(2)}</span> · ${wins} win${wins!==1?'s':''}`;
+
+  if (!rows.length) {
+    container.innerHTML = historyCache && historyCache.length
+      ? '<p class="empty">No trades match your filters.</p>'
+      : '<p class="empty">No trades yet. Start logging!</p>';
     return;
   }
 
   container.innerHTML = '';
-  data.forEach(t => {
-    const pnlClass = t.total_pnl > 0 ? 'pos' : t.total_pnl < 0 ? 'neg' : '';
-    const pnlText = t.total_pnl != null ? (t.total_pnl > 0 ? '+' : '') + t.total_pnl.toFixed(2) : '—';
+  rows.forEach(r => {
+    const pnlClass = r.totalPnl > 0 ? 'pos' : r.totalPnl < 0 ? 'neg' : '';
+    const pnlText  = r.totalPnl != null ? (r.totalPnl > 0 ? '+' : '') + '$' + Number(r.totalPnl).toFixed(2) : '—';
     const card = document.createElement('div');
     card.className = 'trade-card';
+
+    const srcTag = r._source === 'MT5'
+      ? '<span class="tag src-mt5">MT5</span>'
+      : '<span class="tag src-manual">Manual</span>';
+    const dirTag = r.direction
+      ? `<span class="tag ${r.direction === 'BUY' ? 'bull' : 'bear'}">${r.direction}</span>`
+      : '';
+    const raw = r._raw;
+    const extraTags = r._source === 'MT5'
+      ? [
+          r.symbol ? `<span class="tag session">${r.symbol}</span>` : '',
+          r.volume ? `<span class="tag session">${r.volume.toFixed(2)} lots</span>` : ''
+        ]
+      : [
+          raw.bias_h1 ? `<span class="tag ${raw.bias_h1.toLowerCase()}">H1 ${raw.bias_h1}</span>` : '',
+          raw.bias_m5 ? `<span class="tag ${raw.bias_m5.toLowerCase()}">M5 ${raw.bias_m5}</span>` : '',
+          raw.result  ? `<span class="tag ${raw.result.toLowerCase()}">${raw.result}</span>`   : '',
+          raw.positions?.length ? `<span class="tag session">${raw.positions.length} pos</span>` : ''
+        ];
+    const sessionTag = r.session ? `<span class="tag session">${r.session}</span>` : '';
+
     card.innerHTML = `
       <div class="header">
-        <span class="date">${t.date} &nbsp;|&nbsp; ${tradeSession(t) || '—'}</span>
+        <span class="date">${r.date}${r.exitTime ? ' · ' + r.exitTime : ''}</span>
         <span class="pnl ${pnlClass}">${pnlText}</span>
       </div>
       <div class="tags">
-        ${t.direction ? `<span class="tag ${t.direction.toLowerCase()}">${t.direction}</span>` : ''}
-        ${t.bias_h1 ? `<span class="tag ${t.bias_h1.toLowerCase()}">H1 ${t.bias_h1}</span>` : ''}
-        ${t.bias_m5 ? `<span class="tag ${t.bias_m5.toLowerCase()}">M5 ${t.bias_m5}</span>` : ''}
-        ${t.result ? `<span class="tag ${t.result.toLowerCase()}">${t.result}</span>` : ''}
-        ${tradeSession(t) ? `<span class="tag session">${tradeSession(t)}</span>` : ''}
-        ${t.positions?.length ? `<span class="tag session">${t.positions.length} position${t.positions.length > 1 ? 's' : ''}</span>` : ''}
+        ${srcTag}${dirTag}${extraTags.filter(Boolean).join('')}${sessionTag}
       </div>
     `;
-    card.addEventListener('click', () => openTradeModal(t));
+    card.addEventListener('click', () => {
+      if (r._source === 'MT5') openMT5Modal(r._raw);
+      else openTradeModal(r._raw);
+    });
     container.appendChild(card);
   });
 }
+
+// ── History filter wiring ─────────────────────────────────────────────────────
+function initHistoryFilters() {
+  document.querySelectorAll('.history-filters [data-hfilter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const group = btn.dataset.hfilter;
+      document.querySelectorAll(`.history-filters [data-hfilter="${group}"]`)
+        .forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      historyFilters[group] = btn.dataset.val;
+      applyHistoryFilters();
+    });
+  });
+  document.getElementById('historySort').addEventListener('change', e => {
+    historyFilters.sort = e.target.value;
+    applyHistoryFilters();
+  });
+  document.getElementById('histDateFrom').addEventListener('change', e => {
+    historyFilters.dateFrom = e.target.value;
+    applyHistoryFilters();
+  });
+  document.getElementById('histDateTo').addEventListener('change', e => {
+    historyFilters.dateTo = e.target.value;
+    applyHistoryFilters();
+  });
+  let searchTimer = null;
+  document.getElementById('histSearch').addEventListener('input', e => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      historyFilters.search = e.target.value.trim();
+      applyHistoryFilters();
+    }, 150);
+  });
+}
+initHistoryFilters();
 
 // ── Trade Modal ────────────────────────────────────────────────────────────────
 function openTradeModal(t) {
@@ -445,12 +628,56 @@ function openTradeModal(t) {
     await db.from('trade_ideas').delete().eq('id', t.id);
     document.getElementById('tradeModal').classList.remove('open');
     showToast('Trade deleted', 'error');
-    loadHistory();
+    historyCache = null;
+    loadHistory(true);
   };
 }
 
 document.getElementById('closeModal').addEventListener('click', () => {
   document.getElementById('tradeModal').classList.remove('open');
+});
+
+// ── MT5 Trade Modal (read-only) ───────────────────────────────────────────────
+function openMT5Modal(t) {
+  const num = n => n != null ? Number(n).toFixed(2) : '—';
+  const px  = n => n != null ? Number(n).toFixed(5) : '—';
+  const fmt = s => s ? new Date(s).toLocaleString() : '—';
+  const pnl = (Number(t.profit)||0) + (Number(t.swap)||0) + (Number(t.commission)||0);
+  const pnlCls = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '';
+
+  document.getElementById('mt5ModalTitle').textContent =
+    `${t.symbol} · ${(t.type||'').toUpperCase()} · ${Number(t.volume).toFixed(2)} lots`;
+
+  document.getElementById('mt5ModalBody').innerHTML = `
+    <div class="modal-section"><h4>Result</h4>
+      <p class="${pnlCls}" style="font-size:20px;font-weight:700">${pnl>=0?'+':''}$${num(pnl)}</p>
+      <p style="font-size:12px;color:var(--text-dim);margin-top:4px">
+        Profit $${num(t.profit)} · Swap $${num(t.swap)} · Commission $${num(t.commission)}
+      </p>
+    </div>
+    <div class="modal-section"><h4>Time</h4>
+      <p>Open: ${fmt(t.open_time)}<br/>Close: ${fmt(t.close_time)}</p>
+    </div>
+    <div class="modal-section"><h4>Prices</h4>
+      <p>Open <b>${px(t.open_price)}</b> → Close <b>${px(t.close_price)}</b><br/>
+         SL ${px(t.sl)} · TP ${px(t.tp)}</p>
+    </div>
+    ${t.balance_after != null ? `
+      <div class="modal-section"><h4>After Close</h4>
+        <p>Balance $${num(t.balance_after)} · Equity $${num(t.equity_after)}</p>
+      </div>` : ''}
+    ${t.comment ? `<div class="modal-section"><h4>Comment</h4><p>${t.comment}</p></div>` : ''}
+    <div class="modal-section"><h4>IDs</h4>
+      <p style="font-size:12px;color:var(--text-dim)">
+        Account #${t.account_login} · Deal ${t.deal_ticket} · Position ${t.position_id} · Magic ${t.magic || 0}
+      </p>
+    </div>
+  `;
+  document.getElementById('mt5Modal').classList.add('open');
+}
+
+document.getElementById('closeMT5Modal').addEventListener('click', () => {
+  document.getElementById('mt5Modal').classList.remove('open');
 });
 
 
