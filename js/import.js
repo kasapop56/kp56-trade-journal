@@ -1,8 +1,12 @@
 // ── MT5 HTML Report Importer ─────────────────────────────────────────────────
-// Parses MT5 "Report" HTML export (History tab → Report → HTML) and inserts
-// closed positions into Supabase as trade_ideas + positions rows.
+// Parses MT5 "Report" HTML export (History tab → Report → HTML) and upserts
+// each closed position into mt5_trades. Used to backfill gaps when the VPS
+// running the JournalSync EA is offline. Dedup is by position_id.
 
 (() => {
+  // Account that imported trades belong to. The HF Markets live account the
+  // EA syncs; imports from the same account fill gaps in that stream.
+  const IMPORT_ACCOUNT_LOGIN = 87464504;
   const DATETIME_RE = /^\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}(?::\d{2})?$/;
   let parsedTrades = [];
   let existingKeys = new Set();
@@ -64,7 +68,9 @@
     }
   }
 
-  // Group scaled entries: same direction + same closeTime + same symbol → one trade.
+  // Group scaled entries for the preview (same direction + same closeTime +
+  // same symbol → one row). Each group keeps refs to its underlying parsed
+  // positions so the confirm step can insert one mt5_trades row per position.
   function groupTrades(positions) {
     const map = new Map();
     for (const p of positions) {
@@ -78,7 +84,7 @@
           closePrice: p.closePrice,
           sl: p.sl,
           tp: p.tp,
-          positions: [],
+          rawPositions: [],
           totalProfit: 0,
           totalSwap: 0,
           totalCommission: 0,
@@ -88,7 +94,7 @@
       }
       const g = map.get(key);
       if (p.openTime < g.openTime) g.openTime = p.openTime; // lex-sortable MT5 format
-      g.positions.push({ entry_price: p.openPrice, lot_size: p.volume });
+      g.rawPositions.push(p);
       g.totalProfit += p.profit || 0;
       g.totalSwap += p.swap || 0;
       g.totalCommission += p.commission || 0;
@@ -214,19 +220,28 @@
   }
 
   // ── Existing-trade lookup to flag duplicates ─────────────────────────────
+  // We dedup on position_id. The EA ingest uses the close deal_ticket as the
+  // unique key, but the HTML report doesn't expose it — position_id is the
+  // only identifier shared between the two sources.
   async function loadExistingKeys() {
     existingKeys = new Set();
-    const data = await fetchAllPaged('trade_ideas', q =>
-      q.select('date,entry_time,total_pnl')
+    const data = await fetchAllPaged('mt5_trades', q =>
+      q.select('position_id')
     );
     data.forEach(r => {
-      existingKeys.add(dupKey(r.date, r.entry_time, r.total_pnl));
+      if (r.position_id != null) existingKeys.add(String(r.position_id));
     });
   }
-  function dupKey(date, time, pnl) {
-    const t = time ? time.slice(0, 5) : '';
-    const p = pnl != null ? Number(pnl).toFixed(2) : '';
-    return `${date}|${t}|${p}`;
+
+  // Convert MT5 HTML datetime "2026.04.01 10:23:45" (broker server time,
+  // GMT+getServerTzOffset()) to UTC ISO8601 so it matches what the EA writes.
+  function mt5DtToUtcIso(s) {
+    const [d, t] = s.split(' ');
+    const [Y, M, D] = d.split('.').map(Number);
+    const [h, m, sec = 0] = (t || '00:00:00').split(':').map(Number);
+    const offset = getServerTzOffset();
+    const utc = new Date(Date.UTC(Y, M - 1, D, h - offset, m, sec));
+    return utc.toISOString().replace(/\.\d+Z$/, 'Z');
   }
 
   // ── Render preview ───────────────────────────────────────────────────────
@@ -236,19 +251,22 @@
     let totalPositions = 0;
 
     parsedTrades.forEach((g, idx) => {
-      totalPositions += g.positions.length;
+      totalPositions += g.rawPositions.length;
       const openDt = splitDt(g.openTime);
       const closeDt = splitDt(g.closeTime);
       const netPnl = +(g.totalProfit + g.totalSwap + g.totalCommission).toFixed(2);
-      const key = dupKey(openDt.date, openDt.time.slice(0, 5), netPnl);
-      const isDup = existingKeys.has(key);
+      // Group = duplicate only if every underlying position is already in DB.
+      // Mixed groups stay selectable; upsert silently skips the known ones.
+      const isDup = g.positionIds.length > 0 &&
+                    g.positionIds.every(pid => existingKeys.has(String(pid)));
       if (isDup) dupCount++;
 
-      const avgEntry = g.positions.reduce((s, p) => s + p.entry_price * p.lot_size, 0) / (g.totalLot || 1);
-      const entryCell = g.positions.length === 1
-        ? g.positions[0].entry_price.toFixed(2)
-        : `${avgEntry.toFixed(2)}<div class="tiny">avg of ${g.positions.length}</div>`;
-      const lotCell = `${g.totalLot.toFixed(2)}${g.positions.length > 1 ? `<div class="tiny">${g.positions.length} pos</div>` : ''}`;
+      const avgEntry = g.rawPositions.reduce(
+        (s, p) => s + p.openPrice * p.volume, 0) / (g.totalLot || 1);
+      const entryCell = g.rawPositions.length === 1
+        ? g.rawPositions[0].openPrice.toFixed(2)
+        : `${avgEntry.toFixed(2)}<div class="tiny">avg of ${g.rawPositions.length}</div>`;
+      const lotCell = `${g.totalLot.toFixed(2)}${g.rawPositions.length > 1 ? `<div class="tiny">${g.rawPositions.length} pos</div>` : ''}`;
 
       const tr = document.createElement('tr');
       if (isDup) tr.className = 'dup';
@@ -308,42 +326,33 @@
   });
 
   async function insertTrade(g) {
-    const openDt = splitDt(g.openTime);
-    const closeDt = splitDt(g.closeTime);
-    const netPnl = +(g.totalProfit + g.totalSwap + g.totalCommission).toFixed(2);
-    const memoTag = g.positions.length === 1
-      ? `Imported from MT5 (position #${g.positionIds[0]})`
-      : `Imported from MT5 (${g.positions.length} scaled positions: #${g.positionIds.join(', #')})`;
-
-    const payload = {
-      date: openDt.date,
-      session: deriveSession(openDt.time),
-      direction: g.direction,
-      bias_h1: null,
-      bias_m5: null,
-      key_levels: null,
-      sl_level: g.sl,
-      tp_target: g.tp,
-      result: deriveResult(g),
-      total_pnl: netPnl,
-      max_drawdown: null,
-      entry_time: openDt.time,
-      exit_time: closeDt.time,
-      memo: memoTag,
-      post_trade_notes: null,
-      screenshots: [],
-    };
-
-    const { data: trade, error: err1 } = await db
-      .from('trade_ideas').insert(payload).select().single();
-    if (err1) throw err1;
-
-    const posRows = g.positions.map(p => ({
-      trade_idea_id: trade.id,
-      entry_price: p.entry_price,
-      lot_size: p.lot_size,
+    // One mt5_trades row per underlying MT5 position. Upsert on deal_ticket
+    // (which we set to position_id, since the HTML report has no deal ticket
+    // — see file-top comment). ignoreDuplicates=true makes re-importing a
+    // partially-synced report a no-op for already-present rows.
+    const type = g.direction.toLowerCase();
+    const rows = g.rawPositions.map(p => ({
+      account_login: IMPORT_ACCOUNT_LOGIN,
+      deal_ticket:   Number(p.positionId),
+      position_id:   Number(p.positionId),
+      symbol:        p.symbol,
+      type,
+      volume:        p.volume,
+      open_time:     mt5DtToUtcIso(p.openTime),
+      close_time:    mt5DtToUtcIso(p.closeTime),
+      open_price:    p.openPrice,
+      close_price:   p.closePrice,
+      sl:            p.sl,
+      tp:            p.tp,
+      profit:        p.profit ?? 0,
+      swap:          p.swap ?? 0,
+      commission:    p.commission ?? 0,
+      comment:       'Imported from MT5 HTML report',
     }));
-    const { error: err2 } = await db.from('positions').insert(posRows);
-    if (err2) throw err2;
+
+    const { error } = await db
+      .from('mt5_trades')
+      .upsert(rows, { onConflict: 'deal_ticket', ignoreDuplicates: true });
+    if (error) throw error;
   }
 })();

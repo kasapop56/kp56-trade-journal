@@ -35,6 +35,8 @@ select
   ti.bias_h1                                                 as bias_h1,
   ti.bias_m5                                                 as bias_m5,
   ti.result                                                  as manual_result,
+  ti.sl_level                                                as sl_level,
+  ti.max_drawdown                                            as max_drawdown,
   (select count(*)::int from positions p
      where p.trade_idea_id = ti.id)                          as positions_count,
   lower(concat_ws(' ',
@@ -76,7 +78,9 @@ select
   null::text                                                 as bias_h1,
   null::text                                                 as bias_m5,
   null::text                                                 as manual_result,
-  null::int                                                  as positions_count,
+  mt.sl                                                      as sl_level,
+  null::numeric                                              as max_drawdown,
+  1::int                                                     as positions_count,
   lower(concat_ws(' ',
     mt.symbol, mt.comment, 'mt5',
     mt.deal_ticket::text, mt.position_id::text))             as search_blob,
@@ -89,6 +93,17 @@ from mt5_trades mt;
 -- and `security_invoker = on` makes the view honor those policies.
 grant select on v_trades_unified to anon;
 grant select on v_trades_unified to authenticated;
+
+-- ── Anon write access to mt5_trades (for HTML-report backfill import) ─────
+-- Phase 2 only allowed anon SELECT; the History-page importer now writes
+-- directly to mt5_trades when the user uploads an HTML report to fill VPS
+-- gaps. Same trust model as trade_ideas (already "for all" to anon).
+drop policy if exists "Anon insert mt5_trades" on mt5_trades;
+drop policy if exists "Anon update mt5_trades" on mt5_trades;
+create policy "Anon insert mt5_trades"
+  on mt5_trades for insert with check (true);
+create policy "Anon update mt5_trades"
+  on mt5_trades for update using (true) with check (true);
 
 -- Nudge PostgREST to reload its schema cache so the new view shows up in
 -- the REST API immediately (otherwise it can take ~60s).

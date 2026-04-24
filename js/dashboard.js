@@ -788,12 +788,43 @@ function renderHoldDuration(trades) {
 let allDashboardData = [];
 let currentRange = 'all';
 
+// Map a v_trades_unified row into the shape the rest of the dashboard
+// expects (date, result, positions[], etc). Manual trades keep their TP/SL/BE/
+// MANUAL tag; MT5 trades derive it from outcome.
+function normalizeUnifiedRow(r) {
+  let result = r.manual_result;
+  if (r.source === 'MT5') {
+    result = r.outcome === 'WIN' ? 'TP'
+           : r.outcome === 'LOSS' ? 'SL'
+           : r.outcome === 'BE' ? 'BE'
+           : null;
+  }
+  const count = r.positions_count || 0;
+  return {
+    id: r.row_id,
+    source: r.source,
+    date: r.display_date,
+    entry_time: r.entry_time,
+    exit_time: r.exit_time,
+    direction: r.direction,
+    total_pnl: r.total_pnl,
+    result,
+    session: r.session,
+    bias_h1: r.bias_h1,
+    bias_m5: r.bias_m5,
+    sl_level: r.sl_level,
+    max_drawdown: r.max_drawdown,
+    positions: count > 0 ? new Array(count) : [],
+  };
+}
+
 async function loadDashboard() {
   if (!allDashboardData.length) {
     try {
-      allDashboardData = await fetchAllPaged('trade_ideas', q =>
-        q.select('*, positions(*)').order('date', { ascending: true })
+      const rows = await fetchAllPaged('v_trades_unified', q =>
+        q.select('*').order('display_date', { ascending: true })
       );
+      allDashboardData = rows.map(normalizeUnifiedRow);
     } catch (err) {
       console.error('loadDashboard failed', err);
       allDashboardData = [];

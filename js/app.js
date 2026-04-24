@@ -664,4 +664,4 @@ function showToast(msg, type = '') {
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 document.getElementById('tradeDate').value = new Date().toISOString().split('T')[0];
-navigate('new');
+navigate('stats');

@@ -10,13 +10,13 @@
 
 <nav>
   <span class="logo">KP56 Journal</span>
-  <a href="#" data-page="new" class="active">New Trade</a>
+  <a href="#" data-page="new" style="display:none">New Trade</a>
+  <a href="#" data-page="stats" class="active">Stats</a>
   <a href="#" data-page="history">History</a>
-  <a href="#" data-page="stats">Stats</a>
 </nav>
 
 <!-- ── NEW TRADE ──────────────────────────────────────────────────────────── -->
-<div id="new" class="page active">
+<div id="new" class="page">
   <form id="tradeForm">
 
     <div class="card">
@@ -270,7 +270,7 @@
 </div>
 
 <!-- ── DASHBOARD ──────────────────────────────────────────────────────────── -->
-<div id="stats" class="page">
+<div id="stats" class="page active">
 
   <div class="filter-bar">
     <button class="filter-btn active" data-range="all">All Time</button>
