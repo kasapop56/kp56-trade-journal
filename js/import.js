@@ -3,7 +3,7 @@
 // closed positions into Supabase as trade_ideas + positions rows.
 
 (() => {
-  const DATETIME_RE = /^\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2}$/;
+  const DATETIME_RE = /^\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}(?::\d{2})?$/;
   let parsedTrades = [];
   let existingKeys = new Set();
 
@@ -104,42 +104,68 @@
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const rows = [...doc.querySelectorAll('tr')];
     const trades = [];
+    const diag = { totalRows: rows.length, twoDt: 0, noType: 0, missingVals: 0, samples: [] };
 
     for (const tr of rows) {
-      const cells = [...tr.children].map(c => c.textContent.trim());
-      if (cells.length < 13) continue;
+      // Normalize internal whitespace (newlines, nbsp, tabs) into single spaces
+      const cells = [...tr.children].map(c =>
+        c.textContent.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim()
+      );
+      if (cells.length < 10) continue;
 
-      // A closed position row has exactly 2 datetime cells (open + close).
       const dtIdx = [];
       cells.forEach((c, i) => { if (DATETIME_RE.test(c)) dtIdx.push(i); });
-      if (dtIdx.length !== 2) continue;
+      if (dtIdx.length < 2) continue;
+      diag.twoDt++;
 
       const [openI, closeI] = dtIdx;
-      // Layout: [open, posId, symbol, type, vol, openPrice, sl, tp, closeTime, closePrice, comm, swap, profit]
-      // Between open (idx) and close (idx+8) are 7 cells: posId, symbol, type, vol, openPrice, sl, tp.
-      if (closeI - openI !== 8) continue;
 
-      const type = cells[openI + 3].toLowerCase();
-      if (type !== 'buy' && type !== 'sell') continue;
+      // Anchor on the type cell (buy/sell) between the two datetime cells.
+      // Standard MT5 Positions layout (13 cols):
+      //   Time | PositionID | Symbol | Type | Volume | Price | S/L | T/P | Time(close) | Price(close) | Commission | Swap | Profit
+      // Relative to typeI: -2 = posId, -1 = symbol, +1 = volume, +2 = openPrice, +3 = sl, +4 = tp.
+      let typeI = -1;
+      for (let i = openI + 1; i < closeI; i++) {
+        const t = cells[i].toLowerCase();
+        if (t === 'buy' || t === 'sell') { typeI = i; break; }
+      }
+      if (typeI < 0) {
+        diag.noType++;
+        if (diag.samples.length < 3) diag.samples.push({ reason: 'no buy/sell between DTs', cells });
+        continue;
+      }
 
       const row = {
         openTime: cells[openI],
         closeTime: cells[closeI],
-        positionId: cells[openI + 1],
-        symbol: cells[openI + 2],
-        direction: type === 'buy' ? 'BUY' : 'SELL',
-        volume: num(cells[openI + 4]),
-        openPrice: num(cells[openI + 5]),
-        sl: num(cells[openI + 6]),
-        tp: num(cells[openI + 7]),
+        positionId: typeI - 2 >= openI ? cells[typeI - 2] : '',
+        symbol: typeI - 1 > openI ? cells[typeI - 1] : '',
+        direction: cells[typeI].toLowerCase() === 'buy' ? 'BUY' : 'SELL',
+        volume: num(cells[typeI + 1]),
+        openPrice: num(cells[typeI + 2]),
+        sl: num(cells[typeI + 3]),
+        tp: num(cells[typeI + 4]),
         closePrice: num(cells[closeI + 1]),
         profit: num(cells[cells.length - 1]),
         swap: num(cells[cells.length - 2]) || 0,
         commission: num(cells[cells.length - 3]) || 0,
       };
-      if (row.volume == null || row.openPrice == null || row.profit == null) continue;
+      if (row.volume == null || row.openPrice == null || row.profit == null) {
+        diag.missingVals++;
+        if (diag.samples.length < 3) diag.samples.push({ reason: 'missing volume/openPrice/profit', row, cells });
+        continue;
+      }
       trades.push(row);
     }
+
+    console.log('[MT5 importer]', {
+      totalRows: diag.totalRows,
+      rowsWith2DT: diag.twoDt,
+      rejectedNoType: diag.noType,
+      rejectedMissingValues: diag.missingVals,
+      parsed: trades.length,
+      samples: diag.samples,
+    });
     return trades;
   }
 
