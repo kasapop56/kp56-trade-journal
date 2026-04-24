@@ -441,7 +441,16 @@ function normalizeMT5Trade(t) {
   const session   = deriveSession(exitTime);
 
   const pnl = (Number(t.profit)||0) + (Number(t.swap)||0) + (Number(t.commission)||0);
-  const outcome = Math.abs(pnl) < 0.005 ? 'BE' : (pnl > 0 ? 'WIN' : 'LOSS');
+  // BE auto-detect: if close is within a small distance of entry, treat as
+  // break-even regardless of P&L sign. Catches the common "SL moved to
+  // breakeven and hit" case — the trade didn't complete, it was flat.
+  // $0.50 ≈ 5 pips of gold; roughly the spread on XAU. Tune if needed.
+  const BE_PRICE_TOLERANCE = 0.50;
+  const priceMove = Math.abs(Number(t.close_price) - Number(t.open_price));
+  let outcome;
+  if (priceMove <= BE_PRICE_TOLERANCE) outcome = 'BE';
+  else if (pnl > 0)                    outcome = 'WIN';
+  else                                 outcome = 'LOSS';
   const searchBlob = [t.symbol, t.comment, 'mt5', String(t.deal_ticket), String(t.position_id)]
     .filter(Boolean).join(' ').toLowerCase();
 
