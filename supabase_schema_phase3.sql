@@ -9,7 +9,12 @@
 -- Switch to +2 in winter (CET) by editing the two `INTERVAL '3 hours'` lines.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-create or replace view v_trades_unified
+-- Drop first because CREATE OR REPLACE VIEW can't add or reorder columns —
+-- it can only swap implementations with the same column list. Safe to drop:
+-- views hold no data.
+drop view if exists v_trades_unified;
+
+create view v_trades_unified
 with (security_invoker = on) as
 select
   'MANUAL'::text                                             as source,
