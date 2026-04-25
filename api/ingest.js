@@ -15,6 +15,7 @@
 //   "balance_snapshot" → insert into balance_snapshots
 
 const { createClient } = require('@supabase/supabase-js');
+const { numerologyFromOpenTime } = require('./_numerology');
 
 let _supabase;
 function getClient() {
@@ -88,6 +89,8 @@ module.exports = async (req, res) => {
       for (const k of ['account_login','deal_ticket','symbol','type','volume','open_time','close_time','open_price','close_price','profit']) {
         if (row[k] === undefined || row[k] === null) return bad(res, 400, 'missing_field: ' + k);
       }
+      try { Object.assign(row, numerologyFromOpenTime(row.open_time)); }
+      catch (e) { console.warn('numerology_skip:', e.message); }
       const { error } = await db.from('mt5_trades').upsert(row, { onConflict: 'deal_ticket' });
       if (error) return bad(res, 500, 'db_error: ' + error.message);
       return res.status(200).json({ ok: true, event: 'trade_closed', deal_ticket: row.deal_ticket });

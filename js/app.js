@@ -93,6 +93,7 @@ function navigate(pageId) {
   navLinks.forEach(a => a.classList.toggle('active', a.dataset.page === pageId));
   if (pageId === 'history') loadHistory();  // fires a fresh query (offset 0)
   if (pageId === 'stats') { allDashboardData = []; loadDashboard(); loadPortfolio(); }
+  if (pageId === 'numerology') initNumerologyPage();
 }
 
 navLinks.forEach(a => a.addEventListener('click', e => {

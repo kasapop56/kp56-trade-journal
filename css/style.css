@@ -435,3 +435,72 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
   .progress-header { flex-direction: column; align-items: stretch; }
   .baseline-bar { justify-content: flex-start; flex-wrap: wrap; }
 }
+
+/* ── NUMEROLOGY PAGE ───────────────────────────────────────────────────────── */
+.num-label { font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.4px; margin-bottom:5px; }
+
+/* NOW panel */
+.num-now-row { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:16px; }
+.num-now-block { text-align:center; }
+.num-big { font-size:28px; font-weight:700; letter-spacing:1px; }
+.num-gold { color:var(--gold); }
+
+.num-stat-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.num-stat-box { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+.num-stat-chips { display:flex; gap:14px; font-size:13px; color:var(--text-dim); flex-wrap:wrap; margin-top:4px; }
+.num-stat-chips span { white-space:nowrap; }
+.num-stat-chips b { color:var(--text); }
+
+/* Day-star table */
+.num-table { width:100%; border-collapse:collapse; font-size:13px; }
+.num-table th { text-align:left; padding:8px 10px; color:var(--text-dim); font-weight:500; border-bottom:1px solid var(--border); font-size:11px; text-transform:uppercase; }
+.num-table td { padding:9px 10px; border-bottom:1px solid var(--border); }
+.num-table tr:last-child td { border-bottom:none; }
+.num-table tr.num-row-today td { background:rgba(240,180,41,.06); }
+.num-table tr.num-row-today td:first-child { border-left:2px solid var(--gold); }
+
+/* Pair heatmap grid */
+.num-grid {
+  display: grid;
+  grid-template-columns: 72px repeat(6, 1fr);
+  gap: 3px;
+  font-size: 11px;
+}
+.num-grid-corner {
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-dim); font-size:10px; padding:4px;
+}
+.num-grid-head {
+  background:var(--surface2); border-radius:4px;
+  text-align:center; padding:5px 2px;
+  color:var(--text-dim); font-size:10px;
+}
+.num-pair-cell {
+  border-radius:5px; padding:6px 4px; text-align:center;
+  cursor:default; transition:transform .1s;
+  border:2px solid transparent;
+}
+.num-pair-cell:hover { transform:scale(1.05); z-index:1; position:relative; }
+.num-pair-now { border-color:var(--gold) !important; }
+.num-cell-pair { font-weight:700; font-size:12px; color:rgba(255,255,255,.85); }
+.num-cell-avg  { font-size:10px; margin-top:1px; }
+
+@media (max-width:600px) {
+  .num-now-row { grid-template-columns:1fr 1fr; }
+  .num-stat-row { grid-template-columns:1fr; }
+  .num-big { font-size:22px; }
+  .num-grid { grid-template-columns:52px repeat(6,1fr); font-size:9px; }
+  .num-cell-pair { font-size:10px; }
+  .num-cell-avg { display:none; }
+}
+
+/* Session filter pills */
+.num-session-filter { display:flex; gap:8px; flex-wrap:wrap; }
+.num-sess-btn {
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text-dim); border-radius: 20px;
+  padding: 5px 14px; font-size: 12px; cursor: pointer;
+  transition: all .15s;
+}
+.num-sess-btn:hover { border-color: var(--gold-dim); color: var(--text); }
+.num-sess-btn.active { background: var(--gold); color: #000; border-color: var(--gold); font-weight: 600; }

@@ -13,6 +13,7 @@
   <a href="#" data-page="new" style="display:none">New Trade</a>
   <a href="#" data-page="stats" class="active">Stats</a>
   <a href="#" data-page="history">History</a>
+  <a href="#" data-page="numerology">ดวงดาว ⭐</a>
 </nav>
 
 <!-- ── NEW TRADE ──────────────────────────────────────────────────────────── -->
@@ -468,6 +469,57 @@
   </div>
 </div>
 
+<!-- ── NUMEROLOGY ───────────────────────────────────────────────────────────── -->
+<div id="numerology" class="page">
+
+  <!-- Pre-trade NOW panel -->
+  <div class="card">
+    <h2>ตอนนี้ (เวลาไทย)</h2>
+    <div class="num-now-row">
+      <div class="num-now-block">
+        <div class="num-label">เวลา</div>
+        <div class="num-big" id="numTime">--:--</div>
+      </div>
+      <div class="num-now-block">
+        <div class="num-label">ดาวประจำวัน</div>
+        <div class="num-big num-gold" id="numStar">--</div>
+      </div>
+      <div class="num-now-block">
+        <div class="num-label">คู่เลขตอนนี้</div>
+        <div class="num-big num-gold" id="numPairNum">--</div>
+      </div>
+    </div>
+    <div class="num-stat-row">
+      <div class="num-stat-box">
+        <div class="num-label">📅 สถิติดาวนี้</div>
+        <div class="num-stat-chips" id="numStarStat">—</div>
+      </div>
+      <div class="num-stat-box">
+        <div class="num-label">⏱ สถิติคู่เลขนี้</div>
+        <div class="num-stat-chips" id="numPairStat">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Day-star table -->
+  <div class="card">
+    <h2>Win Rate รายดาวประจำวัน</h2>
+    <div id="numStarTableEl"><p style="color:var(--text-dim)">กำลังโหลด...</p></div>
+  </div>
+
+  <!-- Pair heatmap -->
+  <div class="card">
+    <h2>Heatmap คู่เลขเวลา × Avg PnL</h2>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:12px">
+      แถว = ชั่วโมง &nbsp;|&nbsp; คอลัมน์ = ตัวแรกนาที &nbsp;|&nbsp;
+      เช่น 14:32 = คู่ <b>43</b> &nbsp;|&nbsp; <span style="color:var(--gold)">กรอบทอง</span> = เวลาตอนนี้
+    </p>
+    <div id="numSessionFilter" style="margin-bottom:14px"></div>
+    <div id="numPairGridEl"></div>
+  </div>
+
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -476,5 +528,6 @@
 <script src="js/dashboard.js"></script>
 <script src="js/balance.js"></script>
 <script src="js/import.js"></script>
+<script src="js/numerology.js"></script>
 </body>
 </html>

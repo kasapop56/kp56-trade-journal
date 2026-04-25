@@ -4,3 +4,12 @@
 ReportHistory-*.htm
 ReportHistory-*.html
 *.htm
+
+# Backup config — contains DB password, never commit
+backup/.env
+
+# Numerology backfill credentials — contains service-role key
+numerology/.env
+
+# Numerology source PDFs and converted page images (large, personal data)
+numerology/sources/
