@@ -72,6 +72,18 @@ module.exports = async (req, res) => {
         comment:       payload.comment ?? null,
         balance_after: payload.balance_after ?? null,
         equity_after:  payload.equity_after ?? null,
+        // Mario v5 indicator context at close moment (Phase 3b). Optional —
+        // EA emits capture_method='none' with nulls when Mario state is
+        // missing or stale.
+        bias_m15:       payload.bias_m15       ?? null,
+        bias_m5:        payload.bias_m5        ?? null,
+        ob_status:      payload.ob_status      ?? null,
+        svp_poc:        payload.svp_poc        ?? null,
+        svp_vah:        payload.svp_vah        ?? null,
+        svp_val:        payload.svp_val        ?? null,
+        mario_session:  payload.mario_session  ?? null,
+        mario_decision: payload.mario_decision ?? null,
+        capture_method: payload.capture_method ?? null,
       };
       for (const k of ['account_login','deal_ticket','symbol','type','volume','open_time','close_time','open_price','close_price','profit']) {
         if (row[k] === undefined || row[k] === null) return bad(res, 400, 'missing_field: ' + k);
