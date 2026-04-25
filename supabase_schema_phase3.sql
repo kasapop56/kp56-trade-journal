@@ -9,6 +9,12 @@
 -- Switch to +2 in winter (CET) by editing the two `INTERVAL '3 hours'` lines.
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- Index on the FK so the manual-side aggregation (one row per trade_idea)
+-- doesn't seq-scan the full positions table. Without this the view times
+-- out at ~3.7k manual rows × full positions scan per row.
+create index if not exists positions_trade_idea_idx
+  on positions (trade_idea_id);
+
 -- Drop first because CREATE OR REPLACE VIEW can't add or reorder columns —
 -- it can only swap implementations with the same column list. Safe to drop:
 -- views hold no data.
@@ -34,16 +40,14 @@ select
   end                                                        as outcome,
   ti.total_pnl                                               as total_pnl,
   null::text                                                 as symbol,
-  (select p.lot_size from positions p
-     where p.trade_idea_id = ti.id order by p.id limit 1)    as volume,
+  pa.first_lot                                               as volume,
   ti.session                                                 as session,
   ti.bias_h1                                                 as bias_h1,
   ti.bias_m5                                                 as bias_m5,
   ti.result                                                  as manual_result,
   ti.sl_level                                                as sl_level,
   ti.max_drawdown                                            as max_drawdown,
-  (select count(*)::int from positions p
-     where p.trade_idea_id = ti.id)                          as positions_count,
+  coalesce(pa.cnt, 0)                                        as positions_count,
   lower(concat_ws(' ',
     ti.key_levels, ti.memo, ti.post_trade_notes, 'manual'))  as search_blob,
   -- Sort key: naive timestamp from date + exit_time (fallback entry_time,
@@ -53,6 +57,15 @@ select
      + coalesce(ti.exit_time, ti.entry_time, '00:00:00'::time))
     ::timestamp                                              as sort_key
 from trade_ideas ti
+left join (
+  -- Pre-aggregate positions in a single hash-aggregate scan instead of
+  -- two correlated subqueries per trade_ideas row.
+  select trade_idea_id,
+         count(*)::int                                  as cnt,
+         (array_agg(lot_size order by id))[1]           as first_lot
+  from positions
+  group by trade_idea_id
+) pa on pa.trade_idea_id = ti.id
 
 union all
 
