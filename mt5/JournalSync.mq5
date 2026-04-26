@@ -2,9 +2,16 @@
 //|                                                  JournalSync.mq5 |
 //|   Sends closed trades + periodic balance snapshots to the KP56   |
 //|   trade journal webhook. Zero credentials leave the VPS.         |
+//|                                                                  |
+//|   v1.10 (Phase 3c) — Rainbow MA context capture at OPEN + CLOSE. |
+//|     • DEAL_ENTRY_IN  → snapshot RAINBOW_* GVs to a position-     |
+//|       keyed file in Files\Common so it survives the gap until    |
+//|       the position closes.                                       |
+//|     • DEAL_ENTRY_OUT → read that file + snapshot current GVs as  |
+//|       close-state, both shipped in the trade_closed payload.     |
 //+------------------------------------------------------------------+
 #property copyright "KP56"
-#property version   "1.00"
+#property version   "1.10"
 #property strict
 
 // ── Inputs ─────────────────────────────────────────────────────────
@@ -16,6 +23,8 @@ input long    MagicFilter           = 0;      // 0 = all magics
 input int     WebRequestTimeoutMs   = 5000;
 input bool    SendBalanceOnClose    = true;   // extra snapshot right after each close
 input bool    VerboseLogs           = true;
+input int     MarioStateMaxAgeSec   = 300;    // ignore Mario context older than this
+input int     RainbowStateMaxAgeSec = 300;    // ignore RainbowMA context older than this
 
 // ── State ──────────────────────────────────────────────────────────
 datetime g_last_balance_sent = 0;
@@ -65,9 +74,9 @@ void OnTimer()
 }
 
 //+------------------------------------------------------------------+
-//| OnTradeTransaction fires on every trade event.                   |
-//| We care only about DEAL_ADD where the deal's entry direction is  |
-//| OUT (a closing deal) — that's the moment a position closes.      |
+//| OnTradeTransaction fires on every trade event. We act on:        |
+//|   • DEAL_ENTRY_IN          — write rainbow_open snapshot file    |
+//|   • DEAL_ENTRY_OUT/OUT_BY  — POST trade_closed payload           |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest&      request,
@@ -84,7 +93,6 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       return;
 
    long entry = HistoryDealGetInteger(deal, DEAL_ENTRY);
-   if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY) return;
 
    string sym = HistoryDealGetString(deal, DEAL_SYMBOL);
    if(StringLen(SymbolFilter) > 0 && sym != SymbolFilter) return;
@@ -92,10 +100,20 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
    long magic = HistoryDealGetInteger(deal, DEAL_MAGIC);
    if(MagicFilter != 0 && magic != MagicFilter) return;
 
-   SendTradeClosed(deal);
+   if(entry == DEAL_ENTRY_IN)
+   {
+      long pos_id = HistoryDealGetInteger(deal, DEAL_POSITION_ID);
+      RainbowWriteOpenSnapshot(pos_id);
+      return;
+   }
 
-   if(SendBalanceOnClose)
-      SendBalanceSnapshot();
+   if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY)
+   {
+      SendTradeClosed(deal);
+      if(SendBalanceOnClose)
+         SendBalanceSnapshot();
+      return;
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -149,6 +167,21 @@ void SendTradeClosed(ulong close_deal)
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    double eq  = AccountInfoDouble(ACCOUNT_EQUITY);
 
+   // Pull Mario v5 indicator state (Phase 3b). Mario writes MARIO_* GVs every
+   // tick; we snapshot whatever's there at the moment this close fires. Stale
+   // state (Mario crashed or chart closed) is dropped via MarioStateMaxAgeSec.
+   string mario_json = MarioContextJsonFragment();
+
+   // Pull Rainbow MA context (Phase 3c) — open from per-position snapshot
+   // file written at DEAL_ENTRY_IN, close from current RAINBOW_* GVs. If the
+   // open file is missing (EA reloaded mid-position, etc.), substitute the
+   // explicit 'none' fragment so columns are null rather than missing.
+   string rainbow_open_json  = RainbowReadOpenSnapshot(position_id);
+   if(StringLen(rainbow_open_json) == 0)
+      rainbow_open_json = RainbowEmptyFragment("open");
+   string rainbow_close_json = RainbowFragment("close");
+   RainbowDeleteOpenSnapshot(position_id);
+
    // Build JSON
    string json = "{";
    json += "\"event\":\"trade_closed\",";
@@ -170,7 +203,10 @@ void SendTradeClosed(ulong close_deal)
    json += "\"magic\":"         + IntegerToString(magic) + ",";
    json += "\"comment\":\""     + JsonEscape(comment) + "\",";
    json += "\"balance_after\":" + DoubleToString(bal, 2) + ",";
-   json += "\"equity_after\":"  + DoubleToString(eq, 2);
+   json += "\"equity_after\":"  + DoubleToString(eq, 2) + ",";
+   json += mario_json;
+   json += "," + rainbow_open_json;
+   json += "," + rainbow_close_json;
    json += "}";
 
    int status = HttpPostJson(json);
@@ -274,5 +310,249 @@ string JsonEscape(string s)
    StringReplace(s, "\r", "\\r");
    StringReplace(s, "\t", "\\t");
    return s;
+}
+
+//+------------------------------------------------------------------+
+//| Mario context capture (Phase 3b) — read MARIO_* GlobalVariables  |
+//| set by the indicator and emit JSON fragment for the trade_closed |
+//| payload. Encoding contract documented in trade-journal/mt5/      |
+//| Mario.mq5 above MarioJournal_PublishState().                      |
+//+------------------------------------------------------------------+
+double MarioGV(const string name)
+{
+   return GlobalVariableCheck(name) ? GlobalVariableGet(name) : 0.0;
+}
+
+string MarioBiasStr(double v)
+{
+   if(v > 0.5)  return "BULL";
+   if(v < -0.5) return "BEAR";
+   return "NEUT";
+}
+
+string MarioSessionStr(int v)
+{
+   switch(v)
+   {
+      case 1: return "ASIA";
+      case 2: return "LONDON";
+      case 3: return "OVERLAP";
+      case 4: return "NY";
+      default: return "QUIET";
+   }
+}
+
+string MarioDecisionStr(int v)
+{
+   switch(v)
+   {
+      case 0: return "GO";
+      case 1: return "WARN";
+      case 2: return "WAIT";
+      case 3: return "SKIP";
+      default: return "SKIP";
+   }
+}
+
+string MarioOBStatusStr(int tier, int type, int score, bool inOpp)
+{
+   if(tier <= 0)
+      return inOpp ? "in opposite zone" : "no zone";
+   string tierLbl;
+   switch(tier)
+   {
+      case 1: tierLbl = "S";  break;
+      case 2: tierLbl = "T1"; break;
+      case 3: tierLbl = "T2"; break;
+      case 4: tierLbl = "T3"; break;
+      default: tierLbl = "?";
+   }
+   string typeLbl = (type == 1) ? "Demand" : (type == 2 ? "Supply" : "?");
+   return StringFormat("%s %s (%d)", typeLbl, tierLbl, score);
+}
+
+string MarioContextJsonFragment()
+{
+   double ts = MarioGV("MARIO_STATE_TS");
+   if(ts <= 0 || (TimeCurrent() - (datetime)(long)ts) > MarioStateMaxAgeSec)
+   {
+      // Stale or never-published — record an explicit miss. Keeps the row
+      // honest about the gap rather than silently dropping the columns.
+      return "\"capture_method\":\"none\","
+             "\"bias_m15\":null,"
+             "\"bias_m5\":null,"
+             "\"ob_status\":null,"
+             "\"svp_poc\":null,"
+             "\"svp_vah\":null,"
+             "\"svp_val\":null,"
+             "\"mario_session\":null,"
+             "\"mario_decision\":null";
+   }
+
+   string bias_m15 = MarioBiasStr(MarioGV("MARIO_BIAS_M15"));
+   string bias_m5  = MarioBiasStr(MarioGV("MARIO_BIAS_M5"));
+
+   int    obTier  = (int)MarioGV("MARIO_OB_TIER");
+   int    obType  = (int)MarioGV("MARIO_OB_TYPE");
+   int    obScore = (int)MarioGV("MARIO_OB_SCORE");
+   bool   inOpp   = (MarioGV("MARIO_OB_INOPP") > 0.5);
+   string ob      = MarioOBStatusStr(obTier, obType, obScore, inOpp);
+
+   double poc = MarioGV("MARIO_SVP_POC");
+   double vah = MarioGV("MARIO_SVP_VAH");
+   double val = MarioGV("MARIO_SVP_VAL");
+
+   string ses = MarioSessionStr((int)MarioGV("MARIO_SESSION"));
+   string dec = MarioDecisionStr((int)MarioGV("MARIO_DECISION"));
+
+   string s = "";
+   s += "\"capture_method\":\"mario_gv\",";
+   s += "\"bias_m15\":\""      + bias_m15 + "\",";
+   s += "\"bias_m5\":\""       + bias_m5  + "\",";
+   s += "\"ob_status\":\""     + JsonEscape(ob) + "\",";
+   s += "\"svp_poc\":"         + ((poc > 0) ? DoubleToString(poc, 2) : "null") + ",";
+   s += "\"svp_vah\":"         + ((vah > 0) ? DoubleToString(vah, 2) : "null") + ",";
+   s += "\"svp_val\":"         + ((val > 0) ? DoubleToString(val, 2) : "null") + ",";
+   s += "\"mario_session\":\"" + ses + "\",";
+   s += "\"mario_decision\":\""+ dec + "\"";
+   return s;
+}
+
+//+------------------------------------------------------------------+
+//| Rainbow MA context capture (Phase 3c) — read RAINBOW_* GVs set   |
+//| by RainbowMA.mq5 (v1.30+). Encoding contract documented in       |
+//| RainbowMA.mq5 above RainbowJournal_PublishState().                |
+//|                                                                  |
+//| Capture happens at TWO moments per position:                     |
+//|   • OPEN  — DEAL_ENTRY_IN  → RainbowWriteOpenSnapshot() saves     |
+//|             the JSON fragment to Files\Common\rainbow_open_<pos> |
+//|             so it survives until the position closes.            |
+//|   • CLOSE — DEAL_ENTRY_OUT → RainbowFragment("close") snapshots   |
+//|             current GVs at the close moment.                     |
+//+------------------------------------------------------------------+
+double RainbowGV(const string name)
+{
+   return GlobalVariableCheck(name) ? GlobalVariableGet(name) : 0.0;
+}
+
+string RainbowCandleStr(int v)
+{
+   if(v > 0) return "green";
+   if(v < 0) return "red";
+   return "doji";
+}
+
+string RainbowOrderStr(int v)
+{
+   if(v > 0) return "BULL_STACK";
+   if(v < 0) return "BEAR_STACK";
+   return "MIXED";
+}
+
+string RainbowEmptyFragment(const string moment)
+{
+   string tags[4] = {"m1", "m5", "m15", "h1"};
+   string s = "\"rainbow_capture_method_" + moment + "\":\"none\"";
+   for(int t = 0; t < 4; t++)
+   {
+      string p = "rainbow_" + tags[t] + "_" + moment + "_";
+      s += ",\"" + p + "slow_ma\":null";
+      s += ",\"" + p + "close_price\":null";
+      s += ",\"" + p + "band_idx\":null";
+      s += ",\"" + p + "candle\":null";
+      s += ",\"" + p + "body_points\":null";
+      s += ",\"" + p + "order_state\":null";
+   }
+   return s;
+}
+
+string RainbowFragment(const string moment)
+{
+   double ts = RainbowGV("RAINBOW_STATE_TS");
+   if(ts <= 0 || (TimeCurrent() - (datetime)(long)ts) > RainbowStateMaxAgeSec)
+      return RainbowEmptyFragment(moment);
+
+   string tagsHi[4] = {"M1",  "M5",  "M15",  "H1"};
+   string tagsLo[4] = {"m1",  "m5",  "m15",  "h1"};
+
+   string s = "\"rainbow_capture_method_" + moment + "\":\"rainbow_gv\"";
+   for(int t = 0; t < 4; t++)
+   {
+      string pi = "RAINBOW_" + tagsHi[t] + "_";
+      string po = "rainbow_" + tagsLo[t] + "_" + moment + "_";
+
+      double slow_ma = RainbowGV(pi + "SLOW_MA");
+      // SLOW_MA == 0 is the indicator's "TF not warmed up" sentinel.
+      if(slow_ma <= 0.0)
+      {
+         s += ",\"" + po + "slow_ma\":null";
+         s += ",\"" + po + "close_price\":null";
+         s += ",\"" + po + "band_idx\":null";
+         s += ",\"" + po + "candle\":null";
+         s += ",\"" + po + "body_points\":null";
+         s += ",\"" + po + "order_state\":null";
+         continue;
+      }
+
+      double cprice = RainbowGV(pi + "CLOSE_PRICE");
+      int    band   = (int)RainbowGV(pi + "BAND_IDX");
+      int    candle = (int)RainbowGV(pi + "CANDLE");
+      double body   = RainbowGV(pi + "BODY_POINTS");
+      int    order  = (int)RainbowGV(pi + "ORDER");
+
+      s += ",\"" + po + "slow_ma\":"      + DoubleToString(slow_ma, _Digits);
+      s += ",\"" + po + "close_price\":"  + DoubleToString(cprice,  _Digits);
+      s += ",\"" + po + "band_idx\":"     + IntegerToString(band);
+      s += ",\"" + po + "candle\":\""     + RainbowCandleStr(candle) + "\"";
+      s += ",\"" + po + "body_points\":"  + DoubleToString(body, 2);
+      s += ",\"" + po + "order_state\":\""+ RainbowOrderStr(order) + "\"";
+   }
+   return s;
+}
+
+string RainbowSnapshotFilename(long position_id)
+{
+   return "rainbow_open_" + IntegerToString(position_id) + ".json";
+}
+
+void RainbowWriteOpenSnapshot(long position_id)
+{
+   string fragment = RainbowFragment("open");
+   string fname    = RainbowSnapshotFilename(position_id);
+
+   int h = FileOpen(fname, FILE_WRITE | FILE_TXT | FILE_COMMON | FILE_UNICODE);
+   if(h == INVALID_HANDLE)
+   {
+      PrintFormat("[JournalSync] WARN: rainbow open snapshot write failed pos=%I64d err=%d",
+                  position_id, GetLastError());
+      return;
+   }
+   FileWriteString(h, fragment);
+   FileClose(h);
+   if(VerboseLogs)
+      PrintFormat("[JournalSync] rainbow open snapshot saved pos=%I64d → %s",
+                  position_id, fname);
+}
+
+string RainbowReadOpenSnapshot(long position_id)
+{
+   string fname = RainbowSnapshotFilename(position_id);
+   if(!FileIsExist(fname, FILE_COMMON))
+      return "";
+   int h = FileOpen(fname, FILE_READ | FILE_TXT | FILE_COMMON | FILE_UNICODE);
+   if(h == INVALID_HANDLE)
+      return "";
+   string s = "";
+   while(!FileIsEnding(h))
+      s += FileReadString(h);
+   FileClose(h);
+   return s;
+}
+
+void RainbowDeleteOpenSnapshot(long position_id)
+{
+   string fname = RainbowSnapshotFilename(position_id);
+   if(FileIsExist(fname, FILE_COMMON))
+      FileDelete(fname, FILE_COMMON);
 }
 //+------------------------------------------------------------------+

@@ -31,6 +31,28 @@ function bad(res, code, msg) {
   res.status(code).json({ ok: false, error: msg });
 }
 
+// Phase 3c — flatten the rainbow_* fields the EA sends into a row object.
+// 4 TFs × 2 moments × 6 fields = 48 columns + 2 capture_method columns.
+// EA always emits explicit nulls when state is missing, so `?? null` is just
+// belt-and-suspenders (covers payloads from older EA versions without these
+// fields entirely — they fall through as nulls and the upsert still works).
+const RAINBOW_TFS     = ['m1', 'm5', 'm15', 'h1'];
+const RAINBOW_MOMENTS = ['open', 'close'];
+const RAINBOW_FIELDS  = ['slow_ma', 'close_price', 'band_idx', 'candle', 'body_points', 'order_state'];
+function rainbowFields(p) {
+  const row = {};
+  for (const moment of RAINBOW_MOMENTS) {
+    row[`rainbow_capture_method_${moment}`] = p[`rainbow_capture_method_${moment}`] ?? null;
+    for (const tf of RAINBOW_TFS) {
+      for (const f of RAINBOW_FIELDS) {
+        const k = `rainbow_${tf}_${moment}_${f}`;
+        row[k] = p[k] ?? null;
+      }
+    }
+  }
+  return row;
+}
+
 async function readJson(req) {
   if (req.body && typeof req.body === 'object') return req.body;
   let raw = '';
@@ -85,6 +107,10 @@ module.exports = async (req, res) => {
         mario_session:  payload.mario_session  ?? null,
         mario_decision: payload.mario_decision ?? null,
         capture_method: payload.capture_method ?? null,
+        // Rainbow MA context at open + close (Phase 3c). Six fields per TF
+        // (M1/M5/M15/H1) per moment. EA emits explicit nulls when state is
+        // stale or a TF wasn't warmed up.
+        ...rainbowFields(payload),
       };
       for (const k of ['account_login','deal_ticket','symbol','type','volume','open_time','close_time','open_price','close_price','profit']) {
         if (row[k] === undefined || row[k] === null) return bad(res, 400, 'missing_field: ' + k);
