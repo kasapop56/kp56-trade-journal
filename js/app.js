@@ -664,5 +664,12 @@ function showToast(msg, type = '') {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────────
-document.getElementById('tradeDate').value = new Date().toISOString().split('T')[0];
-navigate('stats');
+// Defer to DOMContentLoaded so dashboard.js + balance.js have parsed first —
+// navigate('stats') calls loadDashboard() / loadPortfolio() which live in
+// those later <script> tags. Without this gate the call ran synchronously at
+// app.js parse time, threw ReferenceError, and Stats stayed empty until the
+// user round-tripped through History.
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('tradeDate').value = new Date().toISOString().split('T')[0];
+  navigate('stats');
+});
