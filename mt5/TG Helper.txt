@@ -1168,8 +1168,11 @@ string EscapeJsonString(string s)
       else if(ch == '\n') out += "\\n";
       else if(ch == '\r') out += "\\r";
       else if(ch == '\t') out += "\\t";
-      else if(ch == '\b') out += "\\b";
-      else if(ch == '\f') out += "\\f";
+      // Backspace (0x08) and form-feed (0x0C) fall through to the
+      // generic < 0x20 branch and get emitted as a 6-char unicode
+      // escape (valid JSON). Do NOT use C literals '\b' / '\f' here:
+      // MQL5 does not recognize those escape sequences and would
+      // silently compare ch against the bare letters 'b' / 'f'.
       else if(ch < 0x20)
       {
          out += "\\u00";
