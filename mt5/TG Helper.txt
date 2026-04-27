@@ -1,0 +1,1326 @@
+//+------------------------------------------------------------------+
+//|                                       Universal_TG_Helper.mq5     |
+//|                     Universal TG Helper EA v5.0                    |
+//|                     - Queue-based: no alert lost                   |
+//|                     - Reads stats from ALL indicators              |
+//|                     - Win/Loss stats in hourly summary             |
+//|                     - Order open/close notifications               |
+//|  v4.7 FIX: int→long for queue IDs (overflow at 2.1B)             |
+//|  v5.0 NEW: Screenshot support (sendPhoto multipart)               |
+//|  v5.1 NEW: InpShowPrivate — hide Balance/Equity/P&L when sharing  |
+//|  v5.2 NEW: SITREP webhook dual-write (Telegram + Vercel/Supabase) |
+//+------------------------------------------------------------------+
+//|  HOW IT WORKS (for indicator developers):                          |
+//|  1. Indicator increments GV "BABY_ALERT_NEW" (atomic counter)     |
+//|  2. Indicator writes message to "baby_alert_<counter>.txt"        |
+//|     in Common folder (FILE_COMMON)                                |
+//|  3. This EA detects GV change, reads each new file, sends TG     |
+//|  4. File is deleted after successful send                         |
+//|                                                                    |
+//|  SCREENSHOT PROTOCOL (v5.0):                                      |
+//|  If message contains [SCREENSHOT:...], EA will:                   |
+//|  1. Take ChartScreenShot → save as PNG in FILE_COMMON             |
+//|  2. Send PNG via sendPhoto (multipart/form-data)                  |
+//|  3. Send remaining text via sendMessage (as before)               |
+//|  4. Delete PNG after send                                         |
+//|                                                                    |
+//|  STATS FILE FORMAT (CSV in Common folder):                        |
+//|  Line 1: TF, Symbol, PipSize, DisplayName                        |
+//|  Line 2+: time, entry, tp, sl, dir, outcome, outcomeTime         |
+//|  Filenames: 2or3_baby_stats_*.csv  or  tma_stats_*.csv           |
+//+------------------------------------------------------------------+
+#property copyright   "Universal TG Helper"
+#property version     "5.20"
+#property description "Universal Telegram Helper for ALL indicators"
+#property description "Queue-based: multiple indicators won't lose messages"
+#property description "Win/Loss stats + closed deals in hourly summary"
+#property description "Also monitors order open/close events"
+#property description "v5.0: Chart screenshot support via sendPhoto"
+#property description "v5.1: InpShowPrivate toggle for Balance/Equity/P&L"
+#property description "v5.2: SITREP dual-write to Vercel webhook (Supabase mirror)"
+
+#include <Trade/DealInfo.mqh>
+
+//+------------------------------------------------------------------+
+//| Inputs                                                             |
+//+------------------------------------------------------------------+
+input group "══════ Telegram Settings ══════"
+input string InpBotToken     = "";          // Bot Token (from @BotFather)
+input string InpChatID       = "";          // Chat ID
+input int    InpCheckMs      = 500;         // Alert Check Interval (ms)
+
+input group "══════ Screenshot Settings ══════"
+input bool   InpScreenshot       = true;    // Enable Screenshot with SitRep
+input int    InpScreenWidth      = 800;     // Screenshot Width (px)
+input int    InpScreenHeight     = 600;     // Screenshot Height (px)
+
+input group "══════ SITREP Webhook (Phase 5) ══════"
+input string InpSitrepWebhookURL    = "";   // Vercel /api/sitrep URL (blank = disabled)
+input string InpSitrepWebhookSecret = "";   // Shared secret (matches SITREP_SHARED_SECRET)
+
+input group "══════ Stats Settings ══════"
+input int    InpThaiOffset   = 5;           // Thai Time Offset from Server (hours)
+input bool   InpHourlyStats  = true;        // Send Hourly Stats Summary
+
+input group "══════ Privacy Settings ══════"
+input bool   InpShowPrivate  = true;        // Show Balance/Equity/P&L (disable when sharing)
+
+input group "══════ Order Monitor ══════"
+input bool   InpOrderAlerts  = true;        // Enable Order Open/Close Alerts
+input bool   InpAllSymbols   = true;        // Monitor All Symbols (false = chart only)
+
+input group "══════ Queue Settings ══════"
+input int    InpMaxQueueAge  = 300;         // Delete queue files older than X seconds
+input bool   InpLegacyMode   = true;        // Also check old single-file protocol
+
+//+------------------------------------------------------------------+
+//| Stats data parsed from one CSV file                                |
+//+------------------------------------------------------------------+
+struct FileStats {
+   string symbol;
+   string displayName;
+   string tf;
+   double pipSize;
+   int    total;
+   int    wins;
+   int    losses;
+   int    pending;
+   double tpPipsSum;
+   double slPipsSum;
+};
+
+//+------------------------------------------------------------------+
+//| Globals                                                            |
+//+------------------------------------------------------------------+
+double   gLastAlertID    = 0;
+int      gLastStatsHour  = -1;
+
+// Position tracking
+ulong    gKnownTickets[];
+int      gKnownCount = 0;
+
+//+------------------------------------------------------------------+
+//| Init                                                               |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   EventSetMillisecondTimer(InpCheckMs);
+   
+   CleanupOldQueueFiles();
+   
+   GlobalVariableSet("BABY_ALERT_NEW", 0);
+   gLastAlertID = 0;
+   
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent() + InpThaiOffset * 3600, dt);
+   gLastStatsHour = dt.hour;
+   
+   SnapshotPositions();
+   
+   Print("✅ Universal TG Helper v5.20 | Queue mode (long IDs) | Screenshot: ",
+         InpScreenshot ? "ON" : "OFF",
+         " (", InpScreenWidth, "x", InpScreenHeight, ")",
+         " | Private: ", InpShowPrivate ? "ON" : "OFF");
+   
+   string msg = "🟢 <b>Universal TG Helper v5.20</b>\n"
+                "━━━━━━━━━━━━━━━\n"
+                "📊 Chart: " + _Symbol + "\n"
+                "⏰ Server: " + TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES) + "\n"
+                "🇹🇭 Thai: " + TimeToString(TimeCurrent() + InpThaiOffset*3600, TIME_DATE|TIME_MINUTES) + "\n"
+                "📈 Hourly stats: " + (InpHourlyStats ? "ON (with Win/Loss)" : "OFF") + "\n"
+                "📋 Order alerts: " + (InpOrderAlerts ? "ON" : "OFF") + "\n"
+                "📸 Screenshot: " + (InpScreenshot ? "ON (" + IntegerToString(InpScreenWidth) + "x" + IntegerToString(InpScreenHeight) + ")" : "OFF") + "\n"
+                "🔒 Private info: " + (InpShowPrivate ? "ON (Balance/Equity visible)" : "OFF (hidden)") + "\n"
+                "🌐 SITREP webhook: " + (InpSitrepWebhookURL != "" && InpSitrepWebhookSecret != "" ? "ON" : "OFF (blank)") + "\n"
+                "📂 Open positions: " + IntegerToString(gKnownCount) + "\n"
+                "🔄 Queue ID: reset to 0";
+   
+   if(_UninitReason != REASON_CHARTCHANGE)
+   {
+      if(SendTelegram(msg))
+         Print("✅ Telegram connected!");
+      else
+         Print("❌ Telegram FAILED - check token/chatid");
+   }
+   
+   // v5.0: Create test screenshot button on chart
+   CreateScreenshotButton();
+   
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+//| Deinit                                                             |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   ObjectDelete(0, "TGH_BTN_SCREENSHOT");
+}
+
+//+------------------------------------------------------------------+
+//| Chart Event — Handle button clicks                                 |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+{
+   if(id == CHARTEVENT_OBJECT_CLICK && sparam == "TGH_BTN_SCREENSHOT")
+   {
+      // Reset button state (un-press)
+      ObjectSetInteger(0, "TGH_BTN_SCREENSHOT", OBJPROP_STATE, false);
+      
+      Print("📸 Manual screenshot test triggered by button");
+      DoTestScreenshot();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Create screenshot test button on chart                             |
+//+------------------------------------------------------------------+
+void CreateScreenshotButton()
+{
+   string btnName = "TGH_BTN_SCREENSHOT";
+   ObjectDelete(0, btnName);
+   
+   ObjectCreate(0, btnName, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, btnName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, btnName, OBJPROP_XDISTANCE, 10);
+   ObjectSetInteger(0, btnName, OBJPROP_YDISTANCE, 30);
+   ObjectSetInteger(0, btnName, OBJPROP_XSIZE, 90);
+   ObjectSetInteger(0, btnName, OBJPROP_YSIZE, 28);
+   ObjectSetString(0, btnName, OBJPROP_TEXT, "📸 TEST TG");
+   ObjectSetString(0, btnName, OBJPROP_FONT, "Arial");
+   ObjectSetInteger(0, btnName, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, btnName, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, btnName, OBJPROP_BGCOLOR, C'50,50,80');
+   ObjectSetInteger(0, btnName, OBJPROP_BORDER_COLOR, clrGold);
+   ObjectSetInteger(0, btnName, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, btnName, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, btnName, OBJPROP_STATE, false);
+   ObjectSetInteger(0, btnName, OBJPROP_ZORDER, 100);
+   
+   ChartRedraw(0);
+   Print("📸 Screenshot test button created on chart");
+}
+
+//+------------------------------------------------------------------+
+//| Manual screenshot test — take screenshot, send photo + text        |
+//+------------------------------------------------------------------+
+void DoTestScreenshot()
+{
+   string chartFile = "mario_test_screenshot.png";
+   
+   Print("📸 Step 1: Taking ChartScreenShot (", InpScreenWidth, "x", InpScreenHeight, ")...");
+   
+   if(!ChartScreenShot(0, chartFile, InpScreenWidth, InpScreenHeight, ALIGN_RIGHT))
+   {
+      int err = GetLastError();
+      Print("❌ ChartScreenShot FAILED! Error: ", err);
+      SendTelegram("❌ Screenshot test FAILED\nChartScreenShot error: " + IntegerToString(err));
+      return;
+   }
+   
+   Print("📸 Step 2: Screenshot saved locally: ", chartFile);
+   
+   // Check file size
+   int hCheck = FileOpen(chartFile, FILE_READ | FILE_BIN);
+   if(hCheck == INVALID_HANDLE)
+   {
+      Print("❌ Cannot open local screenshot file! Error: ", GetLastError());
+      SendTelegram("❌ Screenshot test FAILED\nCannot open local file");
+      return;
+   }
+   int localSize = (int)FileSize(hCheck);
+   FileClose(hCheck);
+   Print("📸 Step 3: Local file size = ", localSize, " bytes");
+   
+   // Copy to Common
+   string commonFile = "mario_test_common.png";
+   Print("📸 Step 4: Copying to Common folder...");
+   
+   if(!CopyFileToCommon(chartFile, commonFile))
+   {
+      Print("❌ CopyFileToCommon FAILED!");
+      SendTelegram("❌ Screenshot test FAILED\nCopy to Common failed");
+      FileDelete(chartFile);
+      return;
+   }
+   
+   // Send photo
+   string caption = "📸 TEST | " + _Symbol + " | " + TimeToString(TimeCurrent(), TIME_MINUTES);
+   Print("📸 Step 5: Sending photo via Telegram...");
+   
+   bool photoOk = SendTelegramPhoto(commonFile, caption);
+   
+   // Cleanup
+   FileDelete(commonFile, FILE_COMMON);
+   FileDelete(chartFile);
+   
+   if(photoOk)
+   {
+      Print("✅ Screenshot test SUCCESS!");
+      SendTelegram("✅ Screenshot test completed\n📸 " + IntegerToString(InpScreenWidth) + "x" + IntegerToString(InpScreenHeight) + " | " + IntegerToString(localSize) + " bytes");
+   }
+   else
+   {
+      Print("❌ SendTelegramPhoto FAILED!");
+      SendTelegram("❌ Screenshot test: photo send failed\nFile was " + IntegerToString(localSize) + " bytes\nCheck Experts tab for details");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Timer                                                              |
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+   ProcessAlertQueue();
+   
+   if(InpLegacyMode)
+      CheckLegacyAlert();
+   
+   if(InpHourlyStats)
+      CheckHourlyStats();
+   
+   if(InpOrderAlerts)
+      CheckPositionChanges();
+}
+
+//+------------------------------------------------------------------+
+//| OnTick                                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   ProcessAlertQueue();
+}
+
+//+------------------------------------------------------------------+
+//| Process queue  (v5.0: screenshot support)                          |
+//+------------------------------------------------------------------+
+void ProcessAlertQueue()
+{
+   if(!GlobalVariableCheck("BABY_ALERT_NEW")) return;
+   
+   double currentID = GlobalVariableGet("BABY_ALERT_NEW");
+   if(currentID <= gLastAlertID) return;
+   
+   int processed = 0;
+   for(long id = (long)gLastAlertID + 1; id <= (long)currentID; id++)
+   {
+      string filename = "baby_alert_" + IntegerToString(id) + ".txt";
+      
+      string message = ReadQueueFile(filename);
+      if(message != "")
+      {
+         //--- v5.0: Check for screenshot marker (can be anywhere in first 200 chars)
+         string screenshotTag = "";
+         string textBody = message;
+         
+         int ssPos = StringFind(message, "[SCREENSHOT:");
+         if(ssPos >= 0)
+         {
+            int tagEnd = StringFind(message, "]", ssPos);
+            if(tagEnd > ssPos)
+            {
+               screenshotTag = StringSubstr(message, ssPos + 12, tagEnd - ssPos - 12);  // e.g. "HOURLY|LONDON"
+               // Strip the [SCREENSHOT:...] tag + optional newline after it
+               string beforeTag = StringSubstr(message, 0, ssPos);
+               string afterTag  = StringSubstr(message, tagEnd + 1);
+               if(StringLen(afterTag) > 0 && StringGetCharacter(afterTag, 0) == '\n')
+                  afterTag = StringSubstr(afterTag, 1);
+               textBody = beforeTag + afterTag;
+               Print("📸 Queue #", id, ": Screenshot marker found: [", screenshotTag, "]");
+            }
+         }
+         
+         //--- Send screenshot first (if marker found and enabled)
+         //    v5.2: defer commonFile deletion until after webhook can read it
+         string sitrepCommonFile = "";   // empty unless screenshot saved to Common OK
+
+         if(screenshotTag != "" && InpScreenshot)
+         {
+            string chartFile = "mario_chart_" + IntegerToString(id) + ".png";
+
+            // ChartScreenShot saves to MQL5/Files/ (not Common)
+            // We use chart ID 0 = current chart
+            if(ChartScreenShot(0, chartFile, InpScreenWidth, InpScreenHeight, ALIGN_RIGHT))
+            {
+               Print("📸 Screenshot saved: ", chartFile, " (", InpScreenWidth, "x", InpScreenHeight, ")");
+
+               // Build short caption
+               string caption = "📊 SITREP " + screenshotTag + " | " + _Symbol;
+
+               // Copy from local Files to Common (so we can read it reliably)
+               string commonFile = "mario_chart_common_" + IntegerToString(id) + ".png";
+               if(CopyFileToCommon(chartFile, commonFile))
+               {
+                  if(SendTelegramPhoto(commonFile, caption))
+                     Print("📸 Photo sent OK for queue #", id);
+                  else
+                     Print("⚠ Photo send FAILED for queue #", id, " — text will still be sent");
+
+                  // v5.2: keep file for webhook; cleanup deferred to end of iteration
+                  sitrepCommonFile = commonFile;
+               }
+               else
+                  Print("⚠ Could not copy chart to Common folder");
+
+               // Delete local (Files/) copy — Common copy persists for webhook
+               FileDelete(chartFile);
+            }
+            else
+               Print("⚠ ChartScreenShot failed for queue #", id, " err=", GetLastError());
+         }
+
+         //--- Send text message (always)
+         if(textBody != "" && StringLen(textBody) > 5)
+         {
+            if(SendTelegram(textBody))
+            {
+               processed++;
+               Print("✅ Queue #", id, " sent OK", (screenshotTag != "" ? " (with screenshot)" : ""));
+            }
+            else
+               Print("❌ Queue #", id, " send FAILED");
+         }
+         else
+            processed++;  // Count as processed even if text was empty (screenshot was the payload)
+
+         //--- v5.2: SITREP webhook dual-write
+         //    Fires only for messages with [SCREENSHOT:...] tag (i.e. SITREP).
+         //    Telegram already done above; webhook failures don't impact user.
+         if(screenshotTag != "" && InpSitrepWebhookURL != "" && InpSitrepWebhookSecret != "")
+         {
+            SendSitrepWebhook(sitrepCommonFile, screenshotTag, textBody);
+         }
+
+         //--- v5.2: deferred Common-folder cleanup (after webhook read)
+         if(sitrepCommonFile != "")
+            FileDelete(sitrepCommonFile, FILE_COMMON);
+      }
+      else
+         Print("⚠ Queue #", id, " file not found or empty: ", filename);
+      
+      FileDelete(filename, FILE_COMMON);
+   }
+   
+   gLastAlertID = currentID;
+   
+   if(processed > 0)
+      Print("📨 Processed ", processed, " queued alert(s)");
+}
+
+//+------------------------------------------------------------------+
+//| Copy file from local MQL5/Files/ to FILE_COMMON                    |
+//| ChartScreenShot saves to local, but we need Common for reliable   |
+//| cross-path access                                                  |
+//+------------------------------------------------------------------+
+bool CopyFileToCommon(string localFile, string commonFile)
+{
+   // Read local file as binary
+   int hRead = FileOpen(localFile, FILE_READ | FILE_BIN);
+   if(hRead == INVALID_HANDLE)
+   {
+      Print("⚠ CopyFileToCommon: Cannot open local file: ", localFile, " err=", GetLastError());
+      return false;
+   }
+   
+   int fileSize = (int)FileSize(hRead);
+   if(fileSize <= 0)
+   {
+      FileClose(hRead);
+      Print("⚠ CopyFileToCommon: File empty: ", localFile);
+      return false;
+   }
+   
+   uchar data[];
+   ArrayResize(data, fileSize);
+   uint bytesRead = FileReadArray(hRead, data);
+   FileClose(hRead);
+   
+   if(bytesRead <= 0)
+   {
+      Print("⚠ CopyFileToCommon: Read failed: ", localFile);
+      return false;
+   }
+   
+   // Write to Common folder
+   int hWrite = FileOpen(commonFile, FILE_WRITE | FILE_BIN | FILE_COMMON);
+   if(hWrite == INVALID_HANDLE)
+   {
+      Print("⚠ CopyFileToCommon: Cannot create common file: ", commonFile, " err=", GetLastError());
+      return false;
+   }
+   
+   FileWriteArray(hWrite, data);
+   FileClose(hWrite);
+   
+   Print("📁 Copied ", fileSize, " bytes: ", localFile, " → Common/", commonFile);
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Send photo via Telegram sendPhoto (multipart/form-data)            |
+//| File must be in FILE_COMMON                                        |
+//+------------------------------------------------------------------+
+bool SendTelegramPhoto(string pngFileCommon, string caption)
+{
+   if(InpBotToken == "" || InpChatID == "") return false;
+   
+   //--- Read PNG file from Common
+   int hFile = FileOpen(pngFileCommon, FILE_READ | FILE_BIN | FILE_COMMON);
+   if(hFile == INVALID_HANDLE)
+   {
+      Print("⚠ SendTelegramPhoto: Cannot open ", pngFileCommon, " err=", GetLastError());
+      return false;
+   }
+   
+   int fileSize = (int)FileSize(hFile);
+   uchar pngData[];
+   ArrayResize(pngData, fileSize);
+   FileReadArray(hFile, pngData);
+   FileClose(hFile);
+   
+   if(fileSize <= 0)
+   {
+      Print("⚠ SendTelegramPhoto: PNG file empty");
+      return false;
+   }
+   
+   Print("📸 Sending photo: ", fileSize, " bytes, caption: ", caption);
+   
+   //--- Build multipart/form-data body
+   string boundary = "----MarioBot" + IntegerToString(GetTickCount());
+   
+   uchar body[];
+   
+   // Part 1: chat_id
+   AppendMultipartField(body, boundary, "chat_id", InpChatID);
+   
+   // Part 2: caption
+   AppendMultipartField(body, boundary, "caption", caption);
+   
+   // Part 3: parse_mode
+   AppendMultipartField(body, boundary, "parse_mode", "HTML");
+   
+   // Part 4: photo (binary file)
+   AppendMultipartFile(body, boundary, "photo", "chart.png", "image/png", pngData);
+   
+   // Closing boundary
+   string closing = "--" + boundary + "--\r\n";
+   uchar closingBytes[];
+   StringToCharArray(closing, closingBytes, 0, WHOLE_ARRAY, CP_UTF8);
+   // Remove null terminator
+   int closingLen = ArraySize(closingBytes) - 1;
+   int bodyLen = ArraySize(body);
+   ArrayResize(body, bodyLen + closingLen);
+   ArrayCopy(body, closingBytes, bodyLen, 0, closingLen);
+   
+   //--- Send via WebRequest
+   string url = "https://api.telegram.org/bot" + InpBotToken + "/sendPhoto";
+   string headers = "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n";
+   
+   char postData[];
+   ArrayResize(postData, ArraySize(body));
+   for(int i = 0; i < ArraySize(body); i++)
+      postData[i] = (char)body[i];
+   
+   char result[];
+   string resultHeaders;
+   
+   ResetLastError();
+   int res = WebRequest("POST", url, headers, 10000, postData, result, resultHeaders);
+   
+   if(res == -1)
+   {
+      int err = GetLastError();
+      if(err == 4014)
+         Print("⚠ Add https://api.telegram.org to Tools > Options > Expert Advisors > Allow WebRequest");
+      else
+         Print("⚠ SendPhoto WebRequest error: ", err);
+      return false;
+   }
+   
+   if(res != 200)
+   {
+      string resp = CharArrayToString(result);
+      Print("⚠ SendPhoto HTTP ", res, ": ", resp);
+      return false;
+   }
+   
+   Print("✅ Photo sent successfully (", fileSize, " bytes)");
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Append a text field to multipart body                              |
+//+------------------------------------------------------------------+
+void AppendMultipartField(uchar &body[], string boundary, string fieldName, string value)
+{
+   string part = "--" + boundary + "\r\n"
+               + "Content-Disposition: form-data; name=\"" + fieldName + "\"\r\n"
+               + "\r\n"
+               + value + "\r\n";
+   
+   uchar partBytes[];
+   StringToCharArray(part, partBytes, 0, WHOLE_ARRAY, CP_UTF8);
+   int partLen = ArraySize(partBytes) - 1;  // exclude null terminator
+   
+   int bodyLen = ArraySize(body);
+   ArrayResize(body, bodyLen + partLen);
+   ArrayCopy(body, partBytes, bodyLen, 0, partLen);
+}
+
+//+------------------------------------------------------------------+
+//| Append a binary file to multipart body                             |
+//+------------------------------------------------------------------+
+void AppendMultipartFile(uchar &body[], string boundary, 
+                         string fieldName, string fileName,
+                         string contentType, uchar &fileData[])
+{
+   string header = "--" + boundary + "\r\n"
+                 + "Content-Disposition: form-data; name=\"" + fieldName + "\"; filename=\"" + fileName + "\"\r\n"
+                 + "Content-Type: " + contentType + "\r\n"
+                 + "\r\n";
+   
+   uchar headerBytes[];
+   StringToCharArray(header, headerBytes, 0, WHOLE_ARRAY, CP_UTF8);
+   int headerLen = ArraySize(headerBytes) - 1;
+   
+   string footer = "\r\n";
+   uchar footerBytes[];
+   StringToCharArray(footer, footerBytes, 0, WHOLE_ARRAY, CP_UTF8);
+   int footerLen = ArraySize(footerBytes) - 1;
+   
+   int fileLen = ArraySize(fileData);
+   int bodyLen = ArraySize(body);
+   int totalAdd = headerLen + fileLen + footerLen;
+   
+   ArrayResize(body, bodyLen + totalAdd);
+   ArrayCopy(body, headerBytes, bodyLen, 0, headerLen);
+   ArrayCopy(body, fileData, bodyLen + headerLen, 0, fileLen);
+   ArrayCopy(body, footerBytes, bodyLen + headerLen + fileLen, 0, footerLen);
+}
+
+//+------------------------------------------------------------------+
+//| Read a queue file                                                  |
+//+------------------------------------------------------------------+
+string ReadQueueFile(string filename)
+{
+   int handle = FileOpen(filename, FILE_READ | FILE_TXT | FILE_COMMON | FILE_UNICODE);
+   if(handle == INVALID_HANDLE) return "";
+   
+   string message = "";
+   while(!FileIsEnding(handle))
+   {
+      if(message != "") message += "\n";
+      message += FileReadString(handle);
+   }
+   FileClose(handle);
+   
+   return message;
+}
+
+//+------------------------------------------------------------------+
+//| Legacy mode                                                        |
+//+------------------------------------------------------------------+
+void CheckLegacyAlert()
+{
+   string filename = "2or3_baby_alerts.txt";
+   if(!FileIsExist(filename, FILE_COMMON)) return;
+   
+   int handle = FileOpen(filename, FILE_READ | FILE_TXT | FILE_COMMON | FILE_UNICODE);
+   if(handle == INVALID_HANDLE) return;
+   
+   string message = "";
+   while(!FileIsEnding(handle))
+   {
+      if(message != "") message += "\n";
+      message += FileReadString(handle);
+   }
+   FileClose(handle);
+   
+   if(message != "" && StringLen(message) > 5)
+   {
+      static string lastLegacyMsg = "";
+      if(message != lastLegacyMsg)
+      {
+         lastLegacyMsg = message;
+         if(SendTelegram(message))
+            Print("✅ Legacy alert sent");
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Cleanup old queue files on startup                                 |
+//+------------------------------------------------------------------+
+void CleanupOldQueueFiles()
+{
+   string fname = "";
+   long searchHandle = FileFindFirst("baby_alert_*.txt", fname, FILE_COMMON);
+   int cleaned = 0;
+   
+   if(searchHandle != INVALID_HANDLE)
+   {
+      do
+      {
+         FileDelete(fname, FILE_COMMON);
+         cleaned++;
+      }
+      while(FileFindNext(searchHandle, fname));
+      FileFindClose(searchHandle);
+   }
+   
+   // v5.0: Also clean up any leftover chart PNGs
+   searchHandle = FileFindFirst("mario_chart_*.png", fname, FILE_COMMON);
+   if(searchHandle != INVALID_HANDLE)
+   {
+      do
+      {
+         FileDelete(fname, FILE_COMMON);
+         cleaned++;
+      }
+      while(FileFindNext(searchHandle, fname));
+      FileFindClose(searchHandle);
+   }
+   
+   if(cleaned > 0)
+      Print("🧹 Cleaned ", cleaned, " old queue/chart file(s)");
+}
+
+//+------------------------------------------------------------------+
+//| OnTradeTransaction                                                 |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+{
+   if(!InpOrderAlerts) return;
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+   {
+      Sleep(200);
+      ProcessDeal(trans.deal);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Process a deal                                                     |
+//+------------------------------------------------------------------+
+void ProcessDeal(ulong dealTicket)
+{
+   if(dealTicket == 0) return;
+   if(!HistoryDealSelect(dealTicket)) return;
+   
+   string   symbol     = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+   double   vol        = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+   double   price      = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+   double   profit     = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+   double   swap       = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+   double   commission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+   long     dealType   = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+   long     entry      = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+   long     posID      = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+   string   comment    = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+   int      digits     = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   
+   if(!InpAllSymbols && symbol != _Symbol) return;
+   
+   if(dealType == DEAL_TYPE_BALANCE || dealType == DEAL_TYPE_CREDIT ||
+      dealType == DEAL_TYPE_CORRECTION || dealType == DEAL_TYPE_BONUS)
+      return;
+   
+   string typeStr = (dealType == DEAL_TYPE_BUY) ? "BUY" : "SELL";
+   
+   if(entry == DEAL_ENTRY_IN)
+   {
+      string msg = "📂 <b>OPEN ORDER</b>\n"
+                   "━━━━━━━━━━━━━━━\n"
+                   "📌 " + symbol + "\n"
+                   "📍 " + typeStr + " " + DoubleToString(vol, 2) + " lots\n"
+                   "💲 Price: " + DoubleToString(price, digits) + "\n"
+                   "🔖 Ticket: #" + IntegerToString(posID);
+      
+      if(PositionSelectByTicket(posID))
+      {
+         double sl = PositionGetDouble(POSITION_SL);
+         double tp = PositionGetDouble(POSITION_TP);
+         if(sl > 0) msg += "\n🛑 SL: " + DoubleToString(sl, digits);
+         if(tp > 0) msg += "\n🎯 TP: " + DoubleToString(tp, digits);
+      }
+      if(comment != "") msg += "\n💬 " + comment;
+      
+      SendTelegram(msg);
+      Print("📂 Open: ", symbol, " ", typeStr, " ", vol, " @ ", price);
+   }
+   else if(entry == DEAL_ENTRY_OUT)
+   {
+      double totalPL = profit + swap + commission;
+      string plEmoji = totalPL >= 0 ? "🟢" : "🔴";
+      string plSign  = totalPL >= 0 ? "+" : "";
+      
+      string reason = "Manual";
+      if(StringFind(comment, "tp") >= 0 || StringFind(comment, "TP") >= 0)
+         reason = "Take Profit";
+      else if(StringFind(comment, "sl") >= 0 || StringFind(comment, "SL") >= 0)
+         reason = "Stop Loss";
+      else if(StringFind(comment, "so") >= 0 || StringFind(comment, "SO") >= 0)
+         reason = "Stop Out";
+      
+      string msg = "📕 <b>CLOSE ORDER</b>\n"
+                   "━━━━━━━━━━━━━━━\n"
+                   "📌 " + symbol + "\n"
+                   "📍 " + typeStr + " " + DoubleToString(vol, 2) + " lots\n"
+                   "💲 Price: " + DoubleToString(price, digits) + "\n"
+                   "🔖 Ticket: #" + IntegerToString(posID) + "\n"
+                   "📋 Reason: " + reason + "\n"
+                   "━━━━━━━━━━━━━━━\n"
+                   "💰 Profit: " + plSign + DoubleToString(profit, 2) + "\n";
+      
+      if(MathAbs(swap) > 0.001)
+         msg += "🔄 Swap: " + DoubleToString(swap, 2) + "\n";
+      if(MathAbs(commission) > 0.001)
+         msg += "🏷 Comm: " + DoubleToString(commission, 2) + "\n";
+      
+      msg += "━━━━━━━━━━━━━━━\n"
+             + plEmoji + " Net P/L: " + plSign + DoubleToString(totalPL, 2);
+      
+      // v5.1: Show Balance/Equity only when InpShowPrivate = true
+      if(InpShowPrivate)
+         msg += "\n\n💼 Balance: " + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + "\n"
+                "📊 Equity: " + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2);
+      
+      SendTelegram(msg);
+      Print("📕 Close: ", symbol, " ", typeStr, " P/L: ", totalPL);
+   }
+   else if(entry == DEAL_ENTRY_INOUT)
+   {
+      double totalPL = profit + swap + commission;
+      string plEmoji = totalPL >= 0 ? "🟢" : "🔴";
+      string plSign  = totalPL >= 0 ? "+" : "";
+      
+      string msg = "🔄 <b>REVERSE ORDER</b>\n"
+                   "━━━━━━━━━━━━━━━\n"
+                   "📌 " + symbol + " | " + typeStr + " " + DoubleToString(vol, 2) + " lots\n"
+                   "💲 Price: " + DoubleToString(price, digits) + "\n"
+                   + plEmoji + " P/L: " + plSign + DoubleToString(totalPL, 2);
+      
+      SendTelegram(msg);
+   }
+   
+   SnapshotPositions();
+}
+
+//+------------------------------------------------------------------+
+//| Snapshot open positions                                            |
+//+------------------------------------------------------------------+
+void SnapshotPositions()
+{
+   gKnownCount = PositionsTotal();
+   ArrayResize(gKnownTickets, gKnownCount);
+   for(int i = 0; i < gKnownCount; i++)
+      gKnownTickets[i] = PositionGetTicket(i);
+}
+
+//+------------------------------------------------------------------+
+//| Fallback position change check                                     |
+//+------------------------------------------------------------------+
+void CheckPositionChanges()
+{
+   int currentTotal = PositionsTotal();
+   if(currentTotal == gKnownCount) return;
+   SnapshotPositions();
+}
+
+//+------------------------------------------------------------------+
+//| Check hourly stats                                                 |
+//+------------------------------------------------------------------+
+void CheckHourlyStats()
+{
+   datetime thaiTime = TimeCurrent() + InpThaiOffset * 3600;
+   MqlDateTime dt;
+   TimeToStruct(thaiTime, dt);
+   
+   if(dt.hour == gLastStatsHour) return;
+   gLastStatsHour = dt.hour;
+   
+   //--- v5.2: Skip on weekends (check server time day_of_week)
+   //    0=Sunday, 6=Saturday — market closed
+   MqlDateTime dtServer;
+   TimeToStruct(TimeCurrent(), dtServer);
+   if(dtServer.day_of_week == 0 || dtServer.day_of_week == 6)
+   {
+      Print("📊 Hourly stats skipped — market closed (", 
+            dtServer.day_of_week == 0 ? "Sunday" : "Saturday", ")");
+      return;
+   }
+   
+   string stats = BuildHourlyStats(thaiTime);
+   if(stats != "")
+   {
+      SendTelegram(stats);
+      Print("📊 Hourly stats sent (with win/loss)");
+   }
+}
+//+------------------------------------------------------------------+
+//| Parse one stats CSV file and return FileStats                      |
+//+------------------------------------------------------------------+
+bool ParseStatsFile(string filename, FileStats &fs, datetime sinceTime)
+{
+   int handle = FileOpen(filename, FILE_READ | FILE_CSV | FILE_COMMON | FILE_UNICODE, ',');
+   if(handle == INVALID_HANDLE) return false;
+
+   if(FileIsEnding(handle)) { FileClose(handle); return false; }
+   fs.tf          = FileReadString(handle);
+   fs.symbol      = FileReadString(handle);
+   string pipStr  = FileReadString(handle);
+   fs.displayName = FileReadString(handle);
+   fs.pipSize     = StringToDouble(pipStr);
+
+   fs.total     = 0;
+   fs.wins      = 0;
+   fs.losses    = 0;
+   fs.pending   = 0;
+   fs.tpPipsSum = 0;
+   fs.slPipsSum = 0;
+
+   if(fs.pipSize <= 0) fs.pipSize = 0.1;
+
+   while(!FileIsEnding(handle))
+   {
+      string sTime    = FileReadString(handle);
+      if(sTime == "" || StringLen(sTime) < 2) break;
+      
+      string sEntry   = FileReadString(handle);
+      string sTP      = FileReadString(handle);
+      string sSL      = FileReadString(handle);
+      string sDir     = FileReadString(handle);
+      string sOutcome = FileReadString(handle);
+      string sOutTime = FileReadString(handle);
+      string sSeqNum  = FileReadString(handle);
+
+      datetime sigTime = (datetime)StringToInteger(sTime);
+      if(sigTime < sinceTime) continue;
+
+      double entry    = StringToDouble(sEntry);
+      double tp       = StringToDouble(sTP);
+      double sl       = StringToDouble(sSL);
+      int    dir      = (int)StringToInteger(sDir);
+      int    outcome  = (int)StringToInteger(sOutcome);
+
+      fs.total++;
+
+      if(outcome == 1)
+      {
+         fs.wins++;
+         double pips = MathAbs(tp - entry) / fs.pipSize;
+         fs.tpPipsSum += pips;
+      }
+      else if(outcome == -1)
+      {
+         fs.losses++;
+         double pips = MathAbs(sl - entry) / fs.pipSize;
+         fs.slPipsSum += pips;
+      }
+      else
+      {
+         fs.pending++;
+      }
+   }
+   FileClose(handle);
+
+   return (fs.total > 0);
+}
+
+//+------------------------------------------------------------------+
+//| Scan for stats files matching a pattern                            |
+//+------------------------------------------------------------------+
+int ScanStatsFiles(string pattern, FileStats &allStats[], int currentCount, datetime sinceTime)
+{
+   string fname = "";
+   long searchHandle = FileFindFirst(pattern, fname, FILE_COMMON);
+   if(searchHandle == INVALID_HANDLE) return 0;
+   
+   int added = 0;
+   do
+   {
+      FileStats fs;
+      if(ParseStatsFile(fname, fs, sinceTime))
+      {
+         int newIdx = currentCount + added;
+         ArrayResize(allStats, newIdx + 1);
+         allStats[newIdx] = fs;
+         added++;
+      }
+   }
+   while(FileFindNext(searchHandle, fname));
+   FileFindClose(searchHandle);
+   
+   return added;
+}
+
+//+------------------------------------------------------------------+
+//| Get today's closed deals summary                                   |
+//+------------------------------------------------------------------+
+void GetTodayDeals(datetime serverCutoff,
+                   int &outDeals, double &outLots, double &outProfit,
+                   double &outSwap, double &outComm,
+                   int &outWinDeals, int &outLoseDeals)
+{
+   outDeals    = 0;
+   outLots     = 0;
+   outProfit   = 0;
+   outSwap     = 0;
+   outComm     = 0;
+   outWinDeals = 0;
+   outLoseDeals= 0;
+
+   if(!HistorySelect(serverCutoff, TimeCurrent()))
+      return;
+
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+
+      long dealType = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      long entry    = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+
+      if(dealType == DEAL_TYPE_BALANCE || dealType == DEAL_TYPE_CREDIT ||
+         dealType == DEAL_TYPE_CORRECTION || dealType == DEAL_TYPE_BONUS)
+         continue;
+
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      string sym = HistoryDealGetString(ticket, DEAL_SYMBOL);
+      if(!InpAllSymbols && sym != _Symbol)
+         continue;
+
+      double vol    = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      double swap   = HistoryDealGetDouble(ticket, DEAL_SWAP);
+      double comm   = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+      double netPL  = profit + swap + comm;
+
+      outDeals++;
+      outLots   += vol;
+      outProfit += profit;
+      outSwap   += swap;
+      outComm   += comm;
+
+      if(netPL >= 0) outWinDeals++;
+      else           outLoseDeals++;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Build hourly stats message                                         |
+//+------------------------------------------------------------------+
+string BuildHourlyStats(datetime thaiNow)
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
+   int    openPos = PositionsTotal();
+   double floatPL = equity - balance;
+   string plEmoji = floatPL >= 0 ? "🟢" : "🔴";
+   string plSign  = floatPL >= 0 ? "+" : "";
+
+   MqlDateTime dtThai;
+   TimeToStruct(thaiNow, dtThai);
+   dtThai.hour = 0;
+   dtThai.min  = 0;
+   dtThai.sec  = 0;
+   datetime thaiMidnight = StructToTime(dtThai);
+   datetime serverCutoff = thaiMidnight - InpThaiOffset * 3600;
+
+   FileStats allStats[];
+   int count = 0;
+   
+   count += ScanStatsFiles("2or3_baby_stats_*.csv", allStats, count, serverCutoff);
+   count += ScanStatsFiles("tma_stats_*.csv", allStats, count, serverCutoff);
+
+   string msg = "📊 <b>STATS รายชั่วโมง (วันนี้)</b>\n"
+                "━━━━━━━━━━━━━━━\n"
+                "🇹🇭 " + TimeToString(thaiNow, TIME_DATE|TIME_MINUTES) + "\n";
+
+   int grandTotal   = 0;
+   int grandWins    = 0;
+   int grandLosses  = 0;
+   int grandPending = 0;
+   double grandTP   = 0;
+   double grandSL   = 0;
+
+   if(count > 0)
+   {
+      for(int i = 0; i < count; i++)
+      {
+         msg += "━━━━━━━━━━━━━━━\n";
+         msg += "📌 " + allStats[i].symbol + " | " + allStats[i].displayName + "\n";
+         msg += "   🔔 Signals: " + IntegerToString(allStats[i].total)
+                + " (✅" + IntegerToString(allStats[i].wins)
+                + " ❌" + IntegerToString(allStats[i].losses)
+                + " ⏳" + IntegerToString(allStats[i].pending) + ")\n";
+
+         int decided = allStats[i].wins + allStats[i].losses;
+         if(decided > 0)
+         {
+            double winRate = (double)allStats[i].wins / decided * 100.0;
+            msg += "   🎯 Win: " + DoubleToString(winRate, 1) + "%\n";
+         }
+         else
+            msg += "   🎯 Win: --\n";
+
+         double netPips = allStats[i].tpPipsSum - allStats[i].slPipsSum;
+         string netEmoji = netPips >= 0 ? "🟢" : "🔴";
+         string netSign = netPips >= 0 ? "+" : "-";
+         msg += "   " + netEmoji + " Net: " + netSign + DoubleToString(MathAbs(netPips), 1) + " points"
+                + " (+" + DoubleToString(allStats[i].tpPipsSum, 1)
+                + " / -" + DoubleToString(allStats[i].slPipsSum, 1) + ")\n";
+
+         grandTotal   += allStats[i].total;
+         grandWins    += allStats[i].wins;
+         grandLosses  += allStats[i].losses;
+         grandPending += allStats[i].pending;
+         grandTP      += allStats[i].tpPipsSum;
+         grandSL      += allStats[i].slPipsSum;
+      }
+
+      if(count > 1)
+      {
+         msg += "━━━━━━━━━━━━━━━\n";
+         msg += "📊 <b>รวมทุก TF</b>\n";
+         msg += "   🔔 Signals: " + IntegerToString(grandTotal)
+                + " (✅" + IntegerToString(grandWins)
+                + " ❌" + IntegerToString(grandLosses)
+                + " ⏳" + IntegerToString(grandPending) + ")\n";
+
+         int grandDecided = grandWins + grandLosses;
+         if(grandDecided > 0)
+         {
+            double gWinRate = (double)grandWins / grandDecided * 100.0;
+            msg += "   🎯 Win: " + DoubleToString(gWinRate, 1) + "%\n";
+         }
+
+         double gNetPips = grandTP - grandSL;
+         string gNetEmoji = gNetPips >= 0 ? "🟢" : "🔴";
+         string gNetSign = gNetPips >= 0 ? "+" : "-";
+         msg += "   " + gNetEmoji + " Net: " + gNetSign + DoubleToString(MathAbs(gNetPips), 1) + " points\n";
+      }
+   }
+   else
+   {
+      msg += "━━━━━━━━━━━━━━━\n";
+      msg += "📄 No signals today\n";
+   }
+
+   // v5.1: Show Closed Today + Balance/Equity only when InpShowPrivate = true
+   if(InpShowPrivate)
+   {
+      int    todayDeals = 0, todayWinD = 0, todayLoseD = 0;
+      double todayLots  = 0, todayProfit = 0, todaySwap = 0, todayComm = 0;
+      GetTodayDeals(serverCutoff, todayDeals, todayLots, todayProfit,
+                    todaySwap, todayComm, todayWinD, todayLoseD);
+      double todayNetPL = todayProfit + todaySwap + todayComm;
+      string tdPlEmoji  = todayNetPL >= 0 ? "🟢" : "🔴";
+      string tdPlSign   = todayNetPL >= 0 ? "+" : "";
+
+      msg += "━━━━━━━━━━━━━━━\n"
+             "📋 <b>Closed Today</b>\n"
+             "   🔢 Deals: " + IntegerToString(todayDeals) +
+             " (✅" + IntegerToString(todayWinD) +
+             " ❌" + IntegerToString(todayLoseD) + ")\n"
+             "   📦 Lots: " + DoubleToString(todayLots, 2) + "\n"
+             "   💰 Profit: " + tdPlSign + DoubleToString(todayProfit, 2) + "\n";
+
+      if(MathAbs(todaySwap) > 0.001)
+         msg += "   🔄 Swap: " + DoubleToString(todaySwap, 2) + "\n";
+      if(MathAbs(todayComm) > 0.001)
+         msg += "   🏷 Comm: " + DoubleToString(todayComm, 2) + "\n";
+
+      msg += "   " + tdPlEmoji + " Net P/L: " + tdPlSign + DoubleToString(todayNetPL, 2) + "\n";
+
+      msg += "━━━━━━━━━━━━━━━\n"
+             "💼 Balance: " + DoubleToString(balance, 2) + "\n"
+             "📊 Equity: " + DoubleToString(equity, 2) + "\n";
+
+      if(MathAbs(floatPL) > 0.01)
+         msg += plEmoji + " Float: " + plSign + DoubleToString(floatPL, 2) + "\n";
+   }
+
+   msg += "📂 Open: " + IntegerToString(openPos) + " positions";
+
+   return msg;
+}
+
+//+------------------------------------------------------------------+
+//| v5.2: Escape a string for embedding in JSON value                  |
+//+------------------------------------------------------------------+
+string EscapeJsonString(string s)
+{
+   string out = "";
+   const string HEX = "0123456789abcdef";
+   int len = StringLen(s);
+   for(int i = 0; i < len; i++)
+   {
+      ushort ch = StringGetCharacter(s, i);
+      if(ch == '\\')      out += "\\\\";
+      else if(ch == '"')  out += "\\\"";
+      else if(ch == '\n') out += "\\n";
+      else if(ch == '\r') out += "\\r";
+      else if(ch == '\t') out += "\\t";
+      else if(ch == '\b') out += "\\b";
+      else if(ch == '\f') out += "\\f";
+      else if(ch < 0x20)
+      {
+         out += "\\u00";
+         out += ShortToString((ushort)StringGetCharacter(HEX, (ch >> 4) & 0xF));
+         out += ShortToString((ushort)StringGetCharacter(HEX, ch & 0xF));
+      }
+      else out += ShortToString(ch);
+   }
+   return out;
+}
+
+//+------------------------------------------------------------------+
+//| v5.2: Encode raw bytes as base64 string                            |
+//+------------------------------------------------------------------+
+string EncodeBase64(uchar &data[])
+{
+   uchar key[];        // CRYPT_BASE64 ignores key, but parameter is required
+   uchar encoded[];
+   int n = CryptEncode(CRYPT_BASE64, data, key, encoded);
+   if(n <= 0) return "";
+   return CharArrayToString(encoded, 0, n, CP_ACP);
+}
+
+//+------------------------------------------------------------------+
+//| v5.2: Send SITREP to Vercel /api/sitrep (mirrors Supabase row)    |
+//|       Called only after Telegram path completes for a SITREP msg. |
+//|       pngFileCommon: name in Common folder (or "" if no image)    |
+//+------------------------------------------------------------------+
+bool SendSitrepWebhook(string pngFileCommon, string screenshotTag, string textBody)
+{
+   if(InpSitrepWebhookURL == "" || InpSitrepWebhookSecret == "") return false;
+
+   //--- Read + base64-encode the PNG (if present)
+   string imageB64 = "";
+   if(pngFileCommon != "")
+   {
+      int hFile = FileOpen(pngFileCommon, FILE_READ | FILE_BIN | FILE_COMMON);
+      if(hFile != INVALID_HANDLE)
+      {
+         int fileSize = (int)FileSize(hFile);
+         if(fileSize > 0)
+         {
+            uchar pngData[];
+            ArrayResize(pngData, fileSize);
+            FileReadArray(hFile, pngData);
+            imageB64 = EncodeBase64(pngData);
+         }
+         FileClose(hFile);
+      }
+      else
+         Print("⚠ Webhook: cannot reopen ", pngFileCommon, " err=", GetLastError());
+   }
+
+   //--- Build ISO-8601 UTC capture timestamp: 2026-04-27T07:00:00Z
+   datetime gmt = TimeGMT();
+   string iso  = TimeToString(gmt, TIME_DATE | TIME_SECONDS);
+   StringReplace(iso, ".", "-");        // 2026.04.27 → 2026-04-27
+   StringReplace(iso, " ", "T");
+   string capturedAt = iso + "Z";
+
+   //--- Build JSON body
+   string json = "{";
+   json += "\"symbol\":\"" + EscapeJsonString(_Symbol) + "\",";
+   json += "\"screenshot_tag\":\"" + EscapeJsonString(screenshotTag) + "\",";
+   json += "\"captured_at\":\"" + capturedAt + "\",";
+   json += "\"raw_text\":\"" + EscapeJsonString(textBody) + "\"";
+   if(imageB64 != "")
+      json += ",\"image_b64\":\"" + imageB64 + "\"";
+   json += "}";
+
+   //--- POST
+   string headers = "Content-Type: application/json\r\n"
+                  + "X-Sitrep-Secret: " + InpSitrepWebhookSecret + "\r\n";
+
+   char postData[];
+   StringToCharArray(json, postData, 0, WHOLE_ARRAY, CP_UTF8);
+   int postLen = ArraySize(postData);
+   if(postLen > 0 && postData[postLen - 1] == 0)
+      ArrayResize(postData, postLen - 1);   // strip trailing null
+
+   char result[];
+   string resultHeaders;
+
+   ResetLastError();
+   int res = WebRequest("POST", InpSitrepWebhookURL, headers, 15000, postData, result, resultHeaders);
+
+   if(res == -1)
+   {
+      int err = GetLastError();
+      if(err == 4014)
+         Print("⚠ Webhook: add ", InpSitrepWebhookURL, " to Tools > Options > Expert Advisors > Allow WebRequest");
+      else
+         Print("⚠ SITREP webhook error: ", err);
+      return false;
+   }
+   if(res != 200)
+   {
+      string resp = CharArrayToString(result);
+      Print("⚠ SITREP webhook HTTP ", res, ": ", resp);
+      return false;
+   }
+   Print("✅ SITREP webhook OK (", ArraySize(postData), " bytes JSON, image=",
+         (imageB64 != "" ? IntegerToString(StringLen(imageB64)) + " b64-chars" : "none"), ")");
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Send Telegram message                                              |
+//+------------------------------------------------------------------+
+bool SendTelegram(string message)
+{
+   if(InpBotToken == "" || InpChatID == "") return false;
+   
+   StringReplace(message, "\\", "\\\\");
+   StringReplace(message, "\"", "\\\"");
+   StringReplace(message, "\n", "\\n");
+   StringReplace(message, "\r", "");
+   StringReplace(message, "\t", " ");
+   
+   string url = "https://api.telegram.org/bot" + InpBotToken + "/sendMessage";
+   string payload = "{\"chat_id\":\"" + InpChatID + "\","
+                    "\"text\":\"" + message + "\","
+                    "\"parse_mode\":\"HTML\","
+                    "\"disable_web_page_preview\":true}";
+   
+   char postData[], result[];
+   string headers = "Content-Type: application/json\r\n";
+   string resultHeaders;
+   
+   StringToCharArray(payload, postData, 0, WHOLE_ARRAY, CP_UTF8);
+   ArrayResize(postData, ArraySize(postData) - 1);
+   
+   ResetLastError();
+   int res = WebRequest("POST", url, headers, 5000, postData, result, resultHeaders);
+   
+   if(res == -1)
+   {
+      int err = GetLastError();
+      if(err == 4014)
+         Print("⚠ Add https://api.telegram.org to Tools > Options > Expert Advisors > Allow WebRequest");
+      else
+         Print("⚠ WebRequest error: ", err);
+      return false;
+   }
+   
+   if(res != 200)
+   {
+      Print("⚠ Telegram HTTP ", res, ": ", CharArrayToString(result));
+      return false;
+   }
+   
+   return true;
+}
+//+------------------------------------------------------------------+
