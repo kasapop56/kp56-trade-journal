@@ -611,6 +611,128 @@ document.getElementById('closeModal').addEventListener('click', () => {
   document.getElementById('tradeModal').classList.remove('open');
 });
 
+// ── Setup Verdict (Phase 3b/3c context analysis) ──────────────────────────────
+// Scores how each signal (Mario bias / OB / Rainbow per TF) lined up with the
+// trade direction at open. All weights default 1.0 — tune individual signals
+// once we have enough closed trades to see which actually predict outcomes.
+const SIGNAL_WEIGHTS = {
+  bias_m15: 1.0, bias_m5: 1.0, ob_status: 1.0,
+  rainbow_m1: 1.0, rainbow_m5: 1.0, rainbow_m15: 1.0, rainbow_h1: 1.0,
+};
+const VERDICT_ICON = { aligned: '✅', against: '❌', neutral: '⚠️', missing: '—' };
+
+function biasVerdict(dir, bias) {
+  if (!bias) return 'missing';
+  if (dir === 'sell') return bias === 'BEAR' ? 'aligned' : bias === 'BULL' ? 'against' : 'neutral';
+  if (dir === 'buy')  return bias === 'BULL' ? 'aligned' : bias === 'BEAR' ? 'against' : 'neutral';
+  return 'neutral';
+}
+function obVerdict(dir, ob) {
+  if (!ob) return 'missing';
+  const supply = /supply/i.test(ob), demand = /demand/i.test(ob);
+  if (dir === 'sell') return supply ? 'aligned' : demand ? 'against' : 'neutral';
+  if (dir === 'buy')  return demand ? 'aligned' : supply ? 'against' : 'neutral';
+  return 'neutral';
+}
+// band_idx: -1=above all MAs, 0..6=between MA-N and MA-(N+1), 7=below slow MA.
+// "Bear half" is band ≥ 4 (price below MA-5). "Bull half" is band ≤ 1.
+function rainbowVerdict(dir, band, stack) {
+  if (band == null || !stack) return 'missing';
+  if (stack === 'MIXED') return 'neutral';
+  const bearHalf = band >= 4;
+  const bullHalf = band <= 1;
+  if (dir === 'sell') {
+    if (bearHalf && stack === 'BEAR_STACK') return 'aligned';
+    if (bullHalf && stack === 'BULL_STACK') return 'against';
+    return 'neutral';
+  }
+  if (dir === 'buy') {
+    if (bullHalf && stack === 'BULL_STACK') return 'aligned';
+    if (bearHalf && stack === 'BEAR_STACK') return 'against';
+    return 'neutral';
+  }
+  return 'neutral';
+}
+function convictionPct(signals) {
+  let earned = 0, total = 0;
+  for (const { verdict, weight } of signals) {
+    if (verdict === 'missing') continue;
+    total += weight;
+    if (verdict === 'aligned')      earned += weight;
+    else if (verdict === 'neutral') earned += weight * 0.5;
+  }
+  return total > 0 ? Math.round((earned / total) * 100) : null;
+}
+function rainbowCell(t, tf, moment) {
+  const b = t[`rainbow_${tf}_${moment}_band_idx`];
+  const o = t[`rainbow_${tf}_${moment}_order_state`];
+  const c = t[`rainbow_${tf}_${moment}_candle`];
+  const bp = t[`rainbow_${tf}_${moment}_body_points`];
+  if (b == null && !o) return '—';
+  const band = b === -1 ? 'above all' : b === 7 ? 'below slow' : `band ${b}`;
+  const stk = (o || '').replace('_STACK','').toLowerCase() || '—';
+  const candle = c ? ` · ${c}${bp != null ? ' '+bp+'pt' : ''}` : '';
+  return `${band} · ${stk}${candle}`;
+}
+function verdictRow(s) {
+  const cls = { aligned:'va', against:'vx', neutral:'vn', missing:'vm' }[s.verdict];
+  return `<tr class="${cls}"><td class="vlabel">${s.label}</td><td class="vvalue">${s.value}</td><td class="vicon">${VERDICT_ICON[s.verdict]}</td></tr>`;
+}
+
+function setupVerdictHTML(t) {
+  const dir = (t.type || '').toLowerCase();
+  if (dir !== 'sell' && dir !== 'buy') return '';
+
+  const sig = (key, label, verdict, value) => ({
+    key, label, verdict, value, weight: SIGNAL_WEIGHTS[key] ?? 1.0,
+  });
+  const buildSet = (moment) => [
+    sig('bias_m15',    'M15 bias',     biasVerdict(dir, t.bias_m15),  t.bias_m15 || '—'),
+    sig('bias_m5',     'M5 bias',      biasVerdict(dir, t.bias_m5),   t.bias_m5  || '—'),
+    sig('ob_status',   'OB',           obVerdict(dir, t.ob_status),   t.ob_status || '—'),
+    sig('rainbow_m1',  'Rainbow M1',   rainbowVerdict(dir, t[`rainbow_m1_${moment}_band_idx`],  t[`rainbow_m1_${moment}_order_state`]),  rainbowCell(t,'m1',moment)),
+    sig('rainbow_m5',  'Rainbow M5',   rainbowVerdict(dir, t[`rainbow_m5_${moment}_band_idx`],  t[`rainbow_m5_${moment}_order_state`]),  rainbowCell(t,'m5',moment)),
+    sig('rainbow_m15', 'Rainbow M15',  rainbowVerdict(dir, t[`rainbow_m15_${moment}_band_idx`], t[`rainbow_m15_${moment}_order_state`]), rainbowCell(t,'m15',moment)),
+    sig('rainbow_h1',  'Rainbow H1',   rainbowVerdict(dir, t[`rainbow_h1_${moment}_band_idx`],  t[`rainbow_h1_${moment}_order_state`]),  rainbowCell(t,'h1',moment)),
+  ];
+  const openSig = buildSet('open');
+  if (openSig.every(s => s.verdict === 'missing')) return '';
+
+  const closeSig = buildSet('close');
+  const rainbowDiffers = ['m1','m5','m15','h1'].some(tf =>
+    t[`rainbow_${tf}_open_band_idx`]    !== t[`rainbow_${tf}_close_band_idx`] ||
+    t[`rainbow_${tf}_open_order_state`] !== t[`rainbow_${tf}_close_order_state`]
+  );
+  // Also count Mario bias drift between open and close — bias columns are
+  // close-time only today, so this is just open vs same-stored-value (no diff).
+  // Future: if we capture bias_at_open separately, expand the comparison.
+
+  const conv = convictionPct(openSig);
+  const convCls = conv == null ? '' : conv >= 70 ? 'pos' : conv <= 40 ? 'neg' : '';
+  const marioBadge = t.mario_decision ? `
+    <span class="tag ${t.mario_decision === 'WAIT' ? 'wait' : t.mario_decision === 'BUY' ? 'bull' : t.mario_decision === 'SELL' ? 'bear' : ''}">Mario: ${t.mario_decision}</span>
+  ` : '';
+  const num2 = n => n != null ? Number(n).toFixed(2) : '—';
+  const svpLine = t.svp_poc != null
+    ? `<p class="svp-line">SVP — POC ${num2(t.svp_poc)} · VAH ${num2(t.svp_vah)} · VAL ${num2(t.svp_val)}${t.mario_session ? ' · '+t.mario_session : ''}</p>`
+    : '';
+
+  return `
+    <div class="modal-section verdict-section">
+      <h4>Setup at Open
+        ${conv != null ? `<span class="conviction ${convCls}">Conviction ${conv}%</span>` : ''}
+        ${marioBadge}
+      </h4>
+      <table class="verdict-table"><tbody>${openSig.map(verdictRow).join('')}</tbody></table>
+      ${svpLine}
+      ${rainbowDiffers ? `
+        <h4 style="margin-top:14px">Setup at Close <span class="conviction-mini">(differs from open)</span></h4>
+        <table class="verdict-table"><tbody>${closeSig.map(verdictRow).join('')}</tbody></table>
+      ` : `<p class="close-note">Setup at close: identical to open (trade was short or signals stable)</p>`}
+    </div>
+  `;
+}
+
 // ── MT5 Trade Modal (read-only) ───────────────────────────────────────────────
 function openMT5Modal(t) {
   const num = n => n != null ? Number(n).toFixed(2) : '—';
@@ -629,6 +751,7 @@ function openMT5Modal(t) {
         Profit $${num(t.profit)} · Swap $${num(t.swap)} · Commission $${num(t.commission)}
       </p>
     </div>
+    ${setupVerdictHTML(t)}
     <div class="modal-section"><h4>Time</h4>
       <p>Open: ${fmt(t.open_time)}<br/>Close: ${fmt(t.close_time)}</p>
     </div>
