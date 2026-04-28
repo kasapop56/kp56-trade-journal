@@ -1,6 +1,31 @@
 # Phase 5 — Scheduled Market Analysis
 
-**Status:** 🟡 Code shipped, awaiting deploy + verification (started 2026-04-27).
+**Status:** ✅ Live as of 2026-04-28. End-to-end pipeline verified. 3 routines scheduled.
+
+## Live components
+
+| Layer | Status |
+|---|---|
+| `mt5/TG Helper.txt` v5.20 dual-write | ✅ Compiled + reloaded on VPS, webhook ON |
+| Vercel `/api/sitrep` ingest | ✅ Real SITREP id=2 captured 2026-04-27 21:00:01 Thai |
+| Vercel `/api/sitrep-latest` read | ✅ Returns row + 16 recent_trades within 90-min window |
+| Vercel `/api/post-plan` write | ✅ 3 plans posted to @Kp56_superbot DM (plan_id 1-3) |
+| Supabase `market_sitreps` + `trade_plans` + `sitrep-images` bucket | ✅ All schemas applied, public-read working |
+| 3 scheduled routines | ✅ Created, enabled, fire daily |
+
+## Routine IDs
+
+| Slot | Routine ID | Cron (UTC) | Manage |
+|---|---|---|---|
+| 09:00 Thai (Asian) | `trig_0196EizNk74VGhUUbDvV6dbn` | `0 2 * * *` | [link](https://claude.ai/code/routines/trig_0196EizNk74VGhUUbDvV6dbn) |
+| 14:00 Thai (London) | `trig_01QZLbbPpfqo68UxC51zxxRm` | `0 7 * * *` | [link](https://claude.ai/code/routines/trig_01QZLbbPpfqo68UxC51zxxRm) |
+| 21:00 Thai (NY) | `trig_01FrDLA34a1fH2PB6yfXRjpE` | `0 14 * * *` | [link](https://claude.ai/code/routines/trig_01FrDLA34a1fH2PB6yfXRjpE) |
+
+Routine config: `claude-sonnet-4-6`, repo cloned (`kp56-trade-journal`), tools `[Bash, Read]`, env `Default` (`env_01M2KVvoPHdPnqPnagpst4bT`). Prompt template lives in this doc (see "Agent prompt template" below).
+
+(Plus one disabled `smoke test` routine `trig_01Y3fLbw4Q2YrvmDaF5dL37P` — first-create test, never fires; safe to delete via web UI.)
+
+## Original design notes
 
 ## TL;DR
 
