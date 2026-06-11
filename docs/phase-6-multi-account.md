@@ -2,8 +2,9 @@
 
 **Status:** ✅ Built + DB migrated (2026-06-11) · ⚠️ needs `npx vercel --prod` redeploy (user auths)
 
-**Goal:** Journal the WaveRider v1.10 forward-demo (XAUUSD M5, magic 56560100) on a
-separate demo account WITHOUT polluting real-account (87464504) stats. Account
+**Goal:** Journal the WaveRider v1.10 forward-demo (XAUUSD M5, magic **5656** — user's
+deliberate choice, spec originally said 56560100) on demo account 49754423 WITHOUT
+polluting real-account (87464504) stats. Account
 separation in schema + UI switcher.
 
 ## Exploration findings (what exists today)
