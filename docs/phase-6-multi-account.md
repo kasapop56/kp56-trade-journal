@@ -70,7 +70,11 @@ Deploy: `npx vercel --prod` (user authorizes). No local preview (house rule).
 
 - 2026-06-11: explored EA / webhook / live Supabase schema / view / frontend; wrote proposal.
 - 2026-06-11: user approved → ran DB migration (verified), implemented all code, node --check passed.
-- NEXT: user runs `npx vercel --prod`, verify on deploy URL; attach JournalSync.mq5
-  to WaveRider demo terminal (same webhook URL + X-Journal-Secret, whitelist URL
-  in Tools→Options→Expert Advisors); after first demo trade, send me the demo
-  login to add a "WaveRider Demo" label.
+- 2026-06-11: user deployed (`vercel --prod`) + attached JournalSync to demo terminal.
+  Verified prod: accounts.js served, #accountBar in HTML, anon REST sees v_accounts +
+  account_login/magic in v_trades_unified. ✅ LIVE.
+- ⏳ Demo account has NOT hit the webhook yet (v_accounts still shows only 87464504).
+  Also noted: real account's last balance_snapshot = 2026-06-10 15:03 UTC (~1 day gap)
+  — check that the real terminal/VPS is still running.
+- NEXT: once first demo data arrives, add demo login to ACCOUNT_LABELS in js/accounts.js
+  ("WaveRider Demo") — switcher bar then appears automatically.
