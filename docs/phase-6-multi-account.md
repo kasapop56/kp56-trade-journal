@@ -76,5 +76,19 @@ Deploy: `npx vercel --prod` (user authorizes). No local preview (house rule).
 - ⏳ Demo account has NOT hit the webhook yet (v_accounts still shows only 87464504).
   Also noted: real account's last balance_snapshot = 2026-06-10 15:03 UTC (~1 day gap)
   — check that the real terminal/VPS is still running.
-- NEXT: once first demo data arrives, add demo login to ACCOUNT_LABELS in js/accounts.js
-  ("WaveRider Demo") — switcher bar then appears automatically.
+- 2026-06-11: 🔴 INCIDENT found+fixed — every /api/ingest call had returned HTTP 500
+  (FUNCTION_INVOCATION_FAILED) since the 2026-06-10 ~15:03 UTC redeploy. Root cause:
+  first rebuild in 44 days; Vercel dropped Node 20 and package.json pinned
+  `engines.node=20.x` → runtime rejected all invocations ("Node.js 20 detected").
+  Fix: engines → 24.x, pushed → auto-deploy → EA retries now 200 OK, snapshots flowing.
+  NOT caused by Phase 6 (webhook was already down before the migration).
+- Deploy model clarified: kp56-trade-journal auto-deploys from GitHub push. Running
+  `npx vercel --prod` locally created a junk duplicate project "trade-journal" (no env
+  vars) — local .vercel now re-linked to kp56-trade-journal; junk project can be deleted
+  in the Vercel dashboard.
+- 2026-06-11: demo account = 49754423 (WaveRider, $135k demo) appeared via snapshot →
+  labeled "WaveRider Demo" in ACCOUNT_LABELS. Switcher bar now visible (2 accounts).
+- ⚠️ GAP: trades closed during the outage (10 Jun 15:03 UTC → 11 Jun ~03:14 UTC) were
+  NOT synced — EA trade_closed is fire-and-forget, no retry. Real account had 2 wins
+  on 11 Jun morning. Recover via History → "+ Import from MT5" (HTML report covering
+  10-11 Jun). NOTE: import hardcodes real account — never use it for demo-account reports.

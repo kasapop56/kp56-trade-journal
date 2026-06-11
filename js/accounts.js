@@ -12,6 +12,7 @@ const REAL_ACCOUNT = 87464504;
 // Friendly names for known accounts; anything not listed shows as "#<login>".
 const ACCOUNT_LABELS = {
   87464504: 'Real',
+  49754423: 'WaveRider Demo',
 };
 
 function getSelectedAccount() {
