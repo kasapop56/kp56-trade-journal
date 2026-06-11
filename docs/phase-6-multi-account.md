@@ -89,6 +89,13 @@ Deploy: `npx vercel --prod` (user authorizes). No local preview (house rule).
 - 2026-06-11: demo account = 49754423 (WaveRider, $135k demo) appeared via snapshot →
   labeled "WaveRider Demo" in ACCOUNT_LABELS. Switcher bar now visible (2 accounts).
 - ⚠️ GAP: trades closed during the outage (10 Jun 15:03 UTC → 11 Jun ~03:14 UTC) were
-  NOT synced — EA trade_closed is fire-and-forget, no retry. Real account had 2 wins
-  on 11 Jun morning. Recover via History → "+ Import from MT5" (HTML report covering
-  10-11 Jun). NOTE: import hardcodes real account — never use it for demo-account reports.
+  NOT synced — EA trade_closed is fire-and-forget, no retry.
+- 2026-06-11: ✅ GAP BACKFILLED — parsed user's MT5 HTML report (Downloads) with a
+  one-off script mirroring import.js parsing + ingest numerology; only 1 position was
+  actually missing (pos 7273434029 sell 0.05 XAUUSDr, closed 11 Jun 05:09 broker,
+  +$26.06) → inserted directly via psql with NOT EXISTS guard on position_id
+  (5 other window rows already EA-synced, skipped). Note: MT5 *Journal* tab shows
+  Windows-local (Thai) time, report + EA use broker GMT+3 — 4h apart.
+- 2026-06-11: fixed latent bug — import.js upserted `onConflict: 'deal_ticket'`,
+  a constraint Phase 6 dropped; web import would have errored. Now
+  `'account_login,deal_ticket'`.

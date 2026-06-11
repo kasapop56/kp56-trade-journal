@@ -352,7 +352,7 @@
 
     const { error } = await db
       .from('mt5_trades')
-      .upsert(rows, { onConflict: 'deal_ticket', ignoreDuplicates: true });
+      .upsert(rows, { onConflict: 'account_login,deal_ticket', ignoreDuplicates: true });
     if (error) throw error;
   }
 })();
