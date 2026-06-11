@@ -4,7 +4,7 @@
   "private": true,
   "description": "Serverless API deps for the Vercel webhook (static site, no build step).",
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0"
