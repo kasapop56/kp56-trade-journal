@@ -821,9 +821,12 @@ function normalizeUnifiedRow(r) {
 async function loadDashboard() {
   if (!allDashboardData.length) {
     try {
-      const rows = await fetchAllPaged('v_trades_unified', q =>
-        q.select('*').order('display_date', { ascending: true })
-      );
+      const acct = getSelectedAccount();
+      const rows = await fetchAllPaged('v_trades_unified', q => {
+        let s = q.select('*').order('display_date', { ascending: true });
+        if (acct !== 'ALL') s = s.eq('account_login', acct);
+        return s;
+      });
       allDashboardData = rows.map(normalizeUnifiedRow);
     } catch (err) {
       console.error('loadDashboard failed', err);

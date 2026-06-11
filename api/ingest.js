@@ -117,7 +117,9 @@ module.exports = async (req, res) => {
       }
       try { Object.assign(row, numerologyFromOpenTime(row.open_time)); }
       catch (e) { console.warn('numerology_skip:', e.message); }
-      const { error } = await db.from('mt5_trades').upsert(row, { onConflict: 'deal_ticket' });
+      // Deal tickets are only unique within one account/server — upsert key
+      // must include account_login (matches mt5_trades_account_deal_key).
+      const { error } = await db.from('mt5_trades').upsert(row, { onConflict: 'account_login,deal_ticket' });
       if (error) return bad(res, 500, 'db_error: ' + error.message);
       return res.status(200).json({ ok: true, event: 'trade_closed', deal_ticket: row.deal_ticket });
     }

@@ -378,6 +378,8 @@ const historyFilters = {
 
 function buildHistoryQuery() {
   let q = db.from('v_trades_unified').select('*', { count: 'exact' });
+  const acct = getSelectedAccount();
+  if (acct !== 'ALL') q = q.eq('account_login', acct);
   const f = historyFilters;
   if (f.direction !== 'ALL') q = q.eq('direction', f.direction);
   if (f.source    !== 'ALL') q = q.eq('source',    f.source);

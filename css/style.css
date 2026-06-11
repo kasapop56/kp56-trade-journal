@@ -371,6 +371,10 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 .filter-date.active { border-color: var(--gold-dim); color: var(--gold); }
 .filter-to { font-size: 12px; color: var(--text-dim); }
 
+/* ACCOUNT SWITCHER (Phase 6) — global bar under the nav, all pages */
+.account-bar { max-width: 800px; margin: 16px auto -8px; padding: 0 20px; }
+.account-bar-label { font-size: 12px; color: var(--text-dim); margin-right: 4px; }
+
 /* KPI GRID */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
 .kpi-grid .kpi-box:last-child { grid-column: span 1; }

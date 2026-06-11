@@ -6,6 +6,8 @@
 // Query:
 //   max_age_min  (optional, default 90)   — reject if newest sitrep older than this
 //   trades_hours (optional, default 24)   — window for recent closed trades
+//   account      (optional, default 87464504) — account_login for recent trades;
+//                keeps demo-account trades out of the /plan routine
 //
 // Response:
 //   {
@@ -48,6 +50,7 @@ module.exports = async (req, res) => {
 
   const maxAgeMin = Math.max(1, parseInt(req.query.max_age_min, 10) || 90);
   const tradesHours = Math.max(1, parseInt(req.query.trades_hours, 10) || 24);
+  const account = parseInt(req.query.account, 10) || 87464504; // real account
 
   const db = getClient();
 
@@ -78,6 +81,7 @@ module.exports = async (req, res) => {
   const { data: trades, error: trErr } = await db
     .from('mt5_trades')
     .select('deal_ticket, position_id, symbol, type, volume, open_time, close_time, open_price, close_price, sl, tp, profit, swap, commission, magic, comment, bias_m15, bias_m5, ob_status, mario_session, mario_decision')
+    .eq('account_login', account)
     .gte('close_time', sinceIso)
     .order('close_time', { ascending: false })
     .limit(50);

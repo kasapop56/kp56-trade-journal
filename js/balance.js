@@ -9,21 +9,13 @@ async function loadPortfolio() {
 
   let rows;
   try {
-    // Pick the most recently active account — keeps stray test rows from other
-    // account_logins (or manual curl tests) out of the portfolio chart.
-    const { data: latest, error: latestErr } = await db
-      .from('balance_snapshots')
-      .select('account_login')
-      .order('recorded_at', { ascending: false })
-      .limit(1);
-    if (latestErr) throw latestErr;
-    const acct = latest?.[0]?.account_login;
-    if (!acct) { rows = []; }
-    else {
-      rows = await fetchAllPaged('balance_snapshots', q =>
-        q.select('*').eq('account_login', acct).order('recorded_at', { ascending: true })
-      );
-    }
+    // Balance curve is per-account — merging balances across ports would be
+    // meaningless, so "All" falls back to the real account.
+    const sel = getSelectedAccount();
+    const acct = sel === 'ALL' ? REAL_ACCOUNT : Number(sel);
+    rows = await fetchAllPaged('balance_snapshots', q =>
+      q.select('*').eq('account_login', acct).order('recorded_at', { ascending: true })
+    );
   } catch (err) {
     wrap.innerHTML = `<h2>Portfolio</h2><p style="color:var(--text-dim);font-size:13px">
       Couldn't load balance snapshots: ${err.message}</p>`;
@@ -67,7 +59,7 @@ function renderPortfolioKPIs(rows) {
       netRet >= 0 ? 'pos' : 'neg');
 
   const acct = document.getElementById('kpiAcct');
-  if (acct) acct.textContent = '#' + last.account_login;
+  if (acct) acct.textContent = `${accountLabel(last.account_login)} (#${last.account_login})`;
 }
 
 let _balanceChart = null;
