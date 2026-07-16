@@ -4,6 +4,9 @@
     "api/ingest.js": {
       "maxDuration": 10
     },
+    "api/context.js": {
+      "maxDuration": 10
+    },
     "api/sitrep.js": {
       "maxDuration": 15
     },
