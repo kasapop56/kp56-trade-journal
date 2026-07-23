@@ -92,6 +92,10 @@ module.exports = async (req, res) => {
         swap:          payload.swap ?? 0,
         commission:    payload.commission ?? 0,
         magic:         payload.magic ?? 0,
+        // Magic of the OPENING deal (JournalSync v1.21+). `magic` above is
+        // from the closing deal — differs when opener ≠ closer (e.g. EA trade
+        // closed by hand shows magic 0 but open_magic 56). null = old EA build.
+        open_magic:    payload.open_magic ?? null,
         comment:       payload.comment ?? null,
         balance_after: payload.balance_after ?? null,
         equity_after:  payload.equity_after ?? null,
