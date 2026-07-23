@@ -13,3 +13,7 @@ numerology/.env
 
 # Numerology source PDFs and converted page images (large, personal data)
 numerology/sources/
+.vercel
+
+# Permanent local archives of retired accounts (data, not code — synced via iCloud)
+archive/

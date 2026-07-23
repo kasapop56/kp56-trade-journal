@@ -13,6 +13,7 @@ const REAL_ACCOUNT = 87464504;
 const ACCOUNT_LABELS = {
   87464504: 'Real',
   49754423: 'WaveRider Demo',
+  135173655: 'SmartGrid Real',
 };
 
 function getSelectedAccount() {
