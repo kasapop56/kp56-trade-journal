@@ -80,7 +80,7 @@ module.exports = async (req, res) => {
   const sinceIso = new Date(Date.now() - tradesHours * 3600 * 1000).toISOString();
   const { data: trades, error: trErr } = await db
     .from('mt5_trades')
-    .select('deal_ticket, position_id, symbol, type, volume, open_time, close_time, open_price, close_price, sl, tp, profit, swap, commission, magic, comment, bias_m15, bias_m5, ob_status, mario_session, mario_decision')
+    .select('deal_ticket, position_id, symbol, type, volume, open_time, close_time, open_price, close_price, sl, tp, profit, swap, commission, magic, open_magic, comment, bias_m15, bias_m5, ob_status, mario_session, mario_decision')
     .eq('account_login', account)
     .gte('close_time', sinceIso)
     .order('close_time', { ascending: false })
