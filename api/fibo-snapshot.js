@@ -78,7 +78,7 @@ async function sendTelegram(token, chatId, text) {
   return { ok: true, message_id: j.result?.message_id ?? null };
 }
 
-function buildMessage(p) {
+function buildSnapshotMessage(p) {
   const sym  = p.symbol || 'XAUUSD';
   const tf   = p.tf ? `TF${p.tf}` : '';
   const seq  = p.seq == null ? '?' : p.seq;
@@ -101,6 +101,125 @@ function buildMessage(p) {
   return head + sBlock + bBlock;
 }
 
+// Which TP did price reach, from mfe vs the frame's TP ladder (from the snapshot
+// row). S: lower price = further; B: higher price = further. Returns "TP1".."TP4"
+// or null. TP2 = mid (0.5), TP4 = fl(S)/fh(B).
+function computeBestTP(side, mfe, snap) {
+  if (mfe == null || !snap) return null;
+  const S = side === 'S';
+  const ladder = S
+    ? [['TP1', snap.s_tp1], ['TP2', snap.mid], ['TP3', snap.s_tp3], ['TP4', snap.fl]]
+    : [['TP1', snap.b_tp1], ['TP2', snap.mid], ['TP3', snap.b_tp3], ['TP4', snap.fh]];
+  let best = null, bestPx = null;
+  for (const [label, px] of ladder) {
+    if (px == null) continue;
+    const reached = S ? mfe <= px : mfe >= px;
+    if (!reached) continue;
+    if (bestPx == null || (S ? px < bestPx : px > bestPx)) { best = label; bestPx = px; }
+  }
+  return best;
+}
+
+function buildEventMessage(p, bestTP) {
+  const sym  = p.symbol || 'XAUUSD';
+  const side = p.side === 'S' ? 'S ขาย' : 'B ซื้อ';
+  const seq  = p.seq == null ? '?' : p.seq;
+  const tag  = `${side} · Seq #${seq}`;
+  if (p.event === 'ENTER') {
+    return `🎯 <b>Fibo — เข้าไม้</b>\n${sym} · ${tag}\nEntry ${fmt(p.entry)} · TP1 ${fmt(p.tp1)} · SL ${fmt(p.sl)}`;
+  }
+  if (p.event === 'WIN') {
+    const extra = bestTP && bestTP !== 'TP1' ? ` (ไปไกลถึง ${bestTP})` : '';
+    return `✅ <b>Fibo — ชนะ</b> 🎉\n${sym} · ${tag}\nแตะ TP1 ${fmt(p.tp1)}${extra}`;
+  }
+  if (p.event === 'LOSS') {
+    const extra = bestTP ? ` (เคยไปถึง ${bestTP})` : '';
+    return `❌ <b>Fibo — แพ้</b>\n${sym} · ${tag}\nโดน SL ${fmt(p.sl)}${extra}`;
+  }
+  return `Fibo event ${p.event} · ${sym} · ${tag}`;
+}
+
+// Resolve the Telegram bot/chat once (Fibo override, else reuse the plan bot).
+function telegramTarget() {
+  const chatId = process.env.FIBO_TELEGRAM_CHAT_ID || process.env.TELEGRAM_PLAN_CHAT_ID;
+  const token  = process.env.FIBO_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_PLAN_BOT_TOKEN;
+  const on = chatId && chatId !== 'off' && token;
+  return { on, chatId, token };
+}
+
+async function pingTelegram(text) {
+  const { on, chatId, token } = telegramTarget();
+  if (!on) return { ok: false, skipped: true };
+  try {
+    const tg = await sendTelegram(token, chatId, text);
+    if (!tg.ok) console.warn('fibo telegram send failed:', tg.error);
+    return tg;
+  } catch (e) {
+    console.warn('fibo telegram threw:', e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+// ENTER / WIN / LOSS lifecycle event.
+async function handleEvent(res, p) {
+  const db = getClient();
+
+  // For WIN/LOSS, enrich with best-TP from the matching snapshot (best-effort).
+  let bestTP = null;
+  if ((p.event === 'WIN' || p.event === 'LOSS') && p.frame_id != null) {
+    try {
+      const { data: snap } = await db
+        .from('fibo_snapshots')
+        .select('mid, fl, fh, s_tp1, s_tp3, b_tp1, b_tp3')
+        .eq('symbol', String(p.symbol))
+        .eq('bar_time', num(p.frame_id))
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      bestTP = computeBestTP(p.side, num(p.mfe), snap);
+    } catch (_) { /* non-fatal */ }
+  }
+
+  const row = {
+    symbol:     String(p.symbol),
+    frame_id:   num(p.frame_id),
+    seq:        num(p.seq),
+    side:       p.side ? String(p.side) : null,
+    event:      String(p.event),
+    entry_mode: p.entry_mode ? String(p.entry_mode) : null,
+    entry:      num(p.entry),
+    tp1:        num(p.tp1),
+    sl:         num(p.sl),
+    mfe:        num(p.mfe),
+    price:      num(p.price),
+    bar_time:   num(p.bar_time),
+    raw:        p,
+  };
+
+  let evId = null;
+  try {
+    const { data, error } = await db
+      .from('fibo_events')
+      .insert(row)
+      .select('id')
+      .single();
+    if (error) return bad(res, 500, 'db_insert_failed: ' + error.message);
+    evId = data.id;
+  } catch (e) {
+    return bad(res, 500, 'db_error: ' + e.message);
+  }
+
+  const tg = await pingTelegram(buildEventMessage(p, bestTP));
+
+  return res.status(200).json({
+    ok: true,
+    event_id: evId,
+    best_tp: bestTP,
+    telegram_message_id: tg.message_id ?? null,
+    telegram_ok: !!tg.ok,
+  });
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'POST') return bad(res, 405, 'method_not_allowed');
 
@@ -113,6 +232,13 @@ module.exports = async (req, res) => {
 
   if (p.secret !== secret) return bad(res, 401, 'bad_secret');
   if (!p.symbol) return bad(res, 400, 'missing_field: symbol');
+
+  // Route by type: lifecycle events go to fibo_events, everything else is a frame.
+  const type = String(p.type || 'SNAPSHOT').toUpperCase();
+  if (type === 'ENTER' || type === 'WIN' || type === 'LOSS') {
+    if (!p.event) p.event = type;   // Pine sends type; keep event in sync
+    return handleEvent(res, p);
+  }
 
   // 1) Record the snapshot.
   const row = {
@@ -155,17 +281,7 @@ module.exports = async (req, res) => {
   }
 
   // 2) Ping Telegram (best-effort — never fail the request over a TG hiccup).
-  let tg = { ok: false, skipped: true };
-  const chatId = process.env.FIBO_TELEGRAM_CHAT_ID || process.env.TELEGRAM_PLAN_CHAT_ID;
-  const token  = process.env.FIBO_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_PLAN_BOT_TOKEN;
-  if (chatId && chatId !== 'off' && token) {
-    try {
-      tg = await sendTelegram(token, chatId, buildMessage(p));
-    } catch (e) {
-      tg = { ok: false, error: e.message };
-    }
-    if (!tg.ok) console.warn('fibo-snapshot telegram send failed:', tg.error);
-  }
+  const tg = await pingTelegram(buildSnapshotMessage(p));
 
   return res.status(200).json({
     ok: true,

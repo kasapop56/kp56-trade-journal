@@ -55,7 +55,42 @@ Pine (FiboFocusSignals.pine)
 `seq` resets to 1 each new trading day; `frame_no` is a monotonic per-chart counter.
 The whole payload is also stored in `fibo_snapshots.raw` (jsonb) for future fields.
 
-## Not done yet (next phase)
+## Phase 8b — Win/Loss tracking
 
-- Win/Loss outcome tracking (Pine fires a second alert when price hits TP1/SL of an
-  active frame → `fibo_outcomes` table + per-day W/L on the UI).
+Pine now runs a per-side state machine and fires lifecycle events through the SAME
+webhook (routed by a `type` field):
+
+- **ENTER** — price reached the entry zone. `Test 1.272` = bar **closes** inside the
+  ±zone; `Focus 2.0` = price **touches** the zone edge (extension spike/wick).
+- **WIN** — TP1 (500p) hit before SL.  **LOSS** — SL hit before TP1.
+- **VOID / no-entry** is not emitted; the UI infers it (a frame side with no ENTER
+  once a newer frame exists).
+
+Each event carries `type, frame_id, side (S/B), entry, tp1, sl, mfe`. `frame_id` =
+the drawing bar's ms-epoch = `fibo_snapshots.bar_time` (the join key). `mfe` = max
+favorable price since entry; the webhook maps it against the frame's TP ladder to
+report "best TP reached".
+
+**⚠️ Runs on the chart TF = calc TF (M15).** Keep the alert on an M15 XAUUSD chart
+for accurate touch detection. Tie-break: if a bar hits both TP1 and SL, counts LOSS.
+
+### Extra files (8b)
+| Piece   | Path |
+|---------|------|
+| Schema  | `supabase_schema_fibo_events.sql` (table `fibo_events`) |
+| Pine    | indicator group ⑦ Win/Loss tracking (`alWL`) |
+| Backend | `api/fibo-snapshot.js` branches `type` → `handleEvent` |
+| UI      | `js/fibo.js` merges events → per-side badge + daily W/L bar |
+
+### Deploy (8b)
+1. Run `supabase_schema_fibo_events.sql` in Supabase.
+2. `git push` (redeploys the webhook + UI).
+3. The existing TradingView alert already covers it — "Any alert() function call"
+   forwards every `alert()` (snapshot + events) to the same webhook. No new alert
+   needed. (Keep the alert on an M15 chart.)
+
+## Not done yet (later)
+
+- Partial-close / scale-out modeling (currently binary TP1 vs SL, with best-TP as a
+  secondary stat).
+- Per-session / per-day-star W/L breakdowns.
