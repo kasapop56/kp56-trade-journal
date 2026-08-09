@@ -15,6 +15,9 @@
     },
     "api/post-plan.js": {
       "maxDuration": 10
+    },
+    "api/fibo-snapshot.js": {
+      "maxDuration": 10
     }
   }
 }

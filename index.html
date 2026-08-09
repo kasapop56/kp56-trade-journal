@@ -13,6 +13,7 @@
   <a href="#" data-page="new" style="display:none">New Trade</a>
   <a href="#" data-page="stats" class="active">Stats</a>
   <a href="#" data-page="history">History</a>
+  <a href="#" data-page="fibo">Fibo 🎯</a>
   <a href="#" data-page="numerology">ดวงดาว ⭐</a>
 </nav>
 
@@ -473,6 +474,23 @@
 </div>
 
 <!-- ── NUMEROLOGY ───────────────────────────────────────────────────────────── -->
+<!-- ── FIBO FOCUS SNAPSHOTS ─────────────────────────────────────────────────── -->
+<div id="fibo" class="page">
+  <div class="card">
+    <h2>Fibo Focus — Snapshots 🎯</h2>
+    <p class="fibo-sub">บันทึกทุกครั้งที่ตีกรอบใหม่จาก TradingView (S ขาย / B ซื้อ) — จดเฉยๆ ยังไม่นับ Win/Loss</p>
+    <div class="filter-bar fibo-filters">
+      <button class="filter-btn active" data-fday="today">วันนี้</button>
+      <button class="filter-btn" data-fday="7">7 วัน</button>
+      <button class="filter-btn" data-fday="all">ทั้งหมด</button>
+      <span class="filter-sep"></span>
+      <button type="button" class="btn-secondary" id="fiboRefresh">↻ รีเฟรช</button>
+    </div>
+    <div id="fiboStats" class="fibo-stats"></div>
+  </div>
+  <div id="fiboList" class="fibo-list"></div>
+</div>
+
 <div id="numerology" class="page">
 
   <!-- Pre-trade NOW panel -->
@@ -533,5 +551,6 @@
 <script src="js/balance.js"></script>
 <script src="js/import.js"></script>
 <script src="js/numerology.js"></script>
+<script src="js/fibo.js"></script>
 </body>
 </html>
