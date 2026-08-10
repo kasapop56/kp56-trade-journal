@@ -79,18 +79,45 @@ function bestTp(side, mfe, tps) {
   return best;
 }
 
-// Replay one (frame, side) over the bar stream. Returns an outcome row.
-function replaySide(frame, side, bars) {
-  const focus = side === 'S' ? +frame.s_focus : +frame.b_focus;
-  const test  = side === 'S' ? +frame.s_test  : +frame.b_test;
-  const tp1   = side === 'S' ? +frame.s_tp1   : +frame.b_tp1;
-  const tp3   = side === 'S' ? +frame.s_tp3   : +frame.b_tp3;
-  const sl    = side === 'S' ? +frame.s_sl    : +frame.b_sl;
-  const mid   = +frame.mid;
-  const tp4   = side === 'S' ? +frame.fl : +frame.fh;
-  const isTest = (frame.entry_mode || '').indexOf('Test') >= 0;
+// Levels for a (frame, side, mode). TP1/SL are fixed point offsets from the entry
+// level (Pine: SL = lvl±slPts, TP1 = lvl∓tp1pts). The snapshot only stored TP1/SL
+// for the ACTIVE mode, so we recover those point distances from the active pair
+// and re-apply them to the requested mode's level — matching whatever the user's
+// tp1pts/slPts inputs were, for both Focus and Test. TP3/mid/TP4 are fixed fibs.
+function sideLevels(f, side, mode) {
+  const isTest = mode === 'test';
+  const focus = side === 'S' ? +f.s_focus : +f.b_focus;
+  const test  = side === 'S' ? +f.s_test  : +f.b_test;
   const lvl = isTest ? test : focus;
-  const Z = (Number(frame.zone_pts) || 100) * POINT;
+  // Preferred: explicit point offsets sent by the (mode-less) Pine → tp1_pts/sl_pts.
+  const raw = f.raw || {};
+  let tp1, sl;
+  if (raw.tp1_pts != null && raw.sl_pts != null) {
+    const t = Number(raw.tp1_pts) * POINT, s = Number(raw.sl_pts) * POINT;
+    if (side === 'S') { tp1 = lvl - t; sl = lvl + s; } else { tp1 = lvl + t; sl = lvl - s; }
+  } else {
+    // Legacy frames: recover the point distances from the active mode's stored TP1/SL.
+    const activeLvl = (f.entry_mode || '').indexOf('Test') >= 0 ? test : focus;
+    if (side === 'S') {
+      const tp1d = activeLvl - +f.s_tp1, sld = +f.s_sl - activeLvl;
+      tp1 = lvl - tp1d; sl = lvl + sld;
+    } else {
+      const tp1d = +f.b_tp1 - activeLvl, sld = activeLvl - +f.b_sl;
+      tp1 = lvl + tp1d; sl = lvl - sld;
+    }
+  }
+  return {
+    isTest, lvl, tp1, sl,
+    tp3: side === 'S' ? +f.s_tp3 : +f.b_tp3,
+    mid: +f.mid,
+    tp4: side === 'S' ? +f.fl : +f.fh,
+    Z: (Number(f.zone_pts) || 100) * POINT,
+  };
+}
+
+// Replay one (frame, side, mode) over the bar stream. Returns an outcome row.
+function replaySide(frame, side, mode, bars) {
+  const { isTest, lvl, tp1, sl, tp3, mid, tp4, Z } = sideLevels(frame, side, mode);
   const zLo = lvl - Z, zHi = lvl + Z;
   const frameT = Number(frame.bar_time);
 
@@ -134,7 +161,7 @@ function replaySide(frame, side, bars) {
 
   const best_tp = mfe == null ? 0 : bestTp(side, mfe, [tp1, mid, tp3, tp4]);
   return {
-    frame_id: frameT, side, status, entered_at, resolved_at, result,
+    frame_id: frameT, side, mode, status, entered_at, resolved_at, result,
     mfe, mae, best_tp, bars_seen: seen, updated_at: new Date().toISOString(),
   };
 }
@@ -167,11 +194,14 @@ module.exports = async (req, res) => {
       });
     }
 
-    // ── writer ──
+    // ── writer ── both sides × both entry modes for every frame
     const rows = [];
-    for (const f of frames) { rows.push(replaySide(f, 'S', bars)); rows.push(replaySide(f, 'B', bars)); }
+    for (const f of frames)
+      for (const side of ['S', 'B'])
+        for (const mode of ['focus', 'test'])
+          rows.push(replaySide(f, side, mode, bars));
 
-    const up = await db().from('fibo_outcomes').upsert(rows, { onConflict: 'frame_id,side' });
+    const up = await db().from('fibo_outcomes').upsert(rows, { onConflict: 'frame_id,side,mode' });
     if (up.error) {
       const missing = up.error.code === '42P01';
       return res.status(missing ? 424 : 500).json({
@@ -180,10 +210,11 @@ module.exports = async (req, res) => {
       });
     }
 
-    const tally = rows.reduce((a, r) => (a[r.status] = (a[r.status] || 0) + 1, a), {});
+    const tally = { focus: {}, test: {} };
+    for (const r of rows) tally[r.mode][r.status] = (tally[r.mode][r.status] || 0) + 1;
     return res.status(200).json({
       ok: true, mode: 'write', window_days: days,
-      frames: frames.length, sides_evaluated: rows.length, bars_used: bars.length, tally,
+      frames: frames.length, rows_upserted: rows.length, bars_used: bars.length, tally,
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
