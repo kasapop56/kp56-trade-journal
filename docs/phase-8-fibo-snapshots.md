@@ -89,24 +89,52 @@ for accurate touch detection. Tie-break: if a bar hits both TP1 and SL, counts L
    forwards every `alert()` (snapshot + events) to the same webhook. No new alert
    needed. (Keep the alert on an M15 chart.)
 
-## Phase 8c — Session / day-star W/L breakdown
+## Phase 8c — data-driven # evaluator (track ALL frames) + breakdowns
 
-Frontend-only (no Pine, no schema change). Under the stat row the Fibo tab now
-renders two mini-tables: **แยกตาม Session** (ASIA/LONDON/OVERLAP/NY/QUIET) and
-**แยกตามดาว ⭐** (Thai day-of-week). Each walks every (frame, side), counts only
-decided outcomes (win/loss), and shows ชนะ · แพ้ · WR% (green ≥50%, red <50%).
+**Why:** Pine group ⑦ only tracks the *active* frame — when a zone break redraws
+the frame, the old #'s levels are abandoned. But if price later reaches an old #'s
+zone and runs to TP/SL, that's still a valid setup worth studying. Since every #
+already stores all its levels, we don't need Pine to track old frames — we replay
+the stored levels against a recorded price path. **No Pine change, no EA change.**
 
-- Grouping key comes from the **frame**, so both sides of one frame share its
-  session/star. Session uses the frame's `bar_time` (exchange ms-epoch, UTC) — same
-  UTC-hour boundaries as `app.js deriveSession()` — falling back to `created_at`.
-  Day-star = Bangkok day (`bar_time + 7h`).
-- Tables stay hidden until there's at least one win/loss (`.fibo-breakdown:empty`),
-  so they show nothing while today has only PENDING/VOID frames.
-- Files: `js/fibo.js` (`frameSession`/`frameStar`/`fiboBreakdownGroups`/
-  `fiboBreakdownTable`/`renderFiboBreakdown`), `#fiboBreakdown` in `index.html`,
-  `.fibo-breakdown`/`.fibo-bd-*` in `css/style.css`.
+**Price source:** the RainbowPilot EA already streams one **BAR** event per closed
+bar into `trade_events` (`payload.ctx.bar1 = [open,high,low,close]`,
+`payload.t_gmt` = GMT close time, symbol `XAUUSDr`). That's the price feed.
+
+**Evaluator — `api/fibo-eval.js`:**
+- `GET /api/fibo-eval` → read-only diagnostics (feed presence, usable bars, overlap).
+- `GET /api/fibo-eval?write=1&days=N` → for every `fibo_snapshots` # in the window,
+  replays **both sides** against the BAR OHLC and **upserts `fibo_outcomes`**.
+- Replay mirrors Pine ⑦: entry level = Focus 2.0 / Test 1.272 (per `entry_mode`),
+  zone = ±`zone_pts`×0.01. **ENTER** Test = bar closes in zone / Focus = high≥zone
+  (S) or low≤zone (B). **WIN** TP1 before SL, **LOSS** SL first, **tie = LOSS**
+  (OHLC can't order intrabar). MFE → `best_tp` (0–4). Paginates past Supabase's
+  1000-row cap; matches `XAUUSD` ~ `XAUUSDr`.
+
+**Table `fibo_outcomes`** (`supabase_schema_fibo_outcomes.sql`): PK (frame_id, side),
+`status` pending/entered/win/loss + entered_at/resolved_at/result/mfe/best_tp. Upsert
+(not append) so a side can transition as more bars arrive. Anon read policy.
+
+**No cron:** the Fibo tab pings `?write=1` on every render (tab open + ↻ รีเฟรช),
+so opening the tab re-derives outcomes. (We avoid cron — it's been unreliable on
+this stack; Pro caps routines at 5 runs/day.)
+
+**UI (`js/fibo.js`):** badges + the two breakdown tables (**แยกตาม Session**
+ASIA/LONDON/OVERLAP/NY/QUIET, **แยกตามดาว ⭐** Thai day-of-week) read `fibo_outcomes`.
+Old superseded #'s now stay **PENDING** until their zone is touched, then resolve —
+no more VOID inference. Session/star grouping keys off the frame's `bar_time`
+(UTC-hour boundaries as `app.js deriveSession()`; day = Bangkok `bar_time+7h`).
+Breakdown tables hide until ≥1 win/loss (`.fibo-breakdown:empty`).
+
+**Pine group ⑦ WIN/LOSS is now redundant** (fibo_outcomes is the source of truth) —
+left running as a live convenience; can be retired. `fibo_events` no longer read by
+the UI.
+
+**Verified 2026-08-10:** #1 B (Focus 4319.38, superseded by #2) correctly resolved
+**WIN** from real BAR data — the exact case that had shown no entry under Pine.
 
 ## Not done yet (later)
 
 - Partial-close / scale-out modeling (currently binary TP1 vs SL, with best-TP as a
   secondary stat).
+- Optional frame expiry (a # stays PENDING forever until its zone is touched).
