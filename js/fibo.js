@@ -1,6 +1,9 @@
-// js/fibo.js — Fibo Focus snapshot log + Win/Loss (Phase 8 / 8b)
-// Reads fibo_snapshots (frames drawn) + fibo_events (ENTER/WIN/LOSS lifecycle),
-// both written by /api/fibo-snapshot. Uses `db` from app.js (anon key).
+// js/fibo.js — Fibo Focus snapshot log + Win/Loss (Phase 8 / 8b / 8c)
+// Reads fibo_snapshots (frames drawn) + fibo_outcomes (per-#/side status derived
+// by /api/fibo-eval, which replays stored levels against the BAR price feed).
+// On each render it first pings the evaluator so outcomes are fresh, then reads
+// them via the anon `db` client from app.js. Tracks ALL frames — including ones a
+// newer frame superseded — so old #'s still resolve to WIN/LOSS if price gets there.
 
 let _fiboInit = false;
 let _fiboDay  = 'today';   // 'today' | '7' | 'all'
@@ -34,24 +37,32 @@ function rangeGte(q) {
   return q.limit(300);
 }
 
-async function loadFiboData() {
-  const [snapRes, evtRes] = await Promise.all([
-    rangeGte(db.from('fibo_snapshots').select('*').order('created_at', { ascending: false })),
-    rangeGte(db.from('fibo_events').select('*').order('created_at', { ascending: true })),
-  ]);
-  if (snapRes.error) throw snapRes.error;
-  if (evtRes.error && evtRes.error.code !== '42P01') throw evtRes.error; // ignore "table missing" pre-migration
-  return { rows: snapRes.data || [], events: evtRes.data || [] };
+// Ask the server to (re)derive outcomes from stored # levels + the BAR price
+// feed. Non-fatal: if the table is missing or the feed is down, we still render
+// whatever outcomes already exist. Fire-and-await so the read below is fresh.
+async function triggerEval() {
+  try { await fetch('/api/fibo-eval?write=1&days=60'); } catch (_) { /* offline / cold start */ }
 }
 
-// Reduce events for one (frame, side) into a status.
-// win > loss > entered; else pending (newest frame) / void (older, never entered).
-function sideStatus(row, side, events, newestBarTime) {
-  const evs = events.filter(e => Number(e.frame_id) === Number(row.bar_time) && e.side === side);
-  if (evs.some(e => e.event === 'WIN'))  return 'win';
-  if (evs.some(e => e.event === 'LOSS')) return 'loss';
-  if (evs.some(e => e.event === 'ENTER')) return 'entered';
-  return Number(row.bar_time) === Number(newestBarTime) ? 'pending' : 'void';
+async function loadFiboData() {
+  const [snapRes, outRes] = await Promise.all([
+    rangeGte(db.from('fibo_snapshots').select('*').order('created_at', { ascending: false })),
+    db.from('fibo_outcomes').select('*'),
+  ]);
+  if (snapRes.error) throw snapRes.error;
+  if (outRes.error && outRes.error.code !== '42P01') throw outRes.error; // ignore "table missing" pre-migration
+  const outcomes = {};
+  for (const o of (outRes.data || [])) outcomes[Number(o.frame_id) + '|' + o.side] = o;
+  return { rows: snapRes.data || [], outcomes };
+}
+
+// Status for one (frame, side), read from the derived outcomes map.
+// Values: pending (zone not touched) · entered · win · loss. Every recorded
+// frame is tracked — no VOID inference; an old frame stays PENDING until its
+// zone is touched, exactly what "track old # too" asks for.
+function sideStatus(row, side, outcomes) {
+  const o = outcomes[Number(row.bar_time) + '|' + side];
+  return o ? o.status : 'pending';
 }
 
 // ── Session + day-star classification (per frame) ────────────────────────────
@@ -88,12 +99,14 @@ function badge(st) {
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────
-function renderFiboStats(rows, events) {
+function renderFiboStats(rows, outcomes) {
   const el = document.getElementById('fiboStats');
   if (!el) return;
-  const wins   = events.filter(e => e.event === 'WIN').length;
-  const losses = events.filter(e => e.event === 'LOSS').length;
-  const open   = events.filter(e => e.event === 'ENTER').length - wins - losses;
+  let wins = 0, losses = 0, open = 0;
+  for (const r of rows) for (const side of ['S', 'B']) {
+    const st = sideStatus(r, side, outcomes);
+    if (st === 'win') wins++; else if (st === 'loss') losses++; else if (st === 'entered') open++;
+  }
   const decided = wins + losses;
   const wr = decided ? Math.round((wins / decided) * 100) : null;
   el.innerHTML = `
@@ -107,14 +120,13 @@ function renderFiboStats(rows, events) {
 // ── Breakdown: W/L grouped by session and by day-star ────────────────────────
 // Walk every (frame, side); count only decided outcomes (win/loss). Group key is
 // taken from the FRAME, so both sides of one frame share its session/star.
-function fiboBreakdownGroups(rows, events) {
-  const newest = rows.reduce((m, r) => Math.max(m, Number(r.bar_time) || 0), 0);
+function fiboBreakdownGroups(rows, outcomes) {
   const bySession = {}, byStar = {};
   const bump = (map, key) => (map[key] || (map[key] = { win: 0, loss: 0 }));
   for (const r of rows) {
     const sess = frameSession(r), star = frameStar(r);
     for (const side of ['S', 'B']) {
-      const st = sideStatus(r, side, events, newest);
+      const st = sideStatus(r, side, outcomes);
       if (st !== 'win' && st !== 'loss') continue;
       bump(bySession, sess)[st]++;
       bump(byStar, star)[st]++;
@@ -144,10 +156,10 @@ function fiboBreakdownTable(title, map, order) {
       <tbody>${rows}</tbody></table></div>`;
 }
 
-function renderFiboBreakdown(rows, events) {
+function renderFiboBreakdown(rows, outcomes) {
   const el = document.getElementById('fiboBreakdown');
   if (!el) return;
-  const { bySession, byStar } = fiboBreakdownGroups(rows, events);
+  const { bySession, byStar } = fiboBreakdownGroups(rows, outcomes);
   const hasAny = Object.keys(bySession).length || Object.keys(byStar).length;
   if (!hasAny) { el.innerHTML = ''; return; } // stay quiet until W/L data exists
   const sessTbl = fiboBreakdownTable('แยกตาม Session', bySession,
@@ -196,17 +208,17 @@ async function renderFibo() {
   const list = document.getElementById('fiboList');
   if (list) list.innerHTML = '<div class="fibo-empty">กำลังโหลด…</div>';
   try {
-    const { rows, events } = await loadFiboData();
-    renderFiboStats(rows, events);
-    renderFiboBreakdown(rows, events);
+    await triggerEval();
+    const { rows, outcomes } = await loadFiboData();
+    renderFiboStats(rows, outcomes);
+    renderFiboBreakdown(rows, outcomes);
     if (!list) return;
     if (!rows.length) {
       list.innerHTML = '<div class="fibo-empty">ยังไม่มีกรอบในช่วงนี้ — พอ Pine ตีกรอบใหม่จะเด้งเข้ามาเอง</div>';
       return;
     }
-    const newest = rows.reduce((m, r) => Math.max(m, Number(r.bar_time) || 0), 0);
     list.innerHTML = rows.map(r =>
-      fiboCard(r, sideStatus(r, 'S', events, newest), sideStatus(r, 'B', events, newest))
+      fiboCard(r, sideStatus(r, 'S', outcomes), sideStatus(r, 'B', outcomes))
     ).join('');
   } catch (e) {
     if (list) list.innerHTML = `<div class="fibo-empty">โหลดไม่สำเร็จ: ${e.message}</div>`;
