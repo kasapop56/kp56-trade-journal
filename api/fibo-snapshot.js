@@ -139,6 +139,22 @@ function buildEventMessage(p, bestTP) {
   return `Fibo event ${p.event} · ${sym} · ${tag}`;
 }
 
+// Lightweight "price entered a zone" heads-up (no DB, Telegram only). Fired by
+// Pine once per (side, zone) per frame — for manual awareness; win/loss is derived
+// separately by /api/fibo-eval.
+function buildZoneMessage(p) {
+  const sym  = p.symbol || 'XAUUSD';
+  const side = p.side === 'S' ? '🔴 S ขาย' : '🟢 B ซื้อ';
+  const zone = String(p.zone || '').indexOf('Test') >= 0 ? 'Test 1.272' : 'Focus 2.0';
+  const seq  = p.seq == null ? '?' : p.seq;
+  return `🎯 <b>Fibo — ราคาเข้าโซน</b>\n${sym} · ${side} · <b>Seq #${seq}</b>\n${zone} @ ${fmt(p.level)} (ราคา ${fmt(p.price)})`;
+}
+
+async function handleZone(res, p) {
+  const tg = await pingTelegram(buildZoneMessage(p));
+  return res.status(200).json({ ok: true, type: 'ZONE', telegram_ok: !!tg.ok, telegram_message_id: tg.message_id ?? null });
+}
+
 // Resolve the Telegram bot/chat once (Fibo override, else reuse the plan bot).
 function telegramTarget() {
   const chatId = process.env.FIBO_TELEGRAM_CHAT_ID || process.env.TELEGRAM_PLAN_CHAT_ID;
@@ -235,6 +251,7 @@ module.exports = async (req, res) => {
 
   // Route by type: lifecycle events go to fibo_events, everything else is a frame.
   const type = String(p.type || 'SNAPSHOT').toUpperCase();
+  if (type === 'ZONE') return handleZone(res, p);      // heads-up ping, no DB
   if (type === 'ENTER' || type === 'WIN' || type === 'LOSS') {
     if (!p.event) p.event = type;   // Pine sends type; keep event in sync
     return handleEvent(res, p);
