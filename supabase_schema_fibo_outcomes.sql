@@ -18,7 +18,7 @@ create table if not exists public.fibo_outcomes (
   resolved_at  bigint,                 -- ms epoch of the bar that hit TP1/SL
   result       text,                   -- 'win' | 'loss' | null (unresolved)
   mfe          double precision,       -- favorable extreme (best price) — tracked to SL, not stopped at TP1
-  mae          double precision,       -- adverse extreme (worst price against the trade)
+  mae          double precision,       -- adverse extreme (heat) BEFORE the trade resolved
   best_tp      int         not null default 0,
   bars_seen    int         not null default 0,
   updated_at   timestamptz not null default now(),

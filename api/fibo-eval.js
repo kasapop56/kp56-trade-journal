@@ -94,11 +94,13 @@ function replaySide(frame, side, bars) {
   const zLo = lvl - Z, zHi = lvl + Z;
   const frameT = Number(frame.bar_time);
 
-  // Two independent dimensions:
+  // Three dimensions, deliberately on different windows:
   //   result  — WIN/LOSS = did TP1 come before SL (first touch; tie = LOSS).
-  //   extent  — how far it ran: MFE (favorable) + MAE (adverse), tracked from
-  //             ENTER until the SL actually closes it (NOT stopped at TP1), so a
-  //             winner shows the deepest TP it would have reached if held.
+  //   MFE     — favorable extent, tracked ENTER→SL-close (NOT stopped at TP1), so
+  //             a winner shows the deepest TP it would have reached if held → best_tp.
+  //   MAE     — adverse heat, tracked only ENTER→first resolution, i.e. how far it
+  //             went against the trade BEFORE it won/lost (post-win giveback excluded,
+  //             else MAE would just restate the SL distance for every trade).
   let status = 'pending', entered_at = null, resolved_at = null, result = null;
   let mfe = null, mae = null, seen = 0;
 
@@ -116,13 +118,14 @@ function replaySide(frame, side, bars) {
       }
     }
     if (status === 'entered' || status === 'win') {
-      mfe = side === 'S' ? Math.min(mfe, b.l) : Math.max(mfe, b.h);
-      mae = side === 'S' ? Math.max(mae, b.h) : Math.min(mae, b.l);
+      mfe = side === 'S' ? Math.min(mfe, b.l) : Math.max(mfe, b.h);  // favorable: track past TP1
       const hitTp = side === 'S' ? b.l <= tp1 : b.h >= tp1;
       const hitSl = side === 'S' ? b.h >= sl  : b.l <= sl;
       if (result === null) {
+        // MAE = heat taken BEFORE the trade first resolves (not the post-win giveback).
+        mae = side === 'S' ? Math.max(mae, b.h) : Math.min(mae, b.l);
         if (hitSl) { status = 'loss'; result = 'loss'; resolved_at = b.t; break; }  // tie → LOSS
-        if (hitTp) { status = 'win';  result = 'win';  resolved_at = b.t; }          // keep tracking extent
+        if (hitTp) { status = 'win';  result = 'win';  resolved_at = b.t; }          // keep tracking MFE
       } else if (hitSl) {
         break;   // already won; the original SL would now close it → stop the extent window
       }
