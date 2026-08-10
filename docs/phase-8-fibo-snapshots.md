@@ -189,7 +189,30 @@ Present as a "Buffer study" panel: per session × mode, show the three above.
   |SL−entry|; TP1 = 500/550 ≈ 0.91R) → expectancy per target → is TP1 enough or is it
   worth holding for TP2/TP4? Break out by Focus/Test × session.
 
-Pickup trigger: user says "เริ่ม buffer study" (or ~2026-08-24). No Pine change.
+**Also in the package — Regime tagging (Range/SW vs Trend):**
+
+Hypothesis: Fibo Focus is a mean-reversion-from-extension play → should WIN in
+range/sideways and bleed in trend. So regime is likely the make-or-break filter
+(same conclusion the Mario system reached: "regime cutoff is the blocker").
+
+- **Tag every frame's regime SERVER-SIDE from the BAR feed** (M5 OHLC already
+  stored) — compute over the bars around each frame: ADX (<20 range / >25 trend),
+  Kaufman Efficiency Ratio (low=chop / high=trend), and/or EMA-ribbon slope/spread.
+  Fully retroactive, NO Pine change. Then slice all outcomes (WR, best_tp, MFE/MAE)
+  by regime → does it only work in range?
+- Decision after data: (a) just **filter by regime** (keep the current frame logic),
+  or (b) change how frames anchor.
+
+**Frame anchoring — fixed lookback vs real swings (bigger, decide later):**
+The current frame = `iHighest/iLowest` over `lookback` bars — crude, ignores swing
+structure. Better = anchor to confirmed **swing/pivot highs & lows (ta.pivothigh/low
+or ZigZag)** so the frame IS the last wave, and/or make lookback/zone ATR-adaptive.
+This IS a Pine change (re-paste) — only pursue if the regime study shows a filter
+isn't enough. For the study we can at least score each frame's "swing quality" from
+the BAR feed without changing Pine.
+
+Pickup trigger: user says "เริ่ม buffer study" (or ~2026-08-24). Regime tagging &
+swing scoring are server-side/no-Pine; only the swing-anchored frame redraw needs Pine.
 
 ## Not done yet (later)
 
