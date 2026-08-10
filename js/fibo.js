@@ -269,15 +269,15 @@ function fiboCard(r, outcomes) {
         <div class="fibo-lv"><span>Focus</span><b>${fnum(r.s_focus)}</b></div>
         <div class="fibo-lv"><span>Test</span><b>${fnum(r.s_test)}</b></div>
         <div class="fibo-lv"><span>TP1</span><b>${fnum(r.s_tp1)}</b></div>
-        <div class="fibo-lv"><span>TP3</span><b>${fnum(r.s_tp3)}</b></div>
         <div class="fibo-lv fibo-sl"><span>SL</span><b>${fnum(r.s_sl)}</b></div>
       </div>
       <div class="fibo-mid">
         <div class="fibo-lv"><span>0/px</span><b>${fnum(r.price)}</b></div>
-        <div class="fibo-lv"><span>Mid</span><b>${fnum(r.mid)}</b></div>
-        <div class="fibo-lv"><span>H</span><b>${fnum(r.fh)}</b></div>
-        <div class="fibo-lv"><span>L</span><b>${fnum(r.fl)}</b></div>
+        <div class="fibo-lv"><span>High</span><b>${fnum(r.fh)}</b></div>
+        <div class="fibo-lv"><span>Mid·TP3</span><b>${fnum(r.mid)}</b></div>
+        <div class="fibo-lv"><span>Low</span><b>${fnum(r.fl)}</b></div>
       </div>
+      <!-- TP ladder: TP2 = ขอบใกล้ (S→High / B→Low) · TP4 = ขอบไกล (S→Low / B→High) -->
       <div class="fibo-side fibo-buy">
         <div class="fibo-side-h">🟢 B ซื้อ</div>
         ${modeLine(r, 'B', 'focus', outcomes)}
@@ -285,7 +285,6 @@ function fiboCard(r, outcomes) {
         <div class="fibo-lv"><span>Focus</span><b>${fnum(r.b_focus)}</b></div>
         <div class="fibo-lv"><span>Test</span><b>${fnum(r.b_test)}</b></div>
         <div class="fibo-lv"><span>TP1</span><b>${fnum(r.b_tp1)}</b></div>
-        <div class="fibo-lv"><span>TP3</span><b>${fnum(r.b_tp3)}</b></div>
         <div class="fibo-lv fibo-sl"><span>SL</span><b>${fnum(r.b_sl)}</b></div>
       </div>
     </div>

@@ -92,13 +92,16 @@ function buildSnapshotMessage(p) {
 
   const sBlock = `\n\n🔴 <b>S ขาย</b>\n` +
                  ` Focus ${fmt(p.s_focus)} | Test ${fmt(p.s_test)}\n` +
-                 ` TP1 ${fmt(p.s_tp1)} · TP3 ${fmt(p.s_tp3)} · SL ${fmt(p.s_sl)}`;
+                 ` TP1 ${fmt(p.s_tp1)} · SL ${fmt(p.s_sl)}`;
 
   const bBlock = `\n\n🟢 <b>B ซื้อ</b>\n` +
                  ` Focus ${fmt(p.b_focus)} | Test ${fmt(p.b_test)}\n` +
-                 ` TP1 ${fmt(p.b_tp1)} · TP3 ${fmt(p.b_tp3)} · SL ${fmt(p.b_sl)}`;
+                 ` TP1 ${fmt(p.b_tp1)} · SL ${fmt(p.b_sl)}`;
 
-  return head + sBlock + bBlock;
+  // Shared ladder targets: TP2 = near boundary, TP3 = Mid, TP4 = far boundary.
+  const ladder = `\n\n🎯 TP2/4 ขอบ: High ${fmt(p.fh)} · Low ${fmt(p.fl)} · TP3 Mid ${fmt(p.mid)}`;
+
+  return head + sBlock + bBlock + ladder;
 }
 
 // Which TP did price reach, from mfe vs the frame's TP ladder (from the snapshot

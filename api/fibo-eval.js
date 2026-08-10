@@ -83,7 +83,9 @@ function bestTp(side, mfe, tps) {
 // level (Pine: SL = lvl±slPts, TP1 = lvl∓tp1pts). The snapshot only stored TP1/SL
 // for the ACTIVE mode, so we recover those point distances from the active pair
 // and re-apply them to the requested mode's level — matching whatever the user's
-// tp1pts/slPts inputs were, for both Focus and Test. TP3/mid/TP4 are fixed fibs.
+// tp1pts/slPts inputs were, for both Focus and Test.
+// TP ladder (0.382 dropped — it clustered with Mid): TP1(fixed) · TP2 = near range
+// boundary (S=High/B=Low) · TP3 = Mid 0.5 · TP4 = far boundary (S=Low/B=High).
 function sideLevels(f, side, mode) {
   const isTest = mode === 'test';
   const focus = side === 'S' ? +f.s_focus : +f.b_focus;
@@ -108,16 +110,16 @@ function sideLevels(f, side, mode) {
   }
   return {
     isTest, lvl, tp1, sl,
-    tp3: side === 'S' ? +f.s_tp3 : +f.b_tp3,
-    mid: +f.mid,
-    tp4: side === 'S' ? +f.fl : +f.fh,
+    mid:  +f.mid,
+    near: side === 'S' ? +f.fh : +f.fl,   // TP2 = range boundary price crosses first
+    far:  side === 'S' ? +f.fl : +f.fh,   // TP4 = far boundary (full reversion)
     Z: (Number(f.zone_pts) || 100) * POINT,
   };
 }
 
 // Replay one (frame, side, mode) over the bar stream. Returns an outcome row.
 function replaySide(frame, side, mode, bars) {
-  const { isTest, lvl, tp1, sl, tp3, mid, tp4, Z } = sideLevels(frame, side, mode);
+  const { isTest, lvl, tp1, sl, mid, near, far, Z } = sideLevels(frame, side, mode);
   const zLo = lvl - Z, zHi = lvl + Z;
   const frameT = Number(frame.bar_time);
 
@@ -159,7 +161,7 @@ function replaySide(frame, side, mode, bars) {
     }
   }
 
-  const best_tp = mfe == null ? 0 : bestTp(side, mfe, [tp1, mid, tp3, tp4]);
+  const best_tp = mfe == null ? 0 : bestTp(side, mfe, [tp1, near, mid, far]);
   return {
     frame_id: frameT, side, mode, status, entered_at, resolved_at, result,
     mfe, mae, best_tp, bars_seen: seen, updated_at: new Date().toISOString(),
