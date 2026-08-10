@@ -94,8 +94,13 @@ function replaySide(frame, side, bars) {
   const zLo = lvl - Z, zHi = lvl + Z;
   const frameT = Number(frame.bar_time);
 
+  // Two independent dimensions:
+  //   result  — WIN/LOSS = did TP1 come before SL (first touch; tie = LOSS).
+  //   extent  — how far it ran: MFE (favorable) + MAE (adverse), tracked from
+  //             ENTER until the SL actually closes it (NOT stopped at TP1), so a
+  //             winner shows the deepest TP it would have reached if held.
   let status = 'pending', entered_at = null, resolved_at = null, result = null;
-  let mfe = null, seen = 0;
+  let mfe = null, mae = null, seen = 0;
 
   for (const b of bars) {
     if (b.t <= frameT) continue;   // only bars after the frame was drawn
@@ -104,21 +109,30 @@ function replaySide(frame, side, bars) {
       const enter = isTest
         ? (b.c >= zLo && b.c <= zHi)
         : (side === 'S' ? b.h >= zLo : b.l <= zHi);
-      if (enter) { status = 'entered'; entered_at = b.t; mfe = side === 'S' ? b.l : b.h; }
+      if (enter) {
+        status = 'entered'; entered_at = b.t;
+        mfe = side === 'S' ? b.l : b.h;   // favorable extreme
+        mae = side === 'S' ? b.h : b.l;   // adverse extreme
+      }
     }
-    if (status === 'entered') {
+    if (status === 'entered' || status === 'win') {
       mfe = side === 'S' ? Math.min(mfe, b.l) : Math.max(mfe, b.h);
-      const win  = side === 'S' ? b.l <= tp1 : b.h >= tp1;
-      const loss = side === 'S' ? b.h >= sl  : b.l <= sl;
-      if (loss) { status = 'loss'; result = 'loss'; resolved_at = b.t; break; }   // tie → LOSS
-      if (win)  { status = 'win';  result = 'win';  resolved_at = b.t; break; }
+      mae = side === 'S' ? Math.max(mae, b.h) : Math.min(mae, b.l);
+      const hitTp = side === 'S' ? b.l <= tp1 : b.h >= tp1;
+      const hitSl = side === 'S' ? b.h >= sl  : b.l <= sl;
+      if (result === null) {
+        if (hitSl) { status = 'loss'; result = 'loss'; resolved_at = b.t; break; }  // tie → LOSS
+        if (hitTp) { status = 'win';  result = 'win';  resolved_at = b.t; }          // keep tracking extent
+      } else if (hitSl) {
+        break;   // already won; the original SL would now close it → stop the extent window
+      }
     }
   }
 
   const best_tp = mfe == null ? 0 : bestTp(side, mfe, [tp1, mid, tp3, tp4]);
   return {
     frame_id: frameT, side, status, entered_at, resolved_at, result,
-    mfe, best_tp, bars_seen: seen, updated_at: new Date().toISOString(),
+    mfe, mae, best_tp, bars_seen: seen, updated_at: new Date().toISOString(),
   };
 }
 

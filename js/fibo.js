@@ -168,7 +168,32 @@ function renderFiboBreakdown(rows, outcomes) {
   el.innerHTML = sessTbl + starTbl;
 }
 
-function fiboCard(r, sSt, bSt) {
+function getO(r, side, outcomes) {
+  return outcomes[Number(r.bar_time) + '|' + side] || null;
+}
+// The entry level the evaluator used (Focus 2.0 or Test 1.272 per entry_mode).
+function entryLvl(r, side) {
+  const focusMode = (r.entry_mode || '').indexOf('Test') < 0;
+  if (side === 'S') return Number(focusMode ? r.s_focus : r.s_test);
+  return Number(focusMode ? r.b_focus : r.b_test);
+}
+// Extent line: how far the trade ran (deepest TP reached by MFE) + how much heat
+// it took against it (MAE, in points). Only for sides that actually entered.
+function extentLine(r, side, o) {
+  if (!o || o.status === 'pending') return '';
+  const tp = o.best_tp > 0 ? 'TP' + o.best_tp : '<TP1';
+  let mae = '';
+  if (o.mae != null) {
+    const lvl = entryLvl(r, side);
+    const pts = (side === 'S' ? o.mae - lvl : lvl - o.mae) / 0.01;
+    mae = ' · ทน ' + Math.max(0, Math.round(pts)) + 'p';
+  }
+  return `<div class="fibo-extent">ไกลสุด ${tp}${mae}</div>`;
+}
+
+function fiboCard(r, sO, bO) {
+  const sSt = sO ? sO.status : 'pending';
+  const bSt = bO ? bO.status : 'pending';
   return `
   <div class="fibo-card">
     <div class="fibo-card-head">
@@ -180,6 +205,7 @@ function fiboCard(r, sSt, bSt) {
     <div class="fibo-card-body">
       <div class="fibo-side fibo-sell">
         <div class="fibo-side-h">🔴 S ขาย ${badge(sSt)}</div>
+        ${extentLine(r, 'S', sO)}
         <div class="fibo-lv"><span>Focus</span><b>${fnum(r.s_focus)}</b></div>
         <div class="fibo-lv"><span>Test</span><b>${fnum(r.s_test)}</b></div>
         <div class="fibo-lv"><span>TP1</span><b>${fnum(r.s_tp1)}</b></div>
@@ -194,6 +220,7 @@ function fiboCard(r, sSt, bSt) {
       </div>
       <div class="fibo-side fibo-buy">
         <div class="fibo-side-h">🟢 B ซื้อ ${badge(bSt)}</div>
+        ${extentLine(r, 'B', bO)}
         <div class="fibo-lv"><span>Focus</span><b>${fnum(r.b_focus)}</b></div>
         <div class="fibo-lv"><span>Test</span><b>${fnum(r.b_test)}</b></div>
         <div class="fibo-lv"><span>TP1</span><b>${fnum(r.b_tp1)}</b></div>
@@ -218,7 +245,7 @@ async function renderFibo() {
       return;
     }
     list.innerHTML = rows.map(r =>
-      fiboCard(r, sideStatus(r, 'S', outcomes), sideStatus(r, 'B', outcomes))
+      fiboCard(r, getO(r, 'S', outcomes), getO(r, 'B', outcomes))
     ).join('');
   } catch (e) {
     if (list) list.innerHTML = `<div class="fibo-empty">โหลดไม่สำเร็จ: ${e.message}</div>`;

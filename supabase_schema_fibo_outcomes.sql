@@ -17,7 +17,8 @@ create table if not exists public.fibo_outcomes (
   entered_at   bigint,                 -- ms epoch of the bar that entered
   resolved_at  bigint,                 -- ms epoch of the bar that hit TP1/SL
   result       text,                   -- 'win' | 'loss' | null (unresolved)
-  mfe          double precision,       -- best price reached since entry
+  mfe          double precision,       -- favorable extreme (best price) — tracked to SL, not stopped at TP1
+  mae          double precision,       -- adverse extreme (worst price against the trade)
   best_tp      int         not null default 0,
   bars_seen    int         not null default 0,
   updated_at   timestamptz not null default now(),
@@ -25,6 +26,9 @@ create table if not exists public.fibo_outcomes (
 );
 
 create index if not exists fibo_outcomes_status_idx on public.fibo_outcomes (status);
+
+-- If the table predates the mae column (created before the extent upgrade), add it:
+alter table public.fibo_outcomes add column if not exists mae double precision;
 
 -- Anon read (the Fibo tab reads outcomes with the anon key). Writes happen only
 -- server-side via the service role, which bypasses RLS.

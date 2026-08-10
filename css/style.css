@@ -556,6 +556,7 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 
 /* ── Fibo Win/Loss badges (Phase 8b) ──────────────────────────────────────── */
 .fibo-side-h { display: flex; align-items: center; gap: 6px; }
+.fibo-extent { font-size: 11px; color: var(--gold); background: var(--surface2); border-radius: 6px; padding: 2px 6px; margin: 0 0 6px; display: inline-block; }
 .fb-badge { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 10px; letter-spacing: 0.3px; margin-left: auto; }
 .fb-win  { background: rgba(38,166,154,0.18); color: var(--bull); border: 1px solid var(--bull); }
 .fb-loss { background: rgba(239,83,80,0.16);  color: var(--bear); border: 1px solid var(--bear); }
