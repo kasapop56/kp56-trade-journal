@@ -91,6 +91,24 @@ function frameStar(r) {
   const dow = new Date(frameEpoch(r) + 7 * 3600 * 1000).getUTCDay(); // Bangkok day
   return FB_STARS[dow];
 }
+function bkkDayKey(r) {
+  const t = new Date(frameEpoch(r) + 7 * 3600 * 1000);
+  return `${t.getUTCFullYear()}-${t.getUTCMonth() + 1}-${t.getUTCDate()}`;
+}
+// Number the frames ourselves, per Bangkok day, in chronological order. Pine's own
+// `seq` resets to 1 on every indicator recompile/reload — not only at day start —
+// so it can produce duplicate #1's within a day. bar_time is the real id; this
+// gives a stable, gap-free # for display. Returns { bar_time: n }.
+function assignDaySeq(rows) {
+  const byDay = {};
+  for (const r of rows) (byDay[bkkDayKey(r)] ||= []).push(r);
+  const seqMap = {};
+  for (const d in byDay) {
+    byDay[d].slice().sort((a, b) => Number(a.bar_time) - Number(b.bar_time))
+      .forEach((r, i) => { seqMap[r.bar_time] = i + 1; });
+  }
+  return seqMap;
+}
 
 const STATUS = {
   win:     ['✅ ชนะ',   'fb-win'],
@@ -238,7 +256,7 @@ function fiboCard(r, outcomes) {
   return `
   <div class="fibo-card">
     <div class="fibo-card-head">
-      <span class="fibo-seq">#${r.seq ?? '?'}</span>
+      <span class="fibo-seq">#${r._seq ?? r.seq ?? '?'}</span>
       <span class="fibo-sym">${r.symbol}${r.tf ? ' · TF' + r.tf : ''}</span>
       <span class="fibo-mode">${r.zone_pts != null ? '±' + r.zone_pts + 'p' : ''}</span>
       <span class="fibo-time">${bkkDateStr(r.created_at)} ${bkkTimeStr(r.created_at)}</span>
@@ -288,7 +306,8 @@ async function renderFibo() {
       list.innerHTML = '<div class="fibo-empty">ยังไม่มีกรอบในช่วงนี้ — พอ Pine ตีกรอบใหม่จะเด้งเข้ามาเอง</div>';
       return;
     }
-    list.innerHTML = rows.map(r => fiboCard(r, outcomes)).join('');
+    const seqMap = assignDaySeq(rows);
+    list.innerHTML = rows.map(r => { r._seq = seqMap[r.bar_time]; return fiboCard(r, outcomes); }).join('');
   } catch (e) {
     if (list) list.innerHTML = `<div class="fibo-empty">โหลดไม่สำเร็จ: ${e.message}</div>`;
   }
