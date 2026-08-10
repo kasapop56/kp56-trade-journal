@@ -564,3 +564,17 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 .fb-void { background: var(--surface2); color: var(--text-dim); border: 1px solid transparent; opacity: 0.7; }
 .fibo-stat .fs-win  { color: var(--bull); }
 .fibo-stat .fs-loss { color: var(--bear); }
+
+/* Fibo breakdown (Session / day-star W-L) */
+.fibo-breakdown { display: flex; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.fibo-breakdown:empty { display: none; }
+.fibo-bd-table { flex: 1; min-width: 240px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+.fibo-bd-title { font-size: 12px; font-weight: 700; color: var(--gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.fibo-bd-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fibo-bd-table th { text-align: right; color: var(--text-dim); font-size: 11px; font-weight: 600; padding: 3px 6px; border-bottom: 1px solid var(--border); }
+.fibo-bd-table th:first-child { text-align: left; }
+.fibo-bd-table td { padding: 4px 6px; color: var(--text); font-variant-numeric: tabular-nums; }
+.fibo-bd-table td:first-child { color: var(--text); }
+.fibo-bd-table .fb-bd-num { text-align: right; }
+.fibo-bd-table .fb-wr-good { color: var(--bull); font-weight: 700; }
+.fibo-bd-table .fb-wr-bad  { color: var(--bear); font-weight: 700; }

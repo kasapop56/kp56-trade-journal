@@ -18,6 +18,9 @@
     },
     "api/fibo-snapshot.js": {
       "maxDuration": 10
+    },
+    "api/fibo-eval.js": {
+      "maxDuration": 30
     }
   }
 }

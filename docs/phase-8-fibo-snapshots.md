@@ -89,8 +89,24 @@ for accurate touch detection. Tie-break: if a bar hits both TP1 and SL, counts L
    forwards every `alert()` (snapshot + events) to the same webhook. No new alert
    needed. (Keep the alert on an M15 chart.)
 
+## Phase 8c — Session / day-star W/L breakdown
+
+Frontend-only (no Pine, no schema change). Under the stat row the Fibo tab now
+renders two mini-tables: **แยกตาม Session** (ASIA/LONDON/OVERLAP/NY/QUIET) and
+**แยกตามดาว ⭐** (Thai day-of-week). Each walks every (frame, side), counts only
+decided outcomes (win/loss), and shows ชนะ · แพ้ · WR% (green ≥50%, red <50%).
+
+- Grouping key comes from the **frame**, so both sides of one frame share its
+  session/star. Session uses the frame's `bar_time` (exchange ms-epoch, UTC) — same
+  UTC-hour boundaries as `app.js deriveSession()` — falling back to `created_at`.
+  Day-star = Bangkok day (`bar_time + 7h`).
+- Tables stay hidden until there's at least one win/loss (`.fibo-breakdown:empty`),
+  so they show nothing while today has only PENDING/VOID frames.
+- Files: `js/fibo.js` (`frameSession`/`frameStar`/`fiboBreakdownGroups`/
+  `fiboBreakdownTable`/`renderFiboBreakdown`), `#fiboBreakdown` in `index.html`,
+  `.fibo-breakdown`/`.fibo-bd-*` in `css/style.css`.
+
 ## Not done yet (later)
 
 - Partial-close / scale-out modeling (currently binary TP1 vs SL, with best-TP as a
   secondary stat).
-- Per-session / per-day-star W/L breakdowns.

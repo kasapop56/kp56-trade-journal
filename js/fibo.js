@@ -54,6 +54,27 @@ function sideStatus(row, side, events, newestBarTime) {
   return Number(row.bar_time) === Number(newestBarTime) ? 'pending' : 'void';
 }
 
+// ── Session + day-star classification (per frame) ────────────────────────────
+// Session boundaries mirror app.js deriveSession() (UTC-hour based). We use the
+// frame's bar_time (exchange ms-epoch, UTC) when present, else created_at.
+const FB_STARS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+function frameEpoch(r) {
+  const bt = Number(r.bar_time);
+  return Number.isFinite(bt) && bt > 0 ? bt : Date.parse(r.created_at);
+}
+function frameSession(r) {
+  const h = new Date(frameEpoch(r)).getUTCHours();
+  if (h < 6) return 'ASIA';
+  if (h < 12) return 'LONDON';
+  if (h < 16) return 'OVERLAP';
+  if (h < 21) return 'NY';
+  return 'QUIET';
+}
+function frameStar(r) {
+  const dow = new Date(frameEpoch(r) + 7 * 3600 * 1000).getUTCDay(); // Bangkok day
+  return FB_STARS[dow];
+}
+
 const STATUS = {
   win:     ['✅ ชนะ',   'fb-win'],
   loss:    ['❌ แพ้',    'fb-loss'],
@@ -81,6 +102,58 @@ function renderFiboStats(rows, events) {
     <div class="fibo-stat"><div class="fs-num fs-loss">${losses}</div><div class="fs-lbl">แพ้</div></div>
     <div class="fibo-stat"><div class="fs-num">${wr === null ? '–' : wr + '%'}</div><div class="fs-lbl">Winrate</div></div>
     <div class="fibo-stat"><div class="fs-num">${Math.max(open, 0)}</div><div class="fs-lbl">เปิดอยู่</div></div>`;
+}
+
+// ── Breakdown: W/L grouped by session and by day-star ────────────────────────
+// Walk every (frame, side); count only decided outcomes (win/loss). Group key is
+// taken from the FRAME, so both sides of one frame share its session/star.
+function fiboBreakdownGroups(rows, events) {
+  const newest = rows.reduce((m, r) => Math.max(m, Number(r.bar_time) || 0), 0);
+  const bySession = {}, byStar = {};
+  const bump = (map, key) => (map[key] || (map[key] = { win: 0, loss: 0 }));
+  for (const r of rows) {
+    const sess = frameSession(r), star = frameStar(r);
+    for (const side of ['S', 'B']) {
+      const st = sideStatus(r, side, events, newest);
+      if (st !== 'win' && st !== 'loss') continue;
+      bump(bySession, sess)[st]++;
+      bump(byStar, star)[st]++;
+    }
+  }
+  return { bySession, byStar };
+}
+
+function fiboBreakdownTable(title, map, order) {
+  const keys = (order || Object.keys(map)).filter(k => map[k]);
+  if (!keys.length) return '';
+  let rows = '';
+  for (const k of keys) {
+    const g = map[k], dec = g.win + g.loss;
+    const wr = dec ? Math.round((g.win / dec) * 100) : 0;
+    const cls = wr >= 50 ? 'fb-wr-good' : 'fb-wr-bad';
+    rows += `<tr>
+      <td>${k}</td>
+      <td class="fb-bd-num fs-win">${g.win}</td>
+      <td class="fb-bd-num fs-loss">${g.loss}</td>
+      <td class="fb-bd-num ${cls}">${wr}%</td></tr>`;
+  }
+  return `<div class="fibo-bd-table">
+    <div class="fibo-bd-title">${title}</div>
+    <table><thead><tr><th>${title.includes('ดาว') ? 'วัน' : 'Session'}</th>
+      <th>ชนะ</th><th>แพ้</th><th>WR</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+function renderFiboBreakdown(rows, events) {
+  const el = document.getElementById('fiboBreakdown');
+  if (!el) return;
+  const { bySession, byStar } = fiboBreakdownGroups(rows, events);
+  const hasAny = Object.keys(bySession).length || Object.keys(byStar).length;
+  if (!hasAny) { el.innerHTML = ''; return; } // stay quiet until W/L data exists
+  const sessTbl = fiboBreakdownTable('แยกตาม Session', bySession,
+    ['ASIA', 'LONDON', 'OVERLAP', 'NY', 'QUIET']);
+  const starTbl = fiboBreakdownTable('แยกตามดาว ⭐', byStar, FB_STARS);
+  el.innerHTML = sessTbl + starTbl;
 }
 
 function fiboCard(r, sSt, bSt) {
@@ -125,6 +198,7 @@ async function renderFibo() {
   try {
     const { rows, events } = await loadFiboData();
     renderFiboStats(rows, events);
+    renderFiboBreakdown(rows, events);
     if (!list) return;
     if (!rows.length) {
       list.innerHTML = '<div class="fibo-empty">ยังไม่มีกรอบในช่วงนี้ — พอ Pine ตีกรอบใหม่จะเด้งเข้ามาเอง</div>';
