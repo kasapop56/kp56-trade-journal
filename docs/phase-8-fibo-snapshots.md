@@ -154,6 +154,27 @@ Focus (solid) and Test (dashed) always; **line labels show PRICE** (e.g. `S Focu
 `tp1_pts`/`sl_pts` instead of `entry_mode`; `api/fibo-snapshot.js` stores the whole
 payload in `raw`, so no webhook change was needed. Frame still redraws off Focus 2.0.
 
+## Parked — Buffer / behavior study (build when ~2 weeks of frames exist)
+
+Requested 2026-08-10; deferred until enough frames accumulate (was 5). All of it is
+computable RETROACTIVELY from stored snapshots + the M5 BAR feed, so nothing needs
+capturing now — just let frames collect, then build the evaluator metrics + a
+per-session (and per Focus/Test) panel. Goal: decide whether SL/TP/entry need a
+points buffer, and whether it differs by market session.
+
+Metrics to add to `api/fibo-eval.js` (a second replay pass per side/mode):
+- **Entry** — zone near-miss: price came within N pts of the zone but never entered,
+  then reversed (→ widen zone?). Entry overshoot: how deep the wick pushed past the
+  entry level on the entry bar (→ entry precision).
+- **SL** — overshoot past SL in points for losers; **SL-rescue rate** = % of losers
+  that WOULD reach TP1 if held past SL (continue the replay past the SL hit). High
+  rescue → SL too tight, add buffer.
+- **TP** — TP shortfall: for entered-but-not-won, MFE as % of the TP1 distance
+  (→ is TP1 just out of reach? pull it in / add a nearer partial).
+
+Present as a "Buffer study" panel: per session × mode, show the three above. Pickup
+trigger: user says "เริ่ม buffer study" (or ~2026-08-24). No Pine change.
+
 ## Not done yet (later)
 
 - Partial-close / scale-out modeling (best-TP is a first cut).
