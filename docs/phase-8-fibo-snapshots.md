@@ -172,8 +172,24 @@ Metrics to add to `api/fibo-eval.js` (a second replay pass per side/mode):
 - **TP** — TP shortfall: for entered-but-not-won, MFE as % of the TP1 distance
   (→ is TP1 just out of reach? pull it in / add a nearer partial).
 
-Present as a "Buffer study" panel: per session × mode, show the three above. Pickup
-trigger: user says "เริ่ม buffer study" (or ~2026-08-24). No Pine change.
+Present as a "Buffer study" panel: per session × mode, show the three above.
+
+**Also in the same study package (same data, same wait):**
+
+- **Management: hold-to-TP/SL vs redraw-invalidates.** The "hold" side already exists
+  — `fibo_outcomes` holds every frame to TP1/SL regardless of newer frames. Add the
+  "redraw" side: for an entered trade on frame F, if it hasn't resolved by the time
+  the next frame (next `bar_time` for the symbol) draws, exit at the BAR-feed price at
+  that moment (mark-to-market). Compare aggregate expectancy (R) of the two styles →
+  is it better to hold the setup or cut it when a new frame appears?
+
+- **Exit target: full TP vs TP2 vs TP1.** Nearly free — `best_tp` (deepest TP reached
+  before SL) is already stored. Simulate exit-at-TP‑n: win iff `best_tp ≥ n`, else the
+  trade rides to SL = loss. Compute per-rule win-rate and R (R_TPn = |TPn−entry| /
+  |SL−entry|; TP1 = 500/550 ≈ 0.91R) → expectancy per target → is TP1 enough or is it
+  worth holding for TP2/TP4? Break out by Focus/Test × session.
+
+Pickup trigger: user says "เริ่ม buffer study" (or ~2026-08-24). No Pine change.
 
 ## Not done yet (later)
 
