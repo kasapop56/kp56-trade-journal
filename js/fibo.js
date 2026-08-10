@@ -221,7 +221,7 @@ function modeLine(r, side, mode, outcomes) {
   const label = mode === 'focus' ? 'Focus' : 'Test';
   let ext = '';
   if (o && o.status !== 'pending') {
-    const tp = o.best_tp > 0 ? 'TP' + o.best_tp : '<TP1';
+    const tp = o.best_tp > 0 ? 'TP' + o.best_tp : 'ไม่ถึง TP1';
     let mae = '';
     if (o.mae != null) {
       const lvl = Number(mode === 'test' ? (side === 'S' ? r.s_test : r.b_test)

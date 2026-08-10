@@ -133,8 +133,28 @@ the UI.
 **Verified 2026-08-10:** #1 B (Focus 4319.38, superseded by #2) correctly resolved
 **WIN** from real BAR data — the exact case that had shown no entry under Pine.
 
+## Phase 8c.2 — both entry modes + extent + mode-less Pine
+
+**Both modes:** the evaluator now replays EACH (frame, side) in BOTH Focus 2.0 and
+Test 1.272 from the same price data → `fibo_outcomes` PK is `(frame_id, side, mode)`.
+`sideLevels(frame, side, mode)` gets the entry level per mode and computes TP1/SL as
+fixed point offsets: it prefers the payload's `tp1_pts`/`sl_pts` (mode-less Pine),
+else recovers the offsets from a legacy frame's stored TP1/SL. UI shows a line per
+mode on each side + a **เทียบ Focus vs Test** table (decided, WR, mean best-TP, mean
+heat). Headline stats + session/star breakdown use the active/primary (focus) mode.
+
+**Extent vs result:** `result` = first of TP1-vs-SL (tie = LOSS). `mfe`/`best_tp`
+track favorable extent to SL-close (past TP1 → "how far if held"). `mae` = heat only
+until the trade first resolved (not the post-win giveback).
+
+**Pine is now mode-less** (`FiboFocusSignals.pine`): removed the entry-mode input and
+the whole group ⑦ WIN/LOSS state machine (redundant — evaluator owns W/L). Draws both
+Focus (solid) and Test (dashed) always; **line labels show PRICE** (e.g. `S Focus
+4381.57`) so the on-chart table can be hidden on mobile. Snapshot JSON sends
+`tp1_pts`/`sl_pts` instead of `entry_mode`; `api/fibo-snapshot.js` stores the whole
+payload in `raw`, so no webhook change was needed. Frame still redraws off Focus 2.0.
+
 ## Not done yet (later)
 
-- Partial-close / scale-out modeling (currently binary TP1 vs SL, with best-TP as a
-  secondary stat).
+- Partial-close / scale-out modeling (best-TP is a first cut).
 - Optional frame expiry (a # stays PENDING forever until its zone is touched).
