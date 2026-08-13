@@ -237,25 +237,56 @@ function renderFiboModeCmp(rows, outcomes) {
 // the SL width you'd need. A loss "converts" to a win at width W when it later
 // reached TP1 (tp1_after_sl) and heat_pts <= W. Cost side: the losses that don't
 // convert now risk W instead of the current SL — the table shows both counts.
+const fbMedian = arr => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+
+// Segment losses by a key (session / day) → เสีย · heat กลาง · heat ต่ำสุด ·
+// how many would be saved by a modest +200 SL. Lower median heat = a session
+// where enduring is cheaper (ranging); high = trending, don't hold.
+function fbSlGroupTable(title, colHead, losses, base, keyFn, order) {
+  const g = {};
+  for (const l of losses) (g[keyFn(l)] ||= []).push(l);
+  const keys = (order || Object.keys(g)).filter(k => g[k] && g[k].length);
+  if (!keys.length) return '';
+  const body = keys.map(k => {
+    const arr = g[k];
+    const heats = arr.filter(l => l.rec).map(l => l.heat);
+    const med = fbMedian(heats);
+    const lo = heats.length ? Math.min(...heats) : null;
+    const saved = arr.filter(l => l.rec && l.heat <= base + 200).length;
+    const cheap = med != null && med <= base * 2 ? 'fb-wr-good' : 'fb-wr-bad';
+    return `<tr><td>${k}</td>
+      <td class="fb-bd-num">${arr.length}</td>
+      <td class="fb-bd-num ${med != null ? cheap : ''}">${med != null ? med + 'p' : '–'}</td>
+      <td class="fb-bd-num">${lo != null ? lo + 'p' : '–'}</td>
+      <td class="fb-bd-num ${saved ? 'fb-wr-good' : ''}">${saved ? '+' + saved : '0'}</td></tr>`;
+  }).join('');
+  return `<div class="fibo-bd-title" style="margin-top:14px">${title}</div>
+    <table><thead><tr><th>${colHead}</th><th>เสีย</th><th>heat กลาง</th><th>ต่ำสุด</th><th>กู้ได้@+200</th></tr></thead>
+      <tbody>${body}</tbody></table>`;
+}
+
 function renderFiboSlSweep(rows, outcomes) {
   const el = document.getElementById('fiboSlSweep');
   if (!el) return;
   const losses = [];
   let base = null;
-  for (const r of rows) for (const side of ['S', 'B']) for (const mode of ['focus', 'test']) {
-    const o = outcomes[Number(r.bar_time) + '|' + side + '|' + mode];
-    if (!o || o.result !== 'loss' || o.heat_pts == null) continue;
-    losses.push(o);
-    if (o.sl_pts != null) base = base == null ? o.sl_pts : Math.min(base, o.sl_pts);
+  for (const r of rows) {
+    const sess = frameSession(r), star = frameStar(r);
+    for (const side of ['S', 'B']) for (const mode of ['focus', 'test']) {
+      const o = outcomes[Number(r.bar_time) + '|' + side + '|' + mode];
+      if (!o || o.result !== 'loss' || o.heat_pts == null) continue;
+      losses.push({ heat: o.heat_pts, rec: !!o.tp1_after_sl, mode, sess, star });
+      if (o.sl_pts != null) base = base == null ? o.sl_pts : Math.min(base, o.sl_pts);
+    }
   }
   if (!losses.length) { el.innerHTML = ''; return; }
   base = base || 550;
-  const recover = losses.filter(o => o.tp1_after_sl);
-  const heats = recover.map(o => o.heat_pts).sort((a, b) => a - b);
+  const recover = losses.filter(l => l.rec);
+  const heats = recover.map(l => l.heat).sort((a, b) => a - b);
   const median = heats.length ? heats[Math.floor(heats.length / 2)] : null;
   const cands = [base, base + 200, base + 400, base + 600, base + 1000];
   const rowHtml = W => {
-    const conv = recover.filter(o => o.heat_pts <= W).length;
+    const conv = recover.filter(l => l.heat <= W).length;
     const cls = conv > 0 ? 'fb-wr-good' : '';
     return `<tr><td>${W}p${W === base ? ' (ตอนนี้)' : ''}</td>
       <td class="fb-bd-num ${cls}">+${conv}</td>
@@ -266,9 +297,13 @@ function renderFiboSlSweep(rows, outcomes) {
     <div class="fibo-bd-title">ทน SL แค่ไหนถึงกู้คืน — จากไม้เสียจริง ${losses.length} ไม้</div>
     <div style="font-size:12px;color:var(--text-dim);margin:2px 0 8px">
       กลับมาแตะ TP1 ในวันเดียวกัน <b>${recover.length}/${losses.length}</b> ไม้ (${pct}%)${heats.length ? ` · ต้องทน ${heats[0]}–${heats[heats.length - 1]}p (กลาง ${median}p)` : ''}<br>
-      <span style="opacity:.8">ยิ่งถ่าง SL = ได้ win เพิ่ม แต่ไม้ที่ไม่กลับมาก็เสียกว้างขึ้นเป็น SL ใหม่</span></div>
+      <span style="opacity:.8">heat กลางต่ำ = session ที่ทนถูก (ไซด์เวย์) · สูง = เทรนด์ อย่าถือ</span></div>
     <table><thead><tr><th>SL width</th><th>เป็น win</th><th>เหลือ loss</th></tr></thead>
-      <tbody>${cands.map(rowHtml).join('')}</tbody></table></div>`;
+      <tbody>${cands.map(rowHtml).join('')}</tbody></table>
+    ${fbSlGroupTable('แยกตาม Session', 'Session', losses, base, l => l.sess, ['ASIA', 'LONDON', 'OVERLAP', 'NY', 'QUIET'])}
+    ${fbSlGroupTable('แยกตามวัน', 'วัน', losses, base, l => l.star)}
+    ${fbSlGroupTable('แยกตามโหมด', 'โหมด', losses, base, l => l.mode === 'focus' ? 'Focus 2.0' : 'Test 1.272', ['Focus 2.0', 'Test 1.272'])}
+  </div>`;
 }
 
 // One line per entry mode: mode tag + status badge + (if entered) extent
