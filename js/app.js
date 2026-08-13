@@ -437,12 +437,16 @@ function renderHistoryCards() {
   const rows      = historyRows;
 
   const net  = rows.reduce((s,r) => s + (Number(r.total_pnl) || 0), 0);
+  const netPts = rows.reduce((s,r) => s + (r.points != null ? Number(r.points) : 0), 0);
+  const hasPts = rows.some(r => r.points != null);
   const wins = rows.filter(r => r.outcome === 'WIN').length;
   const netCls = net > 0 ? 'pos' : net < 0 ? 'neg' : '';
+  const ptsCls = netPts > 0 ? 'pos' : netPts < 0 ? 'neg' : '';
   summary.innerHTML = historyTotal === 0 && rows.length === 0
     ? ''
     : `Showing <b>${rows.length}</b> of <b>${historyTotal}</b> · ` +
       `<span class="${netCls}">Loaded P&amp;L ${net>=0?'+':''}$${net.toFixed(2)}</span> · ` +
+      (hasPts ? `<span class="${ptsCls}">${netPts>=0?'+':''}${Math.round(netPts).toLocaleString()} pts</span> · ` : '') +
       `${wins} win${wins!==1?'s':''} in loaded page`;
 
   if (!rows.length) {
@@ -458,6 +462,9 @@ function renderHistoryCards() {
     const pnl      = Number(r.total_pnl);
     const pnlClass = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '';
     const pnlText  = r.total_pnl != null ? (pnl > 0 ? '+' : '') + '$' + pnl.toFixed(2) : '—';
+    const ptsText  = r.points != null
+      ? `<span class="pnl-pts ${Number(r.points) >= 0 ? 'pos' : 'neg'}">${Number(r.points) >= 0 ? '+' : ''}${Math.round(Number(r.points)).toLocaleString()} pts</span>`
+      : '';
     const card = document.createElement('div');
     card.className = 'trade-card';
 
@@ -485,7 +492,7 @@ function renderHistoryCards() {
     card.innerHTML = `
       <div class="header">
         <span class="date">${r.display_date}${r.exit_time ? ' · ' + r.exit_time : ''}</span>
-        <span class="pnl ${pnlClass}">${pnlText}</span>
+        <span class="pnl-wrap"><span class="pnl ${pnlClass}">${pnlText}</span>${ptsText}</span>
       </div>
       <div class="tags">
         ${srcTag}${dirTag}${extraTags.filter(Boolean).join('')}${sessionTag}
@@ -761,6 +768,12 @@ function openMT5Modal(t) {
     <div class="modal-section"><h4>Prices</h4>
       <p>Open <b>${px(t.open_price)}</b> → Close <b>${px(t.close_price)}</b><br/>
          SL ${px(t.sl)} · TP ${px(t.tp)}</p>
+      ${(() => {
+        if (t.open_price == null || t.close_price == null) return '';
+        const mv = String(t.type).toLowerCase() === 'buy' ? t.close_price - t.open_price : t.open_price - t.close_price;
+        const p = Math.round(mv * 100);
+        return `<p style="font-size:12px;margin-top:4px" class="${p >= 0 ? 'pos' : 'neg'}">${p >= 0 ? '+' : ''}${p.toLocaleString()} points</p>`;
+      })()}
     </div>
     ${t.balance_after != null ? `
       <div class="modal-section"><h4>After Close</h4>

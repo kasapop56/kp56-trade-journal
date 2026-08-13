@@ -342,7 +342,11 @@
   </div>
 
   <div class="kpi-grid">
-    <div class="kpi-box"><div class="kpi-val" id="kpiPnl">—</div><div class="kpi-lbl">Total P&L</div></div>
+    <div class="kpi-box">
+      <div class="kpi-val" id="kpiPnl">—</div>
+      <div class="kpi-lbl">Total P&L</div>
+      <div style="font-size:11px;color:var(--gold);margin-top:2px" id="kpiPnlPts">—</div>
+    </div>
     <div class="kpi-box">
       <div class="kpi-val pos" id="kpiProfRate">—</div>
       <div class="kpi-lbl">Profitable Rate</div>
@@ -354,14 +358,28 @@
     <div class="kpi-box"><div class="kpi-val" id="kpiPerWeek">—</div><div class="kpi-lbl">Trades / Week</div></div>
     <div class="kpi-box"><div class="kpi-val" id="kpiHoldTime">—</div><div class="kpi-lbl">Avg Hold Time</div></div>
     <div class="kpi-box"><div class="kpi-val" id="kpiBE">—</div><div class="kpi-lbl">Break Even</div></div>
-    <div class="kpi-box"><div class="kpi-val" id="kpiRR">—</div><div class="kpi-lbl">Avg P&L / DD</div></div>
-    <div class="kpi-box"><div class="kpi-val pos" id="kpiBest">—</div><div class="kpi-lbl">Best Trade</div></div>
-    <div class="kpi-box"><div class="kpi-val neg" id="kpiWorst">—</div><div class="kpi-lbl">Worst Trade</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiPayoffPts">—</div><div class="kpi-lbl">Payoff (pts)</div></div>
+    <div class="kpi-box"><div class="kpi-val" id="kpiWinLossPts" style="font-size:16px">—</div><div class="kpi-lbl">Avg Win / Loss (pts)</div></div>
+    <div class="kpi-box">
+      <div class="kpi-val pos" id="kpiBest">—</div>
+      <div class="kpi-lbl">Best Trade</div>
+      <div style="font-size:11px;color:var(--gold);margin-top:2px" id="kpiBestPts"></div>
+    </div>
+    <div class="kpi-box">
+      <div class="kpi-val neg" id="kpiWorst">—</div>
+      <div class="kpi-lbl">Worst Trade</div>
+      <div style="font-size:11px;color:var(--gold);margin-top:2px" id="kpiWorstPts"></div>
+    </div>
     <div class="kpi-box"><div class="kpi-val" id="kpiGross">—</div><div class="kpi-lbl">Gross Profit / Loss</div></div>
   </div>
 
   <div class="card">
-    <h2>Equity Curve</h2>
+    <h2 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Equity Curve
+      <span id="equityToggle" class="seg">
+        <button class="seg-btn active" data-mode="usd" onclick="setEquityMode('usd')">USD</button>
+        <button class="seg-btn" data-mode="pts" onclick="setEquityMode('pts')">Points</button>
+      </span>
+    </h2>
     <div class="chart-wrap tall"><canvas id="equityChart"></canvas></div>
   </div>
 
@@ -409,7 +427,7 @@
   <div class="card">
     <h2>Session Breakdown</h2>
     <table class="dash-table">
-      <thead><tr><th>Session</th><th>Trades</th><th>Win Rate</th><th>P&L</th><th>Avg Drawdown</th></tr></thead>
+      <thead><tr><th>Session</th><th>Trades</th><th>Win Rate</th><th>P&L</th><th>P&L (pts)</th></tr></thead>
       <tbody id="sessionTableBody"></tbody>
     </table>
   </div>

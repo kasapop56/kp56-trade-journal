@@ -99,6 +99,18 @@ function renderKPIs(trades) {
   const best        = pnls.length ? Math.max(...pnls) : null;
   const worst       = pnls.length ? Math.min(...pnls) : null;
 
+  // ── Points (lot-independent: pure price travel, 1 pt = $0.01 of gold) ─────
+  const pts         = trades.map(t => t.points).filter(v => v != null);
+  const totalPts    = pts.reduce((s, v) => s + v, 0);
+  const winPts      = pts.filter(v => v > 0);
+  const lossPts     = pts.filter(v => v < 0);
+  const avgWinPts   = winPts.length  ? winPts.reduce((s, v) => s + v, 0) / winPts.length   : 0;
+  const avgLossPts  = lossPts.length ? lossPts.reduce((s, v) => s + v, 0) / lossPts.length : 0;
+  const payoffPts   = avgLossPts !== 0 ? (Math.abs(avgWinPts) / Math.abs(avgLossPts)).toFixed(2) : '—';
+  const bestPts     = pts.length ? Math.max(...pts) : null;
+  const worstPts    = pts.length ? Math.min(...pts) : null;
+  const fmtPts      = v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString() + ' pts';
+
   const set = (id, val, cls) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -140,23 +152,38 @@ function renderKPIs(trades) {
   set('kpiPnl',       (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2), totalPnl >= 0 ? 'pos' : 'neg');
   set('kpiPF',        profitFactor, parseFloat(profitFactor) >= 1 ? 'pos' : 'neg');
   set('kpiRecovery',  recovery, parseFloat(recovery) >= 1 ? 'pos' : 'neg');
-  set('kpiRR',        rr);
   set('kpiBE',        be.length);
   set('kpiPerWeek',   perWeek);
   set('kpiHoldTime',  holdStr);
   set('kpiBest',      best != null ? (best >= 0 ? '+' : '') + best.toFixed(2) : '—', 'pos');
   set('kpiWorst',     worst != null ? worst.toFixed(2) : '—', 'neg');
+  // Points tiles (kept alongside USD, not replacing it)
+  set('kpiPnlPts',    pts.length ? fmtPts(totalPts) : '—', totalPts >= 0 ? 'pos' : 'neg');
+  set('kpiPayoffPts', payoffPts, parseFloat(payoffPts) >= 1 ? 'pos' : 'neg');
+  set('kpiWinLossPts', pts.length ? `${fmtPts(avgWinPts)} / ${Math.round(avgLossPts).toLocaleString()}` : '—');
+  set('kpiBestPts',   bestPts  != null ? fmtPts(bestPts)  : '');
+  set('kpiWorstPts',  worstPts != null ? fmtPts(worstPts) : '');
   const grossEl = document.getElementById('kpiGross');
   if (grossEl) grossEl.innerHTML = `<span style="color:var(--bull)">+${grossProfit.toFixed(2)}</span> <span style="color:var(--text-dim);font-size:12px">/</span> <span style="color:var(--bear)">-${grossLossAmt.toFixed(2)}</span>`;
 }
 
 // ── Equity Curve ───────────────────────────────────────────────────────────────
+// Toggle called from the USD/Points segmented control above the chart.
+function setEquityMode(mode) {
+  equityMode = mode;
+  document.querySelectorAll('#equityToggle .seg-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === mode));
+  renderEquity(currentTrades);
+}
+
 function renderEquity(trades) {
   destroyChart('equity');
-  const sorted = [...trades].filter(t => t.total_pnl != null).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const pts = equityMode === 'pts';
+  const valOf = t => pts ? t.points : t.total_pnl;
+  const sorted = [...trades].filter(t => valOf(t) != null).sort((a, b) => new Date(a.date) - new Date(b.date));
   let cum = 0;
   const labels = [], values = [];
-  sorted.forEach(t => { cum += t.total_pnl; labels.push(t.date); values.push(parseFloat(cum.toFixed(2))); });
+  sorted.forEach(t => { cum += valOf(t); labels.push(t.date); values.push(parseFloat(cum.toFixed(2))); });
   if (!labels.length) return;
 
   const ctx = document.getElementById('equityChart').getContext('2d');
@@ -169,7 +196,7 @@ function renderEquity(trades) {
     data: {
       labels,
       datasets: [{
-        label: 'Cumulative P&L',
+        label: pts ? 'Cumulative Points' : 'Cumulative P&L',
         data: values,
         borderColor: CHART_DEFAULTS.gold,
         backgroundColor: grad,
@@ -182,7 +209,7 @@ function renderEquity(trades) {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: baseScales('', 'USD'),
+      scales: baseScales('', pts ? 'Points' : 'USD'),
     }
   });
 }
@@ -412,18 +439,19 @@ function renderSessionTable(trades) {
     const profW = t.filter(x => x.total_pnl > 0).length;
     const hasPnl = t.filter(x => x.total_pnl != null).length;
     const pnl   = t.reduce((sum, x) => sum + (x.total_pnl || 0), 0);
-    const avgDD = t.filter(x => x.max_drawdown).reduce((sum, x) => sum + x.max_drawdown, 0) /
-                  (t.filter(x => x.max_drawdown).length || 1);
+    const ptsArr = t.map(x => x.points).filter(v => v != null);
+    const pts   = ptsArr.reduce((sum, v) => sum + v, 0);
     const tpRate   = closed.length ? ((tpW / closed.length) * 100).toFixed(0) + '%' : '—';
     const profRate = hasPnl ? ((profW / hasPnl) * 100).toFixed(0) + '%' : '—';
     const pnlClass = pnl >= 0 ? 'pos' : 'neg';
+    const ptsClass = pts >= 0 ? 'pos' : 'neg';
     tbody.innerHTML += `
       <tr>
         <td>${s}</td>
         <td>${closed.length}</td>
         <td><span style="color:var(--bull)">${profRate}</span> <span style="color:var(--text-dim);font-size:11px">/ TP ${tpRate}</span></td>
         <td class="${pnlClass}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
-        <td>${t.filter(x => x.max_drawdown).length ? '$' + avgDD.toFixed(2) : '—'}</td>
+        <td class="${ptsArr.length ? ptsClass : ''}">${ptsArr.length ? (pts >= 0 ? '+' : '') + Math.round(pts).toLocaleString() : '—'}</td>
       </tr>`;
   });
 }
@@ -754,6 +782,8 @@ function renderHoldDuration(trades) {
 // ── Main render ────────────────────────────────────────────────────────────────
 let allDashboardData = [];
 let currentRange = 'all';
+let currentTrades = [];        // last-filtered set, for chart re-renders (equity toggle)
+let equityMode = 'usd';        // 'usd' | 'pts' — equity curve unit
 
 // Map a v_trades_unified row into the shape the rest of the dashboard
 // expects (date, result, positions[], etc). Manual trades keep their TP/SL/BE/
@@ -781,6 +811,7 @@ function normalizeUnifiedRow(r) {
     bias_m5: r.bias_m5,
     sl_level: r.sl_level,
     max_drawdown: r.max_drawdown,
+    points: r.points != null ? Number(r.points) : null,
     positions: count > 0 ? new Array(count) : [],
   };
 }
@@ -806,6 +837,7 @@ async function loadDashboard() {
 function renderDashboard(range) {
   currentRange = range;
   const trades = filterByRange(allDashboardData, range);
+  currentTrades = trades;
   renderProgress(trades, allDashboardData);
   renderKPIs(trades);
   renderRiskAnalysis(trades);
