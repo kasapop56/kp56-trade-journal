@@ -1,9 +1,15 @@
 -- ============================================================================
--- Points column for v_trades_unified  (2026-08-13)
+-- Points column + bias passthrough for v_trades_unified  (2026-08-13)
 -- ----------------------------------------------------------------------------
--- Adds a lot-independent "points" measure so trade quality can be judged apart
--- from position sizing (user varies lot 0.05–0.3). USD stays untouched — points
--- is an ADDITIONAL dimension, not a replacement.
+-- Two view fixes, no data added:
+--
+--   1. Adds a lot-independent "points" measure so trade quality can be judged
+--      apart from position sizing (user varies lot 0.05–0.3). USD stays
+--      untouched — points is an ADDITIONAL dimension, not a replacement.
+--   2. Passes through bias_m15 / bias_m5 for MT5 rows. mt5_trades already
+--      stores these (populated on every synced trade) but the old view nulled
+--      them, leaving the Bias Win Rate chart empty. Now surfaced as bias_h1 /
+--      bias_m5 (same slots the manual side uses).
 --
 --   1 point = $0.01 of XAUUSD price (MT5 2-digit point). A $1.00 gold move = 100
 --   points. Contract size 100 oz/lot is irrelevant here — points is pure price
@@ -77,8 +83,8 @@ UNION ALL
     mt.symbol,
     mt.volume,
     NULL::text AS session,
-    NULL::text AS bias_h1,
-    NULL::text AS bias_m5,
+    mt.bias_m15 AS bias_h1,
+    mt.bias_m5 AS bias_m5,
     NULL::text AS manual_result,
     mt.sl AS sl_level,
     NULL::numeric AS max_drawdown,
