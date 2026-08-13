@@ -273,39 +273,6 @@ function renderDayOfWeek(trades) {
   });
 }
 
-// ── Drawdown vs P&L Scatter ────────────────────────────────────────────────────
-function renderScatter(trades) {
-  destroyChart('scatter');
-  const points = trades.filter(t => t.max_drawdown && t.total_pnl != null).map(t => ({
-    x: t.max_drawdown,
-    y: t.total_pnl,
-    result: t.result,
-  }));
-  if (!points.length) return;
-
-  const colorMap = { TP: CHART_DEFAULTS.bull, SL: CHART_DEFAULTS.bear, BE: CHART_DEFAULTS.blue, MANUAL: CHART_DEFAULTS.gold };
-
-  charts.scatter = new Chart(document.getElementById('scatterChart').getContext('2d'), {
-    type: 'scatter',
-    data: {
-      datasets: [{
-        label: 'Trades',
-        data: points,
-        backgroundColor: points.map(p => colorMap[p.result] || CHART_DEFAULTS.dim),
-        pointRadius: 6,
-        pointHoverRadius: 8,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false },
-        tooltip: { callbacks: { label: ctx => `DD: $${ctx.raw.x} | P&L: $${ctx.raw.y}` } }
-      },
-      scales: baseScales('Max Drawdown (USD)', 'P&L (USD)'),
-    }
-  });
-}
-
 // ── Bias Accuracy ──────────────────────────────────────────────────────────────
 function renderBias(trades) {
   destroyChart('bias');
@@ -847,7 +814,6 @@ function renderDashboard(range) {
   renderSession(trades);
   renderDayOfWeek(trades);
   renderHoldDuration(trades);
-  renderScatter(trades);
   renderBias(trades);
   renderHour(trades);
   renderDirection(trades);
