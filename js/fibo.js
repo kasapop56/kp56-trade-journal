@@ -231,6 +231,46 @@ function renderFiboModeCmp(rows, outcomes) {
       <tbody>${row('Focus 2.0', agg.focus)}${row('Test 1.272', agg.test)}</tbody></table></div>`;
 }
 
+// SL-tolerance sweep — from the REAL losing entries, how many would have come
+// back to TP1 within the day if the SL had been wider, and how wide. Data, not
+// a guessed 550/604. heat_pts = deepest adverse (points) before the recovery =
+// the SL width you'd need. A loss "converts" to a win at width W when it later
+// reached TP1 (tp1_after_sl) and heat_pts <= W. Cost side: the losses that don't
+// convert now risk W instead of the current SL — the table shows both counts.
+function renderFiboSlSweep(rows, outcomes) {
+  const el = document.getElementById('fiboSlSweep');
+  if (!el) return;
+  const losses = [];
+  let base = null;
+  for (const r of rows) for (const side of ['S', 'B']) for (const mode of ['focus', 'test']) {
+    const o = outcomes[Number(r.bar_time) + '|' + side + '|' + mode];
+    if (!o || o.result !== 'loss' || o.heat_pts == null) continue;
+    losses.push(o);
+    if (o.sl_pts != null) base = base == null ? o.sl_pts : Math.min(base, o.sl_pts);
+  }
+  if (!losses.length) { el.innerHTML = ''; return; }
+  base = base || 550;
+  const recover = losses.filter(o => o.tp1_after_sl);
+  const heats = recover.map(o => o.heat_pts).sort((a, b) => a - b);
+  const median = heats.length ? heats[Math.floor(heats.length / 2)] : null;
+  const cands = [base, base + 200, base + 400, base + 600, base + 1000];
+  const rowHtml = W => {
+    const conv = recover.filter(o => o.heat_pts <= W).length;
+    const cls = conv > 0 ? 'fb-wr-good' : '';
+    return `<tr><td>${W}p${W === base ? ' (ตอนนี้)' : ''}</td>
+      <td class="fb-bd-num ${cls}">+${conv}</td>
+      <td class="fb-bd-num">${losses.length - conv}</td></tr>`;
+  };
+  const pct = Math.round(recover.length / losses.length * 100);
+  el.innerHTML = `<div class="fibo-bd-table">
+    <div class="fibo-bd-title">ทน SL แค่ไหนถึงกู้คืน — จากไม้เสียจริง ${losses.length} ไม้</div>
+    <div style="font-size:12px;color:var(--text-dim);margin:2px 0 8px">
+      กลับมาแตะ TP1 ในวันเดียวกัน <b>${recover.length}/${losses.length}</b> ไม้ (${pct}%)${heats.length ? ` · ต้องทน ${heats[0]}–${heats[heats.length - 1]}p (กลาง ${median}p)` : ''}<br>
+      <span style="opacity:.8">ยิ่งถ่าง SL = ได้ win เพิ่ม แต่ไม้ที่ไม่กลับมาก็เสียกว้างขึ้นเป็น SL ใหม่</span></div>
+    <table><thead><tr><th>SL width</th><th>เป็น win</th><th>เหลือ loss</th></tr></thead>
+      <tbody>${cands.map(rowHtml).join('')}</tbody></table></div>`;
+}
+
 // One line per entry mode: mode tag + status badge + (if entered) extent
 // "ไกลสุด TPn · ทน Np". Both Focus and Test are tracked for every side now.
 function modeLine(r, side, mode, outcomes) {
@@ -300,6 +340,7 @@ async function renderFibo() {
     renderFiboStats(rows, outcomes);
     renderFiboBreakdown(rows, outcomes);
     renderFiboModeCmp(rows, outcomes);
+    renderFiboSlSweep(rows, outcomes);
     if (!list) return;
     if (!rows.length) {
       list.innerHTML = '<div class="fibo-empty">ยังไม่มีกรอบในช่วงนี้ — พอ Pine ตีกรอบใหม่จะเด้งเข้ามาเอง</div>';

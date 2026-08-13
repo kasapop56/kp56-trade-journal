@@ -137,8 +137,10 @@ function replaySide(frame, side, mode, bars) {
     if (b.t <= frameT) continue;   // only bars after the frame was drawn
     seen++;
     if (status === 'pending') {
+      // Test now enters once close REACHES the zone edge and is still short of SL
+      // (was: close strictly inside the ±Z band). S: [zLo, sl) · B: (sl, zHi].
       const enter = isTest
-        ? (b.c >= zLo && b.c <= zHi)
+        ? (side === 'S' ? (b.c >= zLo && b.c < sl) : (b.c <= zHi && b.c > sl))
         : (side === 'S' ? b.h >= zLo : b.l <= zHi);
       if (enter) {
         status = 'entered'; entered_at = b.t;
@@ -162,9 +164,48 @@ function replaySide(frame, side, mode, bars) {
   }
 
   const best_tp = mfe == null ? 0 : bestTp(side, mfe, [tp1, near, mid, far]);
+
+  // ── "Endure past SL" analysis (A) ──────────────────────────────────────────
+  // Ignore the original SL and ask: how far against did price go before TP1 was
+  // finally reached, and did a LOSS actually recover? Answers "would a wider SL
+  // have won, and how wide?" purely from data — no guessing at 550/604/…
+  //   heat_pts     = worst adverse distance from the entry level, in POINTS, from
+  //                  entry until TP1 (uncapped by SL) = the minimum SL width that
+  //                  survives to the win. (Same unit as the SL input, so an SL
+  //                  sweep is a direct comparison.)
+  //   sl_pts       = the original SL width from entry, in points (for reference).
+  //   tp1_after_sl = a LOSS whose price later reached TP1 within the day.
+  //   recover_bars = bars from entry to that eventual TP1 (the hold you'd endure).
+  // Windowed to the entry's Bangkok trading day (the frame's natural intraday life).
+  const bkkDay = ms => Math.floor((ms + 7 * 3600e3) / 86400e3);
+  let heat_pts = null, tp1_after_sl = false, recover_bars = null;
+  const sl_pts = Math.round(Math.abs(sl - lvl) / POINT);
+  if (entered_at != null) {
+    const eDay = bkkDay(entered_at);
+    let worst = null, firstTp1 = null, nBars = 0;
+    for (const b of bars) {
+      if (b.t < entered_at) continue;
+      if (b.t > entered_at && bkkDay(b.t) !== eDay) break;   // same-day window only
+      worst = worst == null
+        ? (side === 'S' ? b.h : b.l)
+        : (side === 'S' ? Math.max(worst, b.h) : Math.min(worst, b.l));
+      const hitTp = side === 'S' ? b.l <= tp1 : b.h >= tp1;
+      if (hitTp) { firstTp1 = b.t; break; }   // reached TP1 with no SL in the way
+      nBars++;
+    }
+    // adverse distance from the entry level, in points
+    if (worst != null) heat_pts = Math.round((side === 'S' ? worst - lvl : lvl - worst) / POINT);
+    if (result === 'loss' && firstTp1 != null && resolved_at != null && firstTp1 >= resolved_at) {
+      tp1_after_sl = true;
+      recover_bars = nBars;
+    }
+  }
+
   return {
     frame_id: frameT, side, mode, status, entered_at, resolved_at, result,
-    mfe, mae, best_tp, bars_seen: seen, updated_at: new Date().toISOString(),
+    mfe, mae, best_tp, bars_seen: seen,
+    heat_pts, sl_pts, tp1_after_sl, recover_bars,
+    updated_at: new Date().toISOString(),
   };
 }
 
