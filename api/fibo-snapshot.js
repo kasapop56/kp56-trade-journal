@@ -158,6 +158,26 @@ async function handleZone(res, p) {
   return res.status(200).json({ ok: true, type: 'ZONE', telegram_ok: !!tg.ok, telegram_message_id: tg.message_id ?? null });
 }
 
+// Actionable entry signal (Telegram only, no DB). Carries the full trade plan
+// (Entry/SL/TP1/TP3). Focus 2.0 = primary/safer; Test 1.272 = flagged as riskier.
+// Win/loss is still derived separately by /api/fibo-eval.
+function buildSignalMessage(p) {
+  const sym    = p.symbol || 'XAUUSD';
+  const isS    = p.side === 'S';
+  const dir    = isS ? '🔴 SELL ขาย' : '🟢 BUY ซื้อ';
+  const isTest = String(p.zone || '').indexOf('Test') >= 0;
+  const zone   = isTest ? '⚠️ Test 1.272 (เสี่ยงกว่า)' : 'Focus 2.0 (หลัก)';
+  const head   = isTest ? '⚠️ <b>Fibo — เข้าไม้ (aggressive)</b>' : '⚡️ <b>Fibo — เข้าไม้</b>';
+  const seq    = p.seq == null ? '?' : p.seq;
+  return `${head}\n${sym} · ${dir} · <b>Seq #${seq}</b>\nโซน ${zone}\n` +
+         `Entry ${fmt(p.entry)} · 🛑 SL ${fmt(p.sl)}\n🎯 TP1 ${fmt(p.tp1)} · TP3 ${fmt(p.tp3)}`;
+}
+
+async function handleSignal(res, p) {
+  const tg = await pingTelegram(buildSignalMessage(p));
+  return res.status(200).json({ ok: true, type: 'SIGNAL', telegram_ok: !!tg.ok, telegram_message_id: tg.message_id ?? null });
+}
+
 // Resolve the Telegram bot/chat once (Fibo override, else reuse the plan bot).
 function telegramTarget() {
   const chatId = process.env.FIBO_TELEGRAM_CHAT_ID || process.env.TELEGRAM_PLAN_CHAT_ID;
@@ -255,6 +275,7 @@ module.exports = async (req, res) => {
   // Route by type: lifecycle events go to fibo_events, everything else is a frame.
   const type = String(p.type || 'SNAPSHOT').toUpperCase();
   if (type === 'ZONE') return handleZone(res, p);      // heads-up ping, no DB
+  if (type === 'SIGNAL') return handleSignal(res, p);  // entry signal, Telegram only
   if (type === 'ENTER' || type === 'WIN' || type === 'LOSS') {
     if (!p.event) p.event = type;   // Pine sends type; keep event in sync
     return handleEvent(res, p);
