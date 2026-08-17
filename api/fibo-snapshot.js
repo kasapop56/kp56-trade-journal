@@ -10,6 +10,7 @@
 //     "symbol":     "XAUUSD", "tf": "15",
 //     "seq":        1, "frame_no": 12,
 //     "entry_mode": "Focus 2.0", "zone_pts": 100,
+//     "frame_mode": "SYM"|"DIR", "leg_dir": "UP"|"DOWN", "active_side": "S"|"B"|"BOTH",
 //     "price":      3345.67, "bar_time": 1723200000000,
 //     "fh": .., "fl": .., "mid": ..,
 //     "s_focus": .., "s_test": .., "s_tp1": .., "s_tp3": .., "s_sl": ..,
@@ -288,6 +289,9 @@ module.exports = async (req, res) => {
     seq:        num(p.seq),
     frame_no:   num(p.frame_no),
     entry_mode: p.entry_mode ? String(p.entry_mode) : null,
+    frame_mode: p.frame_mode ? String(p.frame_mode) : null,   // "SYM" | "DIR"
+    leg_dir:    p.leg_dir ? String(p.leg_dir) : null,          // "UP" | "DOWN"
+    active_side: p.active_side ? String(p.active_side) : null, // "S" | "B" | "BOTH"
     zone_pts:   num(p.zone_pts),
     price:      num(p.price),
     bar_time:   num(p.bar_time),

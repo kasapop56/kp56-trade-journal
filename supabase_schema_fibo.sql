@@ -21,6 +21,9 @@ create table public.fibo_snapshots (
   seq         int,                        -- ลำดับกรอบในวัน (reset รายวัน)
   frame_no    bigint,                     -- ตัวนับกรอบสะสม (unique per chart session)
   entry_mode  text,                       -- "Focus 2.0" | "Test 1.272"
+  frame_mode  text,                       -- "SYM" (สมมาตร เดิม) | "DIR" (fibo ตามทิศขา)
+  leg_dir     text,                       -- "UP" | "DOWN" (ทิศขา swing ล่าสุด)
+  active_side text,                       -- "S" | "B" | "BOTH" (ฝั่งที่ active ในโหมด DIR)
   zone_pts    numeric,
   price       numeric,                    -- close ตอนตีกรอบ
   bar_time    bigint,                     -- ms epoch ของแท่งที่ตีกรอบ (Pine time)
