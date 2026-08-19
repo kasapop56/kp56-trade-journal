@@ -238,12 +238,31 @@ Rules:
 - When price is mid-range with conflicting bias, the correct call is often "no trade — wait for the edge."
 - Keep it mobile-readable and free of filler. End with one brief discipline reminder.`;
 
-// Ask for a compact, parseable shape without being rigid: first line = headline,
-// a CALL: line we can parse, then the read/plan. Thai output (trader reads Thai).
-const OUTPUT_HINT = `ตอบเป็นภาษาไทย สั้น อ่านบนมือถือได้. รูปแบบ:
-บรรทัดแรก = พาดหัวสั้น 1 บรรทัด
-บรรทัดที่สอง = "CALL: Buy" หรือ "CALL: Sell" หรือ "CALL: No trade"
-จากนั้น = อ่านสถานการณ์ + แผน (Entry/SL/TP + partial) + สิ่งที่ทำให้ setup เสีย (invalidation) + เตือนวินัย 1 บรรทัด`;
+// Scannable mobile format. HARD RULES: Thai, no markdown (no **, no #, no -),
+// very short lines, use the exact emoji section labels below so the message
+// reads as bite-size blocks on a phone. Parsed downstream (CALL line + first
+// line = headline) then reformatted for Telegram/dashboard.
+const OUTPUT_HINT = `ตอบเป็นภาษาไทย สั้นและสแกนง่ายบนมือถือ.
+ห้ามใช้ markdown (ห้าม ** ## หรือ -). แต่ละบรรทัดสั้น. รวมทั้งหมดไม่เกิน ~14 บรรทัด.
+ใช้รูปแบบนี้เป๊ะ ๆ ตามลำดับ:
+
+CALL: Buy | Sell | No trade
+<พาดหัวสั้นมาก 1 บรรทัด ไม่มี emoji>
+
+📍 อ่าน
+<1-2 ประโยคสั้น>
+
+🎯 แผน
+🔴 Sell <โซน>
+   SL <x> · TP1 <x> ปิด50% · TP2 <x>
+🟢 Buy <โซน>
+   SL <x> · TP1 <x> ปิด50% · TP2 <x>
+(ใส่เฉพาะฝั่งที่มีจริง ถ้า No trade บอกสั้น ๆ ว่ารออะไร)
+
+🛑 เสียเมื่อ
+<invalidation สั้น>
+
+⚠️ <เตือนวินัย 1 บรรทัด>`;
 
 async function callClaude(state, trigger) {
   const client = getAnthropic();
@@ -287,15 +306,27 @@ async function callClaude(state, trigger) {
   for (const block of resp.content) if (block.type === 'text') text += block.text;
   text = text.trim();
 
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  const headline = lines[0] || 'อัปเดตตลาด';
+  // strip any stray markdown the model slips in (Telegram HTML ignores it)
+  const demark = (s) => String(s)
+    .replace(/\*\*(.*?)\*\*/g, '$1')   // **bold** → bold
+    .replace(/`([^`]*)`/g, '$1')       // `code` → code
+    .replace(/^\s*#{1,6}\s*/gm, '')    // ## headings
+    .replace(/^\s*[-*]\s+/gm, '');     // - / * bullet markers (we use emojis)
+
+  let lines = text.split(/\r?\n/);
+
+  // CALL: line → chip; then remove it from the body
   const callLine = lines.find(l => /^\s*CALL:/i.test(l)) || '';
   let bias_call = null;
   if (/no\s*trade|ไม่เทรด|ไม่เข้า/i.test(callLine)) bias_call = 'No trade';
   else if (/\bbuy\b|ซื้อ/i.test(callLine)) bias_call = 'Buy';
   else if (/\bsell\b|ขาย/i.test(callLine)) bias_call = 'Sell';
-  // strip the CALL: line from the visible message (surfaced as a chip instead)
-  const message = lines.filter(l => !/^\s*CALL:/i.test(l)).join('\n').trim() || text;
+  lines = lines.filter(l => !/^\s*CALL:/i.test(l));
+
+  // first non-empty line = headline; the rest = body (no duplication anywhere)
+  while (lines.length && !lines[0].trim()) lines.shift();
+  const headline = demark(lines.shift() || 'อัปเดตตลาด').trim() || 'อัปเดตตลาด';
+  const message = demark(lines.join('\n')).trim() || headline;
 
   return {
     headline, message, bias_call,
@@ -330,12 +361,18 @@ const TRIGGER_TH = {
 };
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
+const CALL_EMOJI = { 'Buy': '🟢', 'Sell': '🔴', 'No trade': '⚪️' };
+
 function buildTelegramMessage(commentary, state, trigger) {
   const badge = TRIGGER_TH[trigger.trigger_type] || trigger.trigger_type;
-  const call = commentary.bias_call ? ` · <b>${esc(commentary.bias_call)}</b>` : '';
+  const em = CALL_EMOJI[commentary.bias_call] || '';
+  const call = commentary.bias_call ? ` · ${em} <b>${esc(commentary.bias_call)}</b>` : '';
+  const px = state.price == null ? '–' : esc(state.price);
   return `🤖 <b>โคไพลอต</b> · ${esc(badge)}${call}\n` +
-         `${esc(state.symbol)} @ <b>${state.price == null ? '–' : esc(state.price)}</b>\n\n` +
-         `<b>${esc(commentary.headline)}</b>\n${esc(commentary.message)}`;
+         `${esc(state.symbol)} @ <b>${px}</b>\n` +
+         `➖➖➖➖➖➖\n` +
+         `<b>${esc(commentary.headline)}</b>\n\n` +
+         `${esc(commentary.message)}`;
 }
 
 // ── orchestrator ───────────────────────────────────────────────────────────────
