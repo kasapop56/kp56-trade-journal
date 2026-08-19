@@ -55,10 +55,10 @@ function round(n, d = 2) {
 async function buildState(db) {
   const [sitRes, fiboRes] = await Promise.all([
     db.from('market_sitreps')
-      .select('id, created_at, symbol, price, bias_m15, bias_m5, vp_position, poc, vah, val, ppoc, pvah, pval, supply_zones, demand_zones')
+      .select('id, created_at, symbol, price, bias_m15, bias_m5, vp_position, poc, vah, val, ppoc, pvah, pval, htf_conf, h1_count, ob_summary, supply_zones, demand_zones')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     db.from('fibo_snapshots')
-      .select('id, created_at, symbol, price, active_side, entry_mode, s_focus, s_test, s_tp1, s_sl, b_focus, b_test, b_tp1, b_sl, fh, fl, mid')
+      .select('id, created_at, symbol, price, active_side, entry_mode, frame_mode, leg_dir, s_focus, s_test, s_tp1, s_sl, b_focus, b_test, b_tp1, b_sl, fh, fl, mid')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (sitRes.error && sitRes.error.code !== 'PGRST116') throw sitRes.error;
@@ -317,7 +317,17 @@ Rules:
 - When price is mid-range with conflicting bias, the correct call is often "no trade — wait for the edge."
 - Keep it mobile-readable and free of filler. End with one brief discipline reminder.
 
-LIVE POSITIONS: If the trader already has open positions (provided as "positions"), the read is about MANAGING them, not hunting new entries. For each position judge:
+MARKET STRUCTURE (read this first, every time): synthesize Mario + Fibo into ONE structural picture before any plan. Use the "structure" block:
+- HTF direction: M15/M5 bias + Fibo leg direction (fibo_leg_dir UP/DOWN = current swing) + which side Fibo is active (S=looking to sell above, B=looking to buy below). Say whether they agree or conflict.
+- Structure state from Mario zone tags: BOS = trend continuation, CHoCH = potential reversal/shift. Note the freshest BOS/CHoCH near price.
+- Where price sits in value: vs POC/VAH/VAL (today) and prev-day ppoc/pvah/pval. Above VAH = premium, below VAL = discount, at POC = balance/mid.
+- Fibo frame: price inside the frame (high/low/mid) tells premium vs discount within the swing.
+Lead the read with this structural sentence, THEN the zone-level plan. When Mario and Fibo disagree, say so and favor the higher-timeframe / higher-confluence side.
+
+LIVE POSITIONS: If the trader already has open positions (provided as "positions"), the read is about MANAGING them, not hunting new entries. FIRST compare each position to the structure above using with_m15_bias / with_fibo_leg and its entry location:
+- Alignment: is the position WITH structure (with the M15 bias and Fibo leg) or AGAINST it? A with-structure trade gets more room; an against-structure (counter-trend) trade should be managed tighter and taken partial faster.
+- Entry quality: was it entered at a zone edge (good) or mid-range/at POC (chasing)? Say it plainly.
+Then for each position judge:
 - SL placement — a stop sitting INSIDE an opposing zone is likely to be wicked; suggest moving it just beyond the zone / swept wick. If a position has NO stop (has_sl false), that is the #1 priority — tell them to set one now.
 - TP placement — a target parked in thin air beyond POC/into the next zone is greedy; suggest pulling it to the realistic zone edge. Flag when TP1 is close and a partial is due.
 - R:R & risk — call out sub-1R setups and stops that are unreasonably wide/tight for the structure.
@@ -336,8 +346,9 @@ const OUTPUT_HINT = `ตอบเป็นภาษาไทย สั้นแ�
 CALL: Buy | Sell | No trade
 <พาดหัวสั้นมาก 1 บรรทัด ไม่มี emoji>
 
-📍 อ่าน
-<1-2 ประโยคสั้น>
+📍 อ่าน (โครงสร้าง)
+<ทิศ HTF: M15/M5 + Fibo leg + ฝั่ง active · โครงสร้าง BOS/CHoCH · ราคาอยู่ตรงไหนของ value (POC/VAH/VAL, พรีเมียม/ดิสเคานต์)>
+<Mario กับ Fibo เห็นตรงหรือขัดกัน>
 
 🎯 แผน
 🔴 Sell <โซน>
@@ -351,20 +362,53 @@ CALL: Buy | Sell | No trade
 
 ⚠️ <เตือนวินัย 1 บรรทัด>`;
 
+// buy/sell direction implied by a bias/trend/leg word (Bull/Bear/UP/DOWN/…)
+function dirOf(s) {
+  const v = String(s || '').toLowerCase();
+  if (v.startsWith('bull') || v === 'up' || v.startsWith('buy')) return 'buy';
+  if (v.startsWith('bear') || v === 'down' || v.startsWith('sell')) return 'sell';
+  return null;
+}
+
 async function callClaude(state, trigger) {
   const client = getAnthropic();
+
+  // structure synthesis (Mario + Fibo) — the "how is the market built right now" layer
+  const legDir = state.fibo ? state.fibo.leg_dir : null;                 // UP/DOWN swing
+  const structure = (state.sitrep || state.fibo) ? {
+    htf_bias_m15: state.bias_m15, bias_m5: state.bias_m5,
+    htf_confluence: state.sitrep ? state.sitrep.htf_conf : null,
+    h1_zone_count: state.sitrep ? state.sitrep.h1_count : null,
+    ob_summary: state.sitrep ? state.sitrep.ob_summary : null,
+    value_area: { poc: state.poc, vah: state.vah, val: state.val, price_position: state.vp_position },
+    prev_day_value: state.sitrep ? { ppoc: num(state.sitrep.ppoc), pvah: num(state.sitrep.pvah), pval: num(state.sitrep.pval) } : null,
+    fibo_leg_dir: legDir, fibo_active_side: state.fibo_side,
+    fibo_frame: state.fibo ? { high: state.fibo.fh, low: state.fibo.fl, mid: state.fibo.mid, mode: state.fibo.frame_mode } : null,
+  } : null;
+
+  // per-position alignment vs structure (with/against M15 bias + Fibo swing leg)
+  const posList = (state.pos && state.pos.count) ? state.pos.rows.map(p => {
+    const m15d = dirOf(state.bias_m15), legd = dirOf(legDir);
+    return {
+      ...p,
+      with_m15_bias: m15d ? (p.dir === m15d) : null,
+      with_fibo_leg: legd ? (p.dir === legd) : null,
+    };
+  }) : null;
+
   const userPayload = {
     trigger: { type: trigger.trigger_type, reason: trigger.reason },
     symbol: state.symbol,
     price: state.price,
     freshness: { mt5_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min },
+    structure,
     mt5: state.sitrep ? {
       bias_m15: state.bias_m15, bias_m5: state.bias_m5, vp_position: state.vp_position,
       poc: state.poc, vah: state.vah, val: state.val,
       supply_zones: state.sitrep.supply_zones, demand_zones: state.sitrep.demand_zones,
     } : null,
     tradingview: state.fibo ? {
-      active_side: state.fibo_side, entry_mode: state.fibo.entry_mode,
+      active_side: state.fibo_side, entry_mode: state.fibo.entry_mode, leg_dir: legDir,
       s: { focus: state.fibo.s_focus, test: state.fibo.s_test, tp1: state.fibo.s_tp1, sl: state.fibo.s_sl },
       b: { focus: state.fibo.b_focus, test: state.fibo.b_test, tp1: state.fibo.b_tp1, sl: state.fibo.b_sl },
       frame: { high: state.fibo.fh, low: state.fibo.fl, mid: state.fibo.mid },
@@ -372,7 +416,7 @@ async function callClaude(state, trigger) {
     } : null,
     nearest_supply: state.nearestSupply,
     nearest_demand: state.nearestDemand,
-    positions: state.pos && state.pos.count ? { summary: { count: state.pos.count, net_side: state.pos.net_side, net_lots: state.pos.net_lots, buy_lots: state.pos.buy_lots, sell_lots: state.pos.sell_lots }, list: state.pos.rows } : null,
+    positions: posList ? { summary: { count: state.pos.count, net_side: state.pos.net_side, net_lots: state.pos.net_lots, buy_lots: state.pos.buy_lots, sell_lots: state.pos.sell_lots }, list: posList } : null,
     notes: [
       state.sitrep ? null : 'ไม่มี SITREP สด (MT5) — ใช้ Fibo อย่างเดียว',
       state.h4_trend ? null : 'ยังไม่มี H4 trend จาก TradingView',
@@ -384,7 +428,8 @@ async function callClaude(state, trigger) {
   const posHint = hasPos ? `\n\n⚠️ มีโพสิชั่นเปิดอยู่ ${state.pos.count} ไม้ (${state.pos.net_side}). โฟกัสที่การจัดการไม้ที่ถืออยู่ ไม่ใช่หาไม้ใหม่. เพิ่มส่วนนี้ก่อน 🎯 แผน:
 
 🧾 โพสิชั่นสด
-<ต่อไม้: dir lots @ entry · SL x (โอเค/ควรเลื่อนเป็น y) · TP x (โอเค/ควรเป็น y) · R:R · P&L ตอนนี้>
+<ต่อไม้: dir lots @ entry · ตาม/สวนโครงสร้าง (with_m15_bias/with_fibo_leg) · entry ขอบโซน/กลางกรอบ>
+<SL x (โอเค/ควรเลื่อนเป็น y) · TP x (โอเค/ควรเป็น y) · R:R · P&L ตอนนี้>
 <ถ้าไม่มี SL ให้เตือนเป็นอันดับแรก · ถ้าควร BE/ปิดบางส่วน/เลื่อน trail บอกชัด>
 หน่วยตัวเลข: P&L ใช้ค่า unrealized_usd (เงินบัญชีจริง $, คิดตาม lot แล้ว). ระยะถึง SL/TP บอกเป็น "ราคา" (sl_dist_price/tp_dist_price) และถ้าจะพูดเป็นเงินให้ใช้ risk_to_sl_usd / reward_to_tp_usd. ห้ามสับสนระหว่างระยะราคา กับเงิน $.
 
