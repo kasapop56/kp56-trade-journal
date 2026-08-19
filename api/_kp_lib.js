@@ -575,4 +575,4 @@ async function runAnalysis(db, opts = {}) {
   return { ok: true, fired: true, trigger_type: trigger.trigger_type, signal_id: sig.id, delivered, commentary, positions: state.pos, state_id: stateId };
 }
 
-module.exports = { getDb, buildState, evaluateTriggers, runAnalysis, callClaude, sendTelegram, CFG };
+module.exports = { getDb, getAnthropic, buildState, evaluateTriggers, runAnalysis, callClaude, sendTelegram, num, round, CFG };

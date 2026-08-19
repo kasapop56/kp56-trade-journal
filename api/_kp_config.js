@@ -56,4 +56,14 @@ module.exports = {
   // XAUUSD contract: $1 of price move × 1.0 lot = $100 account P&L (100 oz/lot).
   // Used to convert price distance → real account USD for P&L / risk / reward.
   usdPerDollarPerLot: 100,
+
+  // ── nightly report ───────────────────────────────────────────────────────────
+  // Daily retrospective (23:30 Asia/Bangkok via Vercel cron) grading the day's
+  // closed trades on 87464504: per-trade review, discipline, co-pilot loop check,
+  // lessons. Reads mt5_trades + trade_events + kp_signals; posts to Telegram.
+  reportEnabled: true,
+  reportTzOffsetHours: 7,     // Asia/Bangkok (no DST) — defines the "trading day"
+  reportMaxTrades: 60,        // safety cap on trades pulled per day
+  reportModel: process.env.COPILOT_REPORT_MODEL || null,   // null → use CFG.model
+  reportEffort: process.env.COPILOT_REPORT_EFFORT || 'medium',  // a bit deeper than intraday reads
 };
