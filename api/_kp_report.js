@@ -158,7 +158,7 @@ async function runReport(db, opts = {}) {
   const client = getAnthropic();
   const resp = await client.messages.create({
     model: CFG.reportModel || CFG.model,
-    max_tokens: 1400,
+    max_tokens: 2400,   // ample room for text even if the model thinks a little
     output_config: { effort: CFG.reportEffort },
     system: REPORT_SYSTEM,
     messages: [{ role: 'user', content: `${REPORT_OUTPUT}\n\nDAY DATA (JSON):\n${JSON.stringify(payload, null, 2)}` }],
@@ -166,6 +166,21 @@ async function runReport(db, opts = {}) {
   let body = '';
   for (const b of resp.content) if (b.type === 'text') body += b.text;
   body = body.replace(/\*\*(.*?)\*\*/g, '$1').replace(/^\s*#{1,6}\s*/gm, '').replace(/^\s*[-*]\s+/gm, '').trim();
+
+  // guard: never post a header-only message. If the model returned no text
+  // (e.g. thinking consumed the whole budget), fall back to a compact per-trade
+  // list built from the computed data so the report is still useful.
+  if (!body) {
+    console.warn('report: empty model text, stop_reason=', resp.stop_reason, 'usage=', JSON.stringify(resp.usage));
+    const em = { buy: '🟢', sell: '🔴' };
+    const lines = rows.map((r, i) => {
+      const s = r.pl_usd >= 0 ? '+' : '';
+      const end = r.outcome === 'SL_hit' ? 'โดน SL' : r.outcome === 'TP_hit' ? 'ได้ TP' : 'ปิดมือ';
+      return `${i + 1}) ${em[r.side] || ''} ${r.side} ${r.entry}→${r.exit} ${s}${r.pl_usd}$ · ${end}`;
+    });
+    body = `สรุปอัตโนมัติ (โมเดลไม่ส่งข้อความ)\n\n🔍 รายไม้\n${lines.join('\n')}\n\n` +
+           `🎯 SL ครบ ${summary.trades - summary.no_sl_count}/${summary.trades} · ถัว(ADD) ${summary.averaged_count} ครั้ง`;
+  }
 
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const sign = net >= 0 ? '+' : '';

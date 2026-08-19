@@ -65,5 +65,7 @@ module.exports = {
   reportTzOffsetHours: 7,     // Asia/Bangkok (no DST) — defines the "trading day"
   reportMaxTrades: 60,        // safety cap on trades pulled per day
   reportModel: process.env.COPILOT_REPORT_MODEL || null,   // null → use CFG.model
-  reportEffort: process.env.COPILOT_REPORT_EFFORT || 'medium',  // a bit deeper than intraday reads
+  // 'low' = minimal thinking so max_tokens goes to the visible text (medium/high
+  // thinking can eat the whole budget → empty body). Match the intraday reads.
+  reportEffort: process.env.COPILOT_REPORT_EFFORT || 'low',
 };
