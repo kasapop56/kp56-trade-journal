@@ -1,0 +1,2617 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2869
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 //+------------------------------------------------------------------+\
+//|                                            super Mario v5.mq5     |\
+//|           Engine 3 \'97 Confluence v3.0                               |\
+//|           SVP: Locked to M1 data (2-day only)                     |\
+//|           OB:  Primary TF (M5) + HTF Confirm Layer (M15)          |\
+//|           Confluence scoring + Dashboard + TG Alerts              |\
+//|           v3.0: Multi-TF OB + Situation Report                    |\
+//|           v5.1: Close-through mitigation + Touch Defense Bonus    |\
+//|           v5.53: Fix retest alert condition + Mitigation alert    |\
+//|                  + TG HTML escape hardening                       |\
+//|           v5.54: Periodic Full Rescan (OnCalculate timestamp)     |\
+//|           v5.55: Code cleanup A-D (dead code, unused params,      |\
+//|                  perf fixes, emergency rescan via PeriodicRescan) |\
+//|           v5.56: Phase 2 \'97 Confluence Decision Engine             |\
+//|           v5.57: Send GO+WARN, TMA=mean-reversion, opp-zone detect|\
+//|                  GV reader (TMA+Baby) + Decision Logic            |\
+//|                  + Dashboard Confluence Panel                     |\
+//|           v5.58: Dual Bias (Big Picture M15 + Local M5)           |\
+//|                  GetSwingBias() via swing arrays                  |\
+//|                  Entry/TP/SL in alert + Alert# counter            |\
+//|                  Fix DrawOB else-branch coordinate update         |\
+//|                  Fix OB_PeriodicRescan ID collision               |\
+//|                  Fix datetime cast warning                        |\
+//|           v5.59: HTF Layer 2 (H1) \'97 visible zones when no M5     |\
+//|                  HTF Layer 3 (H4) infrastructure prepared         |\
+//|                  GetHTFOverlapBonus extended: HTF1+HTF2 stack     |\
+//|                  BuildHTFDetail() for M15/H1/M15+H1 label        |\
+//|                  EMA bias unchanged (M5+M15 only)                 |\
+//|           v5.60: FIX 1-6 (OB cap, HTF2 touch, EMA threshold,     |\
+//|                  SVP neutral, HTF confirmed count, Entry dedup)   |\
+//|           v5.61: ML OB Logger \'97 \uc0\u3610 \u3633 \u3609 \u3607 \u3638 \u3585  OB lifecycle \u3621 \u3591  CSV\
+//|           v5.62: add 5 more headers                              |\
+//|                  \uc0\u3626 \u3635 \u3627 \u3619 \u3633 \u3610  Feature Importance / ML Scoring Analysis  |\
+//+------------------------------------------------------------------+\
+#property copyright   "Super Mario"\
+#property version     "5.62"\
+#property indicator_chart_window\
+#property indicator_plots 0\
+\
+//+------------------------------------------------------------------+\
+//| ENUMERATIONS                                                      |\
+//+------------------------------------------------------------------+\
+enum ENUM_OB_TYPE          \{ OB_BULLISH = 1, OB_BEARISH = -1 \};\
+enum ENUM_STRUCTURE_TYPE   \{ STRUCT_BOS = 1, STRUCT_CHOCH = 2 \};\
+enum ENUM_OB_STATUS        \{ OB_FRESH = 0, OB_TESTED_1 = 1, OB_MITIGATED = 2, OB_GHOST = 3 \};\
+enum ENUM_SESSION_TYPE     \{ SESSION_ASIA = 0, SESSION_LONDON = 1, SESSION_NEWYORK = 2 \};\
+enum ENUM_CONFLUENCE_TIER  \{ TIER_S = 0, TIER_1 = 1, TIER_2 = 2, TIER_3 = 3 \};\
+enum ENUM_LABEL_MODE      \{ LABEL_OFF = 0, LABEL_SHORT = 1, LABEL_FULL = 2 \};\
+enum ENUM_REPORT_FREQ     \{ RPT_OFF = 0, RPT_HOURLY = 1, RPT_SESSION = 2, RPT_BOTH = 3 \};\
+enum ENUM_CF_DECISION     \{ CF_GO = 0, CF_WARN = 1, CF_WAIT = 2, CF_SKIP = 3 \};\
+\
+//+------------------------------------------------------------------+\
+//| INPUT PARAMETERS                                                  |\
+//+------------------------------------------------------------------+\
+\
+// \uc0\u9472 \u9472 \u9472  Primary OB Engine \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  OB PRIMARY: Timeframe & Structure \u9552 \u9552 \u9552 "\
+input ENUM_TIMEFRAMES  InpOB_Timeframe      = PERIOD_M5;\
+input int              InpSwingStrength     = 5;\
+input bool             InpRequireFVG        = false;\
+input double           InpFVG_MinSize_Pts   = 20.0;\
+\
+input group "\uc0\u9552 \u9552 \u9552  OB PRIMARY: Order Block \u9552 \u9552 \u9552 "\
+input int              InpMaxOB_Count       = 20;\
+input int              InpLookback_Bars     = 500;\
+input int              InpMaxMitigations    = 0;\
+input int              InpTouchBonus_Score  = 5;\
+\
+input group "\uc0\u9552 \u9552 \u9552  GHOST ZONES (Mitigated History) \u9552 \u9552 \u9552 "\
+input bool             InpGhost_Enabled     = true;\
+input int              InpGhost_Max         = 10;\
+input color            InpGhost_Bull_Color  = C'30,60,30';\
+input color            InpGhost_Bear_Color  = C'60,30,30';\
+input double           InpOB_Extension_Pts  = 0.0;\
+\
+input group "\uc0\u9552 \u9552 \u9552  OB PRIMARY: Zone Filter \u9552 \u9552 \u9552 "\
+input double           InpMaxZone_Pts       = 0;\
+input double           InpMinZone_Pts       = 10.0;\
+\
+input group "\uc0\u9552 \u9552 \u9552  OB PRIMARY: Cluster \u9552 \u9552 \u9552 "\
+input double           InpClusterDist_Pts   = 600.0;\
+\
+// \uc0\u9472 \u9472 \u9472  HTF Confirm Layer 1 (M15) \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  HTF CONFIRM LAYER 1 (M15 \'97 Invisible) \u9552 \u9552 \u9552 "\
+input bool             InpHTF_Enabled       = true;\
+input ENUM_TIMEFRAMES  InpHTF_Confirm_TF    = PERIOD_M15;\
+input int              InpHTF_SwingStr      = 5;\
+input int              InpHTF_Lookback      = 300;\
+input int              InpHTF_MaxOB         = 15;\
+input int              InpHTF_Bonus_BOS     = 15;\
+input int              InpHTF_Bonus_CHoCH   = 20;\
+input int              InpHTF_MaxMitigations = 2;\
+input double           InpHTF_MinZone_Pts   = 10.0;\
+input double           InpHTF_MaxZone_Pts   = 0;\
+\
+// \uc0\u9472 \u9472 \u9472  HTF Layer 2 (H1) \'97 Visible \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  HTF LAYER 2 (H1 \'97 Visible when no M5 overlap) \u9552 \u9552 \u9552 "\
+input bool             InpHTF2_Enabled          = true;\
+input ENUM_TIMEFRAMES  InpHTF2_TF               = PERIOD_H1;\
+input int              InpHTF2_SwingStr          = 5;\
+input int              InpHTF2_Lookback          = 200;\
+input int              InpHTF2_MaxOB             = 10;\
+input int              InpHTF2_Bonus_BOS         = 20;\
+input int              InpHTF2_Bonus_CHoCH       = 28;\
+input double           InpHTF2_MinZone_Pts       = 50.0;\
+input double           InpHTF2_MaxZone_Pts       = 0;\
+input bool             InpHTF2_ShowZones         = true;\
+input double           InpHTF2_HideBuffer_Pts    = 150.0;\
+input color            InpHTF2_Bull_Color        = C'90,65,10';\
+input color            InpHTF2_Bear_Color        = C'90,20,20';\
+\
+// \uc0\u9472 \u9472 \u9472  HTF Layer 3 (H4 \'97 Reserved, Disabled) \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  HTF LAYER 3 (H4 \'97 Reserved, currently disabled) \u9552 \u9552 \u9552 "\
+input bool             InpHTF3_Enabled          = false;\
+input ENUM_TIMEFRAMES  InpHTF3_TF               = PERIOD_H4;\
+input int              InpHTF3_SwingStr          = 5;\
+input int              InpHTF3_Lookback          = 100;\
+input int              InpHTF3_MaxOB             = 8;\
+input int              InpHTF3_Bonus_BOS         = 28;\
+input int              InpHTF3_Bonus_CHoCH       = 35;\
+input double           InpHTF3_MinZone_Pts       = 100.0;\
+input double           InpHTF3_MaxZone_Pts       = 0;\
+\
+// \uc0\u9472 \u9472 \u9472  SVP Engine \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  SVP: Session Times (Server Time) \u9552 \u9552 \u9552 "\
+input int     InpAsia_StartH     = 1;\
+input int     InpAsia_EndH       = 9;\
+input int     InpLondon_StartH   = 9;\
+input int     InpLondon_EndH     = 17;\
+input int     InpNY_StartH       = 15;\
+input int     InpNY_EndH         = 23;\
+\
+input group "\uc0\u9552 \u9552 \u9552  SVP: Volume Profile \u9552 \u9552 \u9552 "\
+input int              InpRowSize_Points   = 50;\
+input double           InpVA_Percent       = 70.0;\
+\
+input group "\uc0\u9552 \u9552 \u9552  SVP: Display \u9552 \u9552 \u9552 "\
+input int              InpHistBars         = 40;\
+input color            InpAsia_Color       = C'40,120,40';\
+input color            InpLondon_Color     = C'40,40,180';\
+input color            InpNY_Color         = C'180,40,40';\
+input color            InpPOC_Color        = clrYellow;\
+input color            InpVAH_Color        = clrAqua;\
+input color            InpVAL_Color        = clrAqua;\
+input color            InpPrevPOC_Color    = C'120,120,0';\
+input color            InpPrevVA_Color     = C'0,80,80';\
+input bool             InpHistFill         = true;\
+input int              InpHistOffset       = 65;\
+input bool             InpShowPrevDay      = true;\
+\
+// \uc0\u9472 \u9472 \u9472  Confluence Scoring \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  CONFLUENCE: Scoring \u9552 \u9552 \u9552 "\
+input double  InpConfluence_Radius_Pts  = 300.0;\
+input int     InpTierS_Threshold        = 80;\
+input int     InpTier1_Threshold        = 60;\
+input int     InpTier2_Threshold        = 40;\
+\
+// \uc0\u9472 \u9472 \u9472  Visuals \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  VISUALS \u9552 \u9552 \u9552 "\
+input bool             InpOB_Fill           = false;\
+input int              InpBorderWidth       = 2;\
+input ENUM_LINE_STYLE  InpBorderStyle       = STYLE_SOLID;\
+input color            InpTierS_Color       = clrGold;\
+input color            InpTier1_Color       = clrDodgerBlue;\
+input color            InpTier2_Color       = clrMediumPurple;\
+input color            InpTier3_Bull_Color  = clrDarkGray;\
+input color            InpTier3_Bear_Color  = clrRosyBrown;\
+input color            InpTested_Color      = clrSlateGray;\
+input bool             InpShowBOS_Lines     = true;\
+input ENUM_LABEL_MODE  InpOB_LabelMode      = LABEL_SHORT;\
+input color            InpBOS_Color         = clrGray;\
+input color            InpCHoCH_Color       = clrGold;\
+\
+// \uc0\u9472 \u9472 \u9472  Dashboard \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  DASHBOARD \u9552 \u9552 \u9552 "\
+input bool             InpShowDashboard     = true;\
+input int              InpDashX             = 10;\
+input int              InpDashY             = 10;\
+input int              InpDashFontSize      = 8;\
+input int              InpDashMaxZones      = 5;\
+input color            InpDashText_Color    = clrWhite;\
+\
+// \uc0\u9472 \u9472 \u9472  MT5 Alerts \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  MT5 ALERTS (Popup + Push) \u9552 \u9552 \u9552 "\
+input bool             InpMT5_OB_New        = false;\
+input bool             InpMT5_Retest        = true;\
+input bool             InpMT5_Proximity     = true;\
+input bool             InpMT5_Sweep         = true;\
+input bool             InpMT5_Mitigated     = true;\
+input bool             InpMT5_SitRep        = false;\
+input bool             InpMT5_Push          = false;\
+\
+// \uc0\u9472 \u9472 \u9472  Telegram Alerts \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  TELEGRAM ALERTS \u9552 \u9552 \u9552 "\
+input bool             InpTG_Enabled        = false;\
+input string           InpTG_Prefix         = "CONF";\
+input bool             InpTG_TierS_Only     = false;\
+input bool             InpTG_OB_New         = false;\
+input bool             InpTG_Retest         = true;\
+input bool             InpTG_Proximity      = true;\
+input bool             InpTG_Sweep          = true;\
+input bool             InpTG_Mitigated      = true;\
+input bool             InpTG_SitRep         = true;\
+\
+// \uc0\u9472 \u9472 \u9472  Proximity Alert \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  PROXIMITY ALERT \u9552 \u9552 \u9552 "\
+input double           InpAlert_Proximity_Pts   = 100.0;\
+input ENUM_CONFLUENCE_TIER InpProximity_MinTier  = TIER_1;\
+\
+// \uc0\u9472 \u9472 \u9472  Sweep Alert \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  SWEEP ALERT \u9552 \u9552 \u9552 "\
+input double           InpAlert_Sweep_Pts       = 30.0;\
+input ENUM_CONFLUENCE_TIER InpSweep_MinTier      = TIER_2;\
+\
+// \uc0\u9472 \u9472 \u9472  Situation Report \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  SITUATION REPORT \u9552 \u9552 \u9552 "\
+input ENUM_REPORT_FREQ InpReport_Freq        = RPT_BOTH;\
+input int              InpReport_MaxZones     = 4;\
+input ENUM_CONFLUENCE_TIER InpReport_MinTier  = TIER_2;\
+input bool             InpReport_SVP_Context  = true;\
+input bool             InpReport_Plan         = true;\
+\
+// \uc0\u9472 \u9472 \u9472  Confluence Panel (Phase 2) \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  CONFLUENCE PANEL \u9552 \u9552 \u9552 "\
+input bool   InpCF_Enabled       = true;\
+input int    InpCF_SignalMaxBars  = 5;\
+input bool   InpCF_TG_GO_Only    = false;\
+\
+// \uc0\u9472 \u9472 \u9472  EMA Bias \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  EMA BIAS \u9552 \u9552 \u9552 "\
+input double InpEMA_Threshold_Pts = 50.0;\
+\
+// \uc0\u9472 \u9472 \u9472  Debug + ML \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+input group "\uc0\u9552 \u9552 \u9552  DEBUG / ML \u9552 \u9552 \u9552 "\
+input bool             InpDebugPrint        = false;\
+input bool             InpML_Logger         = true;     // ML Logger: \uc0\u3610 \u3633 \u3609 \u3607 \u3638 \u3585  OB lifecycle \u3621 \u3591  CSV\
+\
+//+------------------------------------------------------------------+\
+//| DATA STRUCTURES                                                    |\
+//+------------------------------------------------------------------+\
+struct SOB_Zone\
+\{\
+   long              id;\
+   ENUM_OB_TYPE      type;\
+   ENUM_STRUCTURE_TYPE structType;\
+   ENUM_OB_STATUS    status;\
+   double            high;\
+   double            low;\
+   double            poc;\
+   datetime          timeStart;\
+   datetime          breakTime;\
+   int               touchCount;\
+   datetime          lastTouchTime;\
+   bool              isCurrentlyInside;\
+   bool              hasFVG;\
+   double            fvgHigh;\
+   double            fvgLow;\
+   int               clusterSize;\
+   bool              clusterHidden;\
+   int               cfScore;\
+   ENUM_CONFLUENCE_TIER cfTier;\
+   string            cfDetail;\
+   bool              cfAlerted;\
+   bool              proximityAlerted;\
+   bool              sweepAlerted;\
+   bool              mitigatedAlerted;\
+   int               cfSVP_Locked;\
+   string            cfSVP_DetailLocked;\
+   int               cfHTF_Locked;\
+   string            cfHTF_DetailLocked;\
+   // \uc0\u9472 \u9472  ML Logger (v5.61) \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \
+   double            mlMaxBounce;\
+   double            mlPriceAtBirth;\
+   int               mlEmaBig;\
+   int               mlEmaLocal;\
+   int               mlSession;\
+   double            mlPOC;\
+   double            mlVAH;\
+   double            mlVAL;\
+   double            mlPrevPOC;\
+   double            mlDistToEMA;\
+  bool              mlLogged;\
+    double            mlATR;            // v5.62: ATR(M5) at birth (raw price, not pts)\
+    int               mlSpread;         // v5.62: spread in points at birth\
+    datetime          mlFirstTouchTime; // v5.62: time of first touch (0 = never touched)\
+    int               mlActiveOBCount;  // v5.62: how many OBs alive when this was born\
+ \};\
+\
+struct SSwingPoint\
+\{\
+   double   price;\
+   datetime time;\
+   int      barIndex;\
+   bool     broken;\
+\};\
+\
+struct SVP_Row\
+\{\
+   double   price;\
+   double   totalVol;\
+   double   asiaVol;\
+   double   londonVol;\
+   double   nyVol;\
+\};\
+\
+struct SSessionInfo\
+\{\
+   double   pocPrice;\
+   double   vahPrice;\
+   double   valPrice;\
+   double   totalVol;\
+   datetime tStart;\
+\};\
+\
+struct SDayProfile\
+\{\
+   datetime      date;\
+   double        dayHigh;\
+   double        dayLow;\
+   double        dayTotalVol;\
+   SVP_Row       rows[];\
+   int           rowCount;\
+   double        compositePOC;\
+   double        compositeVAH;\
+   double        compositeVAL;\
+   SSessionInfo  sessions[3];\
+   bool          isToday;\
+   datetime      firstBarTime;\
+\};\
+\
+//+------------------------------------------------------------------+\
+//| ML LOGGER INCLUDE (must be after struct/enum definitions)         |\
+//+------------------------------------------------------------------+\
+#include "ML_OBLogger.mqh"\
+\
+//+------------------------------------------------------------------+\
+//| GLOBALS                                                            |\
+//+------------------------------------------------------------------+\
+\
+SOB_Zone    g_OB[];\
+SSwingPoint g_SwH[];\
+SSwingPoint g_SwL[];\
+int         g_OB_Count  = 0;\
+long        g_OB_Id     = 0;\
+int         g_Trend     = 0;\
+double      g_Pt;\
+\
+SOB_Zone    g_CF_OB[];\
+SSwingPoint g_CF_SwH[];\
+SSwingPoint g_CF_SwL[];\
+int         g_CF_OB_Count  = 0;\
+long        g_CF_OB_Id     = 0;\
+int         g_CF_Trend     = 0;\
+bool        g_CF_Ready     = false;\
+datetime    g_CF_LastBarTime = 0;\
+\
+SOB_Zone    g_HTF2_OB[];\
+SSwingPoint g_HTF2_SwH[];\
+SSwingPoint g_HTF2_SwL[];\
+int         g_HTF2_OB_Count   = 0;\
+long        g_HTF2_OB_Id      = 0;\
+int         g_HTF2_Trend      = 0;\
+bool        g_HTF2_Ready      = false;\
+datetime    g_HTF2_LastBarTime = 0;\
+\
+datetime    g_HTF_LastBarTime  = 0;\
+\
+SDayProfile g_Days[];\
+int         g_DayCount  = 0;\
+\
+int         g_PrevBars  = 0;\
+bool        g_SVP_Ready = false;\
+bool        g_OB_Ready  = false;\
+int         g_RetryCount = 0;\
+\
+int         g_stat_TierS = 0, g_stat_Tier1 = 0, g_stat_Tier2 = 0, g_stat_Tier3 = 0;\
+int         g_stat_TotalScored = 0;\
+double      g_stat_AvgScore    = 0;\
+int         g_stat_HTF_Confirmed = 0;\
+\
+SOB_Zone    g_Ghost[];\
+int         g_Ghost_Count = 0;\
+\
+int         g_RPT_LastHour     = -1;\
+ENUM_SESSION_TYPE g_RPT_LastSession = SESSION_ASIA;\
+bool        g_RPT_SessionInit  = false;\
+\
+datetime    g_LastRescanTime    = 0;\
+datetime    g_PeriodicRescanTime = 0;\
+\
+int g_EMA_Handle_HTF = INVALID_HANDLE;\
+int g_EMA_Handle_M5  = INVALID_HANDLE;\
+\
+ENUM_CF_DECISION g_cfDecision        = CF_SKIP;\
+datetime         g_cfLastAlertSigTime = 0;\
+double           g_cfLastAlertEntry   = 0.0;\
+string           g_cf_BiasStr  = "";\
+string           g_cf_SVPStr   = "";\
+string           g_cf_ZoneStr  = "";\
+string           g_cf_TMAStr   = "";\
+string           g_cf_BabyStr  = "";\
+string           g_cf_DecStr   = "";\
+string           g_cf_WarnStr  = "";\
+\
+int              g_BigBias   = 0;\
+int              g_LocalBias = 0;\
+\
+//+------------------------------------------------------------------+\
+int OnInit()\
+\{\
+   g_Pt = _Point;\
+\
+   ArrayResize(g_OB, 0, InpMaxOB_Count + 10);\
+   ArrayResize(g_SwH, 0, 200);\
+   ArrayResize(g_SwL, 0, 200);\
+\
+   ArrayResize(g_CF_OB, 0, InpHTF_MaxOB + 10);\
+   ArrayResize(g_CF_SwH, 0, 200);\
+   ArrayResize(g_CF_SwL, 0, 200);\
+\
+   ArrayResize(g_HTF2_OB, 0, InpHTF2_MaxOB + 10);\
+   ArrayResize(g_HTF2_SwH, 0, 200);\
+   ArrayResize(g_HTF2_SwL, 0, 200);\
+\
+   ArrayResize(g_Days, 0, 5);\
+\
+   g_SVP_Ready = false; g_OB_Ready = false; g_CF_Ready = false;\
+   g_HTF2_Ready = false;\
+   g_RetryCount = 0;\
+   g_PrevBars = 0;\
+   g_HTF_LastBarTime = 0; g_CF_LastBarTime = 0; g_HTF2_LastBarTime = 0;\
+   g_OB_Count = 0; g_OB_Id = 0; g_Trend = 0;\
+   g_CF_OB_Count = 0; g_CF_OB_Id = 0; g_CF_Trend = 0;\
+   g_HTF2_OB_Count = 0; g_HTF2_OB_Id = 0; g_HTF2_Trend = 0;\
+   g_DayCount = 0;\
+   g_Ghost_Count = 0;\
+   ArrayResize(g_Ghost, 0, InpGhost_Max + 5);\
+\
+   g_RPT_LastHour = -1;\
+   g_RPT_LastSession = SESSION_ASIA;\
+   g_RPT_SessionInit = false;\
+\
+   g_LastRescanTime    = 0;\
+   g_PeriodicRescanTime = 0;\
+\
+   g_cfDecision = CF_SKIP;\
+   g_cfLastAlertSigTime = (datetime)(long)(GlobalVariableCheck("MARIO_CF_LAST_ALERT") ? GlobalVariableGet("MARIO_CF_LAST_ALERT") : 0.0);\
+   g_cfLastAlertEntry   = GlobalVariableCheck("MARIO_CF_LAST_ENTRY") ? GlobalVariableGet("MARIO_CF_LAST_ENTRY") : 0.0;\
+   g_cf_BiasStr = ""; g_cf_SVPStr  = ""; g_cf_ZoneStr = "";\
+   g_cf_TMAStr  = ""; g_cf_BabyStr = ""; g_cf_DecStr  = "";\
+   g_BigBias = 0; g_LocalBias = 0;\
+\
+   g_EMA_Handle_HTF = iMA(_Symbol, InpHTF_Confirm_TF, 150, 0, MODE_EMA, PRICE_CLOSE);\
+   g_EMA_Handle_M5  = iMA(_Symbol, InpOB_Timeframe,   150, 0, MODE_EMA, PRICE_CLOSE);\
+\
+   if(InpHTF_Enabled && PeriodSeconds(InpHTF_Confirm_TF) <= PeriodSeconds(InpOB_Timeframe))\
+      Print("WARNING: HTF1 TF (", EnumToString(InpHTF_Confirm_TF),\
+            ") must be higher than Primary TF (", EnumToString(InpOB_Timeframe), "). HTF1 disabled.");\
+\
+   if(InpHTF2_Enabled)\
+   \{\
+      int minRef = InpHTF_Enabled ? PeriodSeconds(InpHTF_Confirm_TF) : PeriodSeconds(InpOB_Timeframe);\
+      if(PeriodSeconds(InpHTF2_TF) <= minRef)\
+         Print("WARNING: HTF2 TF (", EnumToString(InpHTF2_TF),\
+               ") must be higher than HTF1 (", EnumToString(InpHTF_Confirm_TF), "). HTF2 may not function correctly.");\
+   \}\
+\
+   string htf1Str = InpHTF_Enabled  ? EnumToString(InpHTF_Confirm_TF) : "OFF";\
+   string htf2Str = InpHTF2_Enabled ? EnumToString(InpHTF2_TF)        : "OFF";\
+   StringReplace(htf1Str, "PERIOD_", "");\
+   StringReplace(htf2Str, "PERIOD_", "");\
+   IndicatorSetString(INDICATOR_SHORTNAME,\
+      StringFormat("OB+SVP v5.62 [OB:%s HTF:%s H1:%s SVP:M1]",\
+         EnumToString(InpOB_Timeframe), htf1Str, htf2Str));\
+\
+   // v5.61: ML Logger init\
+   if(InpML_Logger) ML_InitCSV();\
+\
+   return(INIT_SUCCEEDED);\
+\}\
+\
+void OnDeinit(const int reason)\
+\{\
+   // v5.61: Flush alive OBs before shutdown\
+   if(InpML_Logger) ML_FlushAlive(g_OB, g_OB_Count, iClose(_Symbol, PERIOD_CURRENT, 0));\
+\
+   ObjectsDeleteAll(0, "OB_");\
+   ObjectsDeleteAll(0, "BOS_");\
+   ObjectsDeleteAll(0, "CHO_");\
+   ObjectsDeleteAll(0, "SVP_");\
+   ObjectsDeleteAll(0, "DSH_");\
+   ObjectsDeleteAll(0, "GH_");\
+   ObjectsDeleteAll(0, "H2_");\
+   Comment("");\
+   GlobalVariableSet("MARIO_CF_LAST_ALERT", (double)g_cfLastAlertSigTime);\
+   GlobalVariableSet("MARIO_CF_LAST_ENTRY", g_cfLastAlertEntry);\
+\
+   if(g_EMA_Handle_HTF != INVALID_HANDLE) IndicatorRelease(g_EMA_Handle_HTF);\
+   if(g_EMA_Handle_M5  != INVALID_HANDLE) IndicatorRelease(g_EMA_Handle_M5);\
+\}\
+\
+//+------------------------------------------------------------------+\
+int OnCalculate(const int rates_total, const int prev_calculated,\
+                const datetime &time[], const double &open[],\
+                const double &high[], const double &low[],\
+                const double &close[], const long &tick_volume[],\
+                const long &volume[], const int &spread[])\
+\{\
+   if(rates_total < 50) return(rates_total);\
+\
+   ArraySetAsSeries(time, true);\
+   ArraySetAsSeries(open, true);\
+   ArraySetAsSeries(high, true);\
+   ArraySetAsSeries(low, true);\
+   ArraySetAsSeries(close, true);\
+\
+   bool htfValid  = InpHTF_Enabled &&\
+                    PeriodSeconds(InpHTF_Confirm_TF) > PeriodSeconds(InpOB_Timeframe);\
+   bool htf2Valid = InpHTF2_Enabled &&\
+                    PeriodSeconds(InpHTF2_TF) > PeriodSeconds(InpHTF_Confirm_TF);\
+\
+   //=== INITIAL FULL SCAN ===\
+   bool needHTF2 = htf2Valid && !g_HTF2_Ready;\
+   if(!g_SVP_Ready || !g_OB_Ready || (htfValid && !g_CF_Ready) || needHTF2)\
+   \{\
+      g_RetryCount++;\
+\
+      if(!g_SVP_Ready)\
+      \{\
+         SVP_FullRebuild();\
+         if(g_DayCount > 0) \{ g_SVP_Ready = true; Print("SVP v3.0: Ready \'97 ", g_DayCount, " trading days loaded from M1"); \}\
+         else if(g_RetryCount <= 3) Print("SVP v3.0: Waiting for M1 data... (attempt ", g_RetryCount, ")");\
+      \}\
+\
+      if(!g_OB_Ready)\
+      \{\
+         bool dataLoaded = OB_FullScanHTF();\
+         if(dataLoaded)\
+         \{\
+            g_OB_Ready = true;\
+            OB_ClusterAnalysis();\
+            OB_PostScanM1Mitigation();\
+            Print("OB v3.0 PRIMARY: Ready \'97 ", g_OB_Count, " active zones on ", EnumToString(InpOB_Timeframe));\
+         \}\
+         else if(g_RetryCount <= 5) Print("OB v3.0: Waiting for ", EnumToString(InpOB_Timeframe), " data...");\
+         else \{ g_OB_Ready = true; Print("OB v3.0: WARNING \'97 Could not load primary TF data."); \}\
+      \}\
+\
+      if(htfValid && !g_CF_Ready)\
+      \{\
+         bool cfLoaded = CF_FullScan();\
+         if(cfLoaded)\
+         \{\
+            g_CF_Ready = true;\
+            Print("HTF1 CONFIRM: Ready \'97 ", g_CF_OB_Count, " shadow zones on ", EnumToString(InpHTF_Confirm_TF));\
+         \}\
+         else if(g_RetryCount <= 5) Print("HTF1 CONFIRM: Waiting for ", EnumToString(InpHTF_Confirm_TF), " data...");\
+         else \{ g_CF_Ready = true; Print("HTF1 CONFIRM: WARNING \'97 Could not load data."); \}\
+      \}\
+\
+      if(htf2Valid && !g_HTF2_Ready)\
+      \{\
+         bool htf2Loaded = HTF2_FullScan();\
+         if(htf2Loaded)\
+         \{\
+            g_HTF2_Ready = true;\
+            Print("HTF2 (H1): Ready \'97 ", g_HTF2_OB_Count, " zones on ", EnumToString(InpHTF2_TF));\
+         \}\
+         else if(g_RetryCount <= 5) Print("HTF2: Waiting for ", EnumToString(InpHTF2_TF), " data...");\
+         else \{ g_HTF2_Ready = true; Print("HTF2: WARNING \'97 Could not load data."); \}\
+      \}\
+\
+      bool allReady = g_SVP_Ready && g_OB_Ready &&\
+                      (!htfValid  || g_CF_Ready) &&\
+                      (!htf2Valid || g_HTF2_Ready);\
+      if(allReady)\
+      \{\
+         ScoreAllOBs();\
+         g_PrevBars            = rates_total;\
+         g_HTF_LastBarTime     = iTime(_Symbol, InpOB_Timeframe, 0);\
+         g_PeriodicRescanTime  = TimeCurrent();\
+         if(htfValid)  g_CF_LastBarTime   = iTime(_Symbol, InpHTF_Confirm_TF, 0);\
+         if(htf2Valid) g_HTF2_LastBarTime  = iTime(_Symbol, InpHTF2_TF, 0);\
+         if(InpCF_Enabled) CF_Update(close[0], time[0]);\
+         DrawAll(time[0]);\
+\
+         Print("Confluence v5.62: READY \'97 Primary=", g_OB_Count, " (", EnumToString(InpOB_Timeframe), ")",\
+               " HTF1=", g_CF_OB_Count, " (", EnumToString(InpHTF_Confirm_TF), ")",\
+               " HTF2=", g_HTF2_OB_Count, " (", EnumToString(InpHTF2_TF), ")",\
+               " Days=", g_DayCount,\
+               " | S:", g_stat_TierS, " T1:", g_stat_Tier1,\
+               " T2:", g_stat_Tier2, " T3:", g_stat_Tier3,\
+               " HTF_Conf:", g_stat_HTF_Confirmed,\
+               " ML:", (InpML_Logger ? "ON" : "OFF"));\
+      \}\
+      return(rates_total);\
+   \}\
+\
+   //=== NEW BAR UPDATE ===\
+   if(g_PrevBars == rates_total) return(rates_total);\
+   g_PrevBars = rates_total;\
+\
+   // v5.61: Update max bounce for all tracked OBs\
+   if(InpML_Logger) ML_UpdateBounce(g_OB, g_OB_Count, high[0], low[0]);\
+\
+   SVP_FullRebuild();\
+\
+   datetime now = TimeCurrent();\
+   bool didPeriodicRescan = false;\
+\
+   if(now - g_PeriodicRescanTime >= (datetime)PeriodSeconds(InpOB_Timeframe))\
+   \{\
+      g_PeriodicRescanTime = now;\
+      OB_PeriodicRescan();\
+      didPeriodicRescan = true;\
+   \}\
+\
+   if(!didPeriodicRescan)\
+   \{\
+      datetime htfLastBar = iTime(_Symbol, InpOB_Timeframe, 0);\
+      if(htfLastBar > g_HTF_LastBarTime && g_HTF_LastBarTime > 0)\
+      \{\
+         OB_IncrementalHTF();\
+         g_HTF_LastBarTime = htfLastBar;\
+      \}\
+\
+      if(htfValid)\
+      \{\
+         datetime cfLastBar = iTime(_Symbol, InpHTF_Confirm_TF, 0);\
+         if(cfLastBar > g_CF_LastBarTime && g_CF_LastBarTime > 0)\
+         \{\
+            CF_Incremental();\
+            g_CF_LastBarTime = cfLastBar;\
+         \}\
+         CF_CheckMitigationCurrent(high[0], low[0], close[0], time[0]);\
+         CF_GarbageCollect();\
+      \}\
+\
+      if(htf2Valid && g_HTF2_Ready)\
+      \{\
+         datetime htf2LastBar = iTime(_Symbol, InpHTF2_TF, 0);\
+         if(htf2LastBar > g_HTF2_LastBarTime && g_HTF2_LastBarTime > 0)\
+         \{\
+            HTF2_Incremental();\
+            g_HTF2_LastBarTime = htf2LastBar;\
+         \}\
+         HTF2_CheckMitigationCurrent(high[0], low[0], close[0], time[0]);\
+         HTF2_GarbageCollect();\
+      \}\
+\
+      OB_ClusterAnalysis();\
+      ScoreAllOBs();\
+   \}\
+\
+   if(InpMT5_Retest || (InpTG_Enabled && InpTG_Retest))\
+      CheckConfluenceAlerts(close[0], time[0]);\
+   if(InpMT5_Proximity || (InpTG_Enabled && InpTG_Proximity))\
+      CheckProximityAlerts(close[0], time[0]);\
+   if(InpMT5_Sweep || (InpTG_Enabled && InpTG_Sweep))\
+      CheckSweepAlerts(high[0], low[0], close[0], open[0], time[0]);\
+\
+   if(InpReport_Freq != RPT_OFF)\
+      CheckSituationReport(close[0], time[0]);\
+\
+   if(InpDebugPrint)\
+   \{\
+      Print("=== MIT_CHECK NewBar === OB_Count=", g_OB_Count,\
+            " bar[0] T=", TimeToString(time[0]),\
+            " H=", DoubleToString(high[0], 2),\
+            " L=", DoubleToString(low[0], 2),\
+            " C=", DoubleToString(close[0], 2));\
+      if(rates_total > 1)\
+         Print("=== MIT_CHECK bar[1] === T=", TimeToString(time[1]),\
+               " H=", DoubleToString(high[1], 2),\
+               " L=", DoubleToString(low[1], 2),\
+               " C=", DoubleToString(close[1], 2));\
+   \}\
+\
+   if(rates_total > 1)\
+      OB_CheckMitigationCurrent(high[1], low[1], close[1], time[1]);\
+   OB_CheckMitigationCurrent(high[0], low[0], close[0], time[0]);\
+   OB_GarbageCollect();\
+\
+   if(g_OB_Count == 0 && g_OB_Ready)\
+   \{\
+      datetime cooldown = (datetime)PeriodSeconds(InpOB_Timeframe);\
+      if(now - g_LastRescanTime > cooldown)\
+      \{\
+         g_LastRescanTime = now;\
+         if(InpDebugPrint) Print("RESCAN_TRIGGER: OB_Count=0 -> full rescan");\
+         OB_PeriodicRescan();\
+         return(rates_total);\
+      \}\
+   \}\
+\
+   if(!didPeriodicRescan)\
+   \{\
+      if(InpCF_Enabled) CF_Update(close[0], time[0]);\
+      DrawAll(time[0]);\
+   \}\
+\
+   return(rates_total);\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553           v5.54 \'97 PERIODIC FULL RESCAN                            \u9553 \
+// \uc0\u9553           v5.60 FIX 2: HTF2 touch state preserved across rescan  \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+void OB_PeriodicRescan()\
+\{\
+   SOB_Zone savedZones[];\
+   int savedCount = g_OB_Count;\
+   ArrayResize(savedZones, savedCount);\
+   for(int i = 0; i < savedCount; i++) savedZones[i] = g_OB[i];\
+\
+   bool dataLoaded = OB_FullScanHTF(true);\
+   if(!dataLoaded)\
+   \{\
+      if(InpDebugPrint) Print("PERIODIC_RESCAN: primary data not ready, skip");\
+      return;\
+   \}\
+\
+   ObjectsDeleteAll(0, "OB_");\
+   ObjectsDeleteAll(0, "GH_");\
+\
+   bool htfValid  = InpHTF_Enabled &&\
+                    PeriodSeconds(InpHTF_Confirm_TF) > PeriodSeconds(InpOB_Timeframe);\
+   bool htf2Valid = InpHTF2_Enabled &&\
+                    PeriodSeconds(InpHTF2_TF) > PeriodSeconds(InpHTF_Confirm_TF);\
+\
+   OB_PostScanM1Mitigation();\
+\
+   if(htfValid)\
+   \{\
+      CF_FullScan(true);\
+      g_CF_LastBarTime = iTime(_Symbol, InpHTF_Confirm_TF, 0);\
+   \}\
+\
+   SOB_Zone savedHTF2[];\
+   int savedHTF2Count = 0;\
+   if(htf2Valid && g_HTF2_Ready)\
+   \{\
+      savedHTF2Count = g_HTF2_OB_Count;\
+      ArrayResize(savedHTF2, savedHTF2Count);\
+      for(int i = 0; i < savedHTF2Count; i++) savedHTF2[i] = g_HTF2_OB[i];\
+\
+      ObjectsDeleteAll(0, "H2_");\
+      HTF2_FullScan(true);\
+      g_HTF2_LastBarTime = iTime(_Symbol, InpHTF2_TF, 0);\
+\
+      for(int i = 0; i < g_HTF2_OB_Count; i++)\
+      \{\
+         for(int j = 0; j < savedHTF2Count; j++)\
+         \{\
+            if(savedHTF2[j].timeStart != g_HTF2_OB[i].timeStart) continue;\
+            if(savedHTF2[j].type      != g_HTF2_OB[i].type)      continue;\
+            g_HTF2_OB[i].touchCount        = savedHTF2[j].touchCount;\
+            g_HTF2_OB[i].lastTouchTime     = savedHTF2[j].lastTouchTime;\
+            g_HTF2_OB[i].isCurrentlyInside = savedHTF2[j].isCurrentlyInside;\
+            if(savedHTF2[j].status == OB_TESTED_1) g_HTF2_OB[i].status = OB_TESTED_1;\
+            break;\
+         \}\
+      \}\
+   \}\
+\
+   for(int i = 0; i < g_OB_Count; i++)\
+   \{\
+      datetime key    = g_OB[i].timeStart;\
+      ENUM_OB_TYPE kt = g_OB[i].type;\
+\
+      for(int j = 0; j < savedCount; j++)\
+      \{\
+         if(savedZones[j].timeStart != key) continue;\
+         if(savedZones[j].type      != kt)  continue;\
+\
+         g_OB[i].touchCount          = savedZones[j].touchCount;\
+         g_OB[i].lastTouchTime       = savedZones[j].lastTouchTime;\
+         g_OB[i].isCurrentlyInside   = savedZones[j].isCurrentlyInside;\
+         g_OB[i].cfAlerted           = savedZones[j].cfAlerted;\
+         g_OB[i].proximityAlerted    = savedZones[j].proximityAlerted;\
+         g_OB[i].sweepAlerted        = savedZones[j].sweepAlerted;\
+         g_OB[i].mitigatedAlerted    = savedZones[j].mitigatedAlerted;\
+         g_OB[i].cfSVP_Locked        = savedZones[j].cfSVP_Locked;\
+         g_OB[i].cfSVP_DetailLocked  = savedZones[j].cfSVP_DetailLocked;\
+         g_OB[i].cfHTF_Locked        = savedZones[j].cfHTF_Locked;\
+         g_OB[i].cfHTF_DetailLocked  = savedZones[j].cfHTF_DetailLocked;\
+         // v5.61: Restore ML state across rescan\
+         g_OB[i].mlMaxBounce         = savedZones[j].mlMaxBounce;\
+         g_OB[i].mlPriceAtBirth      = savedZones[j].mlPriceAtBirth;\
+         g_OB[i].mlEmaBig            = savedZones[j].mlEmaBig;\
+         g_OB[i].mlEmaLocal          = savedZones[j].mlEmaLocal;\
+         g_OB[i].mlSession           = savedZones[j].mlSession;\
+         g_OB[i].mlPOC               = savedZones[j].mlPOC;\
+         g_OB[i].mlVAH               = savedZones[j].mlVAH;\
+         g_OB[i].mlVAL               = savedZones[j].mlVAL;\
+         g_OB[i].mlPrevPOC           = savedZones[j].mlPrevPOC;\
+         g_OB[i].mlDistToEMA         = savedZones[j].mlDistToEMA;\
+         g_OB[i].mlLogged            = savedZones[j].mlLogged;\
+          g_OB[i].mlATR               = savedZones[j].mlATR;\
+         g_OB[i].mlSpread            = savedZones[j].mlSpread;\
+         g_OB[i].mlFirstTouchTime    = savedZones[j].mlFirstTouchTime;\
+         g_OB[i].mlActiveOBCount     = savedZones[j].mlActiveOBCount;\
+\
+         if(savedZones[j].status == OB_TESTED_1) g_OB[i].status = OB_TESTED_1;\
+         break;\
+      \}\
+   \}\
+\
+   for(int j = 0; j < savedCount; j++)\
+   \{\
+      if(savedZones[j].status == OB_MITIGATED) continue;\
+      bool found = false;\
+      for(int i = 0; i < g_OB_Count; i++)\
+      \{\
+         if(g_OB[i].timeStart == savedZones[j].timeStart && g_OB[i].type == savedZones[j].type)\
+         \{ found = true; break; \}\
+      \}\
+      if(!found && InpGhost_Enabled)\
+      \{\
+         // v5.61: Log dropped OBs that disappear during rescan\
+         if(InpML_Logger && savedZones[j].mlLogged)\
+            ML_OnDeath(savedZones[j], "DROPPED", iClose(_Symbol, PERIOD_CURRENT, 0));\
+         savedZones[j].status        = OB_MITIGATED;\
+         savedZones[j].lastTouchTime = TimeCurrent();\
+         Ghost_Add(savedZones[j]);\
+      \}\
+   \}\
+\
+   g_HTF_LastBarTime = iTime(_Symbol, InpOB_Timeframe, 0);\
+\
+   OB_ClusterAnalysis();\
+   ScoreAllOBs();\
+   if(InpCF_Enabled)\
+      CF_Update(iClose(_Symbol, PERIOD_CURRENT, 0),\
+                iTime(_Symbol, PERIOD_CURRENT, 0));\
+   DrawAll(iTime(_Symbol, PERIOD_CURRENT, 0));\
+\
+   if(InpDebugPrint)\
+      Print("PERIODIC_RESCAN done: OB=", g_OB_Count,\
+            " Ghost=", g_Ghost_Count,\
+            " HTF1=", g_CF_OB_Count,\
+            " HTF2=", g_HTF2_OB_Count,\
+            " S=", g_stat_TierS, " T1=", g_stat_Tier1,\
+            " T2=", g_stat_Tier2, " T3=", g_stat_Tier3);\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553           ENGINE 1 \'97 SVP (Locked to M1 via CopyRates)             \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+void SVP_FullRebuild()\
+\{\
+   MqlRates m1[];\
+   datetime endTime   = TimeCurrent();\
+   datetime startTime = endTime - 3 * 86400;\
+   int copied = CopyRates(_Symbol, PERIOD_M1, startTime, endTime, m1);\
+   if(copied <= 0) \{ if(InpDebugPrint) Print("SVP v3.0: No M1 data available"); return; \}\
+   double rowSize = InpRowSize_Points * g_Pt;\
+   g_DayCount = 0;\
+   ArrayResize(g_Days, 0, 5);\
+   for(int i = 0; i < copied; i++)\
+   \{\
+      ENUM_SESSION_TYPE sType;\
+      if(!SVP_GetSessionType(m1[i].time, sType)) continue;\
+      datetime tradingDate = SVP_GetTradingDate(m1[i].time);\
+      int dIdx = SVP_FindOrCreateDay(tradingDate);\
+      if(dIdx < 0) continue;\
+      if(m1[i].high > g_Days[dIdx].dayHigh) g_Days[dIdx].dayHigh = m1[i].high;\
+      if(m1[i].low < g_Days[dIdx].dayLow)   g_Days[dIdx].dayLow  = m1[i].low;\
+      g_Days[dIdx].dayTotalVol += (double)m1[i].tick_volume;\
+      if(g_Days[dIdx].firstBarTime == 0 || m1[i].time < g_Days[dIdx].firstBarTime)\
+         g_Days[dIdx].firstBarTime = m1[i].time;\
+      int sIdx = (int)sType;\
+      if(g_Days[dIdx].sessions[sIdx].tStart == 0 || m1[i].time < g_Days[dIdx].sessions[sIdx].tStart)\
+         g_Days[dIdx].sessions[sIdx].tStart = m1[i].time;\
+      g_Days[dIdx].sessions[sIdx].totalVol += (double)m1[i].tick_volume;\
+   \}\
+   SVP_TrimToTwoDays();\
+   for(int d = 0; d < g_DayCount; d++)\
+   \{ if(g_Days[d].dayHigh <= g_Days[d].dayLow) continue; SVP_BuildDayRows(d, rowSize); \}\
+   for(int i = 0; i < copied; i++)\
+   \{\
+      ENUM_SESSION_TYPE sType;\
+      if(!SVP_GetSessionType(m1[i].time, sType)) continue;\
+      if(m1[i].tick_volume == 0) continue;\
+      datetime tradingDate = SVP_GetTradingDate(m1[i].time);\
+      int dIdx = -1;\
+      for(int d = 0; d < g_DayCount; d++)\
+         if(g_Days[d].date == tradingDate) \{ dIdx = d; break; \}\
+      if(dIdx < 0 || g_Days[dIdx].rowCount == 0) continue;\
+      SVP_DistributeBarVolume(dIdx, sType, m1[i].high, m1[i].low, m1[i].close, m1[i].tick_volume, rowSize);\
+   \}\
+   for(int d = 0; d < g_DayCount; d++) SVP_CalcDayLevels(d, rowSize);\
+   if(g_DayCount > 0)\
+   \{\
+      for(int d = 0; d < g_DayCount; d++) g_Days[d].isToday = false;\
+      g_Days[g_DayCount - 1].isToday = true;\
+   \}\
+\}\
+\
+void SVP_TrimToTwoDays()\
+\{\
+   if(g_DayCount <= 2) return;\
+   int keep = 2, remove = g_DayCount - keep;\
+   for(int i = 0; i < keep; i++) g_Days[i] = g_Days[i + remove];\
+   g_DayCount = keep;\
+   ArrayResize(g_Days, g_DayCount);\
+\}\
+\
+bool SVP_GetSessionType(datetime dt, ENUM_SESSION_TYPE &sType)\
+\{\
+   MqlDateTime mdt; TimeToStruct(dt, mdt); int h = mdt.hour;\
+   if(InpNY_StartH < InpNY_EndH)\
+   \{ if(h >= InpNY_StartH && h < InpNY_EndH) \{ sType = SESSION_NEWYORK; return true; \} \}\
+   else \{ if(h >= InpNY_StartH || h < InpNY_EndH) \{ sType = SESSION_NEWYORK; return true; \} \}\
+   if(InpLondon_StartH < InpLondon_EndH)\
+   \{ if(h >= InpLondon_StartH && h < InpLondon_EndH) \{ sType = SESSION_LONDON; return true; \} \}\
+   else \{ if(h >= InpLondon_StartH || h < InpLondon_EndH) \{ sType = SESSION_LONDON; return true; \} \}\
+   if(InpAsia_StartH < InpAsia_EndH)\
+   \{ if(h >= InpAsia_StartH && h < InpAsia_EndH) \{ sType = SESSION_ASIA; return true; \} \}\
+   else \{ if(h >= InpAsia_StartH || h < InpAsia_EndH) \{ sType = SESSION_ASIA; return true; \} \}\
+   return false;\
+\}\
+\
+datetime SVP_GetTradingDate(datetime barTime)\
+\{\
+   MqlDateTime mdt; TimeToStruct(barTime, mdt);\
+   if(mdt.hour < InpAsia_StartH) \{ barTime -= 86400; TimeToStruct(barTime, mdt); \}\
+   mdt.hour = 0; mdt.min = 0; mdt.sec = 0;\
+   return StructToTime(mdt);\
+\}\
+\
+int SVP_FindOrCreateDay(datetime tradingDate)\
+\{\
+   for(int i = 0; i < g_DayCount; i++) if(g_Days[i].date == tradingDate) return i;\
+   ArrayResize(g_Days, g_DayCount + 1);\
+   SDayProfile d;\
+   d.date = tradingDate; d.dayHigh = -DBL_MAX; d.dayLow = DBL_MAX;\
+   d.dayTotalVol = 0; d.rowCount = 0;\
+   d.compositePOC = 0; d.compositeVAH = 0; d.compositeVAL = 0;\
+   d.isToday = false; d.firstBarTime = 0;\
+   for(int s = 0; s < 3; s++)\
+   \{ d.sessions[s].pocPrice=0; d.sessions[s].vahPrice=0; d.sessions[s].valPrice=0; d.sessions[s].totalVol=0; d.sessions[s].tStart=0; \}\
+   g_Days[g_DayCount] = d; g_DayCount++;\
+   return g_DayCount - 1;\
+\}\
+\
+void SVP_BuildDayRows(int dIdx, double rowSize)\
+\{\
+   double dH = g_Days[dIdx].dayHigh, dL = g_Days[dIdx].dayLow;\
+   int numRows = (int)MathCeil((dH - dL) / rowSize) + 1;\
+   if(numRows <= 0 || numRows > 1000) return;\
+   ArrayResize(g_Days[dIdx].rows, numRows);\
+   g_Days[dIdx].rowCount = numRows;\
+   for(int r = 0; r < numRows; r++)\
+   \{ g_Days[dIdx].rows[r].price = dL + r * rowSize + rowSize / 2.0; g_Days[dIdx].rows[r].totalVol = 0; g_Days[dIdx].rows[r].asiaVol = 0; g_Days[dIdx].rows[r].londonVol = 0; g_Days[dIdx].rows[r].nyVol = 0; \}\
+\}\
+\
+void SVP_DistributeBarVolume(int dIdx, ENUM_SESSION_TYPE sType, double bH, double bL, double bC, long vol, double rowSize)\
+\{\
+   double dL = g_Days[dIdx].dayLow;\
+   int numRows = g_Days[dIdx].rowCount;\
+   int rStart = MathMax(0, (int)MathFloor((bL - dL) / rowSize));\
+   int rEnd   = MathMin(numRows - 1, (int)MathFloor((bH - dL) / rowSize));\
+   int covered = rEnd - rStart + 1;\
+   if(covered <= 0) return;\
+   double closeRow = (bC - dL) / rowSize;\
+   double totalW = 0;\
+   double weights[];\
+   ArrayResize(weights, covered);\
+   for(int r = 0; r < covered; r++)\
+   \{ double dist = MathAbs((double)(rStart + r) + 0.5 - closeRow); weights[r] = MathMax(0.3, 1.0 - dist / MathMax((double)covered, 1.0)); totalW += weights[r]; \}\
+   if(totalW <= 0) return;\
+   for(int r = 0; r < covered; r++)\
+   \{\
+      int idx = rStart + r;\
+      double v = (double)vol * weights[r] / totalW;\
+      g_Days[dIdx].rows[idx].totalVol += v;\
+      switch(sType)\
+      \{ case SESSION_ASIA: g_Days[dIdx].rows[idx].asiaVol += v; break; case SESSION_LONDON: g_Days[dIdx].rows[idx].londonVol += v; break; case SESSION_NEWYORK: g_Days[dIdx].rows[idx].nyVol += v; break; \}\
+   \}\
+\}\
+\
+void SVP_CalcDayLevels(int dIdx, double rowSize)\
+\{\
+   int nRows = g_Days[dIdx].rowCount;\
+   if(nRows == 0) return;\
+   double maxVol = 0; int pocIdx = 0;\
+   for(int r = 0; r < nRows; r++) \{ if(g_Days[dIdx].rows[r].totalVol > maxVol) \{ maxVol = g_Days[dIdx].rows[r].totalVol; pocIdx = r; \} \}\
+   g_Days[dIdx].compositePOC = g_Days[dIdx].rows[pocIdx].price;\
+   double target = g_Days[dIdx].dayTotalVol * (InpVA_Percent / 100.0);\
+   double accum = g_Days[dIdx].rows[pocIdx].totalVol;\
+   int upper = pocIdx, lower = pocIdx;\
+   while(accum < target)\
+   \{\
+      double vUp = (upper + 1 < nRows) ? g_Days[dIdx].rows[upper + 1].totalVol : 0;\
+      double vDn = (lower - 1 >= 0) ? g_Days[dIdx].rows[lower - 1].totalVol : 0;\
+      if(vUp == 0 && vDn == 0) break;\
+      if(vUp >= vDn) \{ upper++; accum += g_Days[dIdx].rows[upper].totalVol; \}\
+      else           \{ lower--; accum += g_Days[dIdx].rows[lower].totalVol; \}\
+   \}\
+   g_Days[dIdx].compositeVAH = g_Days[dIdx].rows[upper].price + rowSize / 2.0;\
+   g_Days[dIdx].compositeVAL = g_Days[dIdx].rows[lower].price - rowSize / 2.0;\
+   for(int s = 0; s < 3; s++)\
+   \{\
+      if(g_Days[dIdx].sessions[s].totalVol == 0) continue;\
+      double sMax = 0; int sPocR = 0;\
+      for(int r = 0; r < nRows; r++)\
+      \{ double sv = (s==0)?g_Days[dIdx].rows[r].asiaVol:(s==1)?g_Days[dIdx].rows[r].londonVol:g_Days[dIdx].rows[r].nyVol; if(sv > sMax) \{ sMax = sv; sPocR = r; \} \}\
+      g_Days[dIdx].sessions[s].pocPrice = g_Days[dIdx].rows[sPocR].price;\
+      double sTarget = g_Days[dIdx].sessions[s].totalVol * (InpVA_Percent / 100.0);\
+      double sAccum = sMax; int sUp = sPocR, sDn = sPocR;\
+      while(sAccum < sTarget)\
+      \{\
+         double vU=0,vD=0;\
+         if(sUp+1<nRows)\{if(s==0)vU=g_Days[dIdx].rows[sUp+1].asiaVol;if(s==1)vU=g_Days[dIdx].rows[sUp+1].londonVol;if(s==2)vU=g_Days[dIdx].rows[sUp+1].nyVol;\}\
+         if(sDn-1>=0)\{if(s==0)vD=g_Days[dIdx].rows[sDn-1].asiaVol;if(s==1)vD=g_Days[dIdx].rows[sDn-1].londonVol;if(s==2)vD=g_Days[dIdx].rows[sDn-1].nyVol;\}\
+         if(vU==0&&vD==0) break;\
+         if(vU>=vD)\{sUp++;sAccum+=vU;\}else\{sDn--;sAccum+=vD;\}\
+      \}\
+      g_Days[dIdx].sessions[s].vahPrice = g_Days[dIdx].rows[sUp].price + rowSize/2.0;\
+      g_Days[dIdx].sessions[s].valPrice = g_Days[dIdx].rows[sDn].price - rowSize/2.0;\
+   \}\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553        ENGINE 2A \'97 PRIMARY OB (M5)                                 \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+bool OB_FullScanHTF(bool silent = false)\
+\{\
+   MqlRates htf[];\
+   int copied = CopyRates(_Symbol, InpOB_Timeframe, 0, InpLookback_Bars, htf);\
+   if(copied < InpSwingStrength * 2 + 10)\
+   \{ if(InpDebugPrint) Print("OB v3.0: Insufficient data: copied=", copied); return false; \}\
+   if(!silent) Print("OB v3.0 PRIMARY: CopyRates got ", copied, " bars of ", EnumToString(InpOB_Timeframe));\
+   ArraySetAsSeries(htf, true);\
+   double hH[], hL[], hO[], hC[]; datetime hT[];\
+   OB_ExtractArrays(htf, copied, hH, hL, hO, hC, hT);\
+   int SS = InpSwingStrength;\
+   int scanStart = MathMin(InpLookback_Bars, copied - SS - 1);\
+   g_OB_Count = 0; g_OB_Id = 0; g_Trend = 0;\
+   ArrayResize(g_OB, 0, InpMaxOB_Count + 10);\
+   ArrayResize(g_SwH, 0, 200);\
+   ArrayResize(g_SwL, 0, 200);\
+   int dbg_Created=0,dbg_BullCreated=0,dbg_BearCreated=0,dbg_Mitigated=0;\
+   for(int bar = scanStart; bar >= 0; bar--)\
+   \{\
+      int prevOB = g_OB_Count;\
+      int pivotCandidate = bar + SS;\
+      if(pivotCandidate + SS < copied)\
+         OB_TryDetectSwing(pivotCandidate, hH, hL, hT, copied, g_SwH, g_SwL, SS);\
+      OB_CheckBreaksAtBar(bar, hH, hL, hO, hC, hT, copied, false,\
+                          g_SwH, g_SwL, g_OB, g_OB_Count, g_OB_Id, g_Trend,\
+                          InpRequireFVG, InpFVG_MinSize_Pts,\
+                          InpMaxOB_Count, InpOB_Extension_Pts,\
+                          InpMinZone_Pts, InpMaxZone_Pts, true);\
+      if(!silent)\
+      \{\
+         for(int n = prevOB; n < g_OB_Count; n++)\
+         \{ dbg_Created++; if(g_OB[n].type==OB_BULLISH) dbg_BullCreated++; else dbg_BearCreated++; \}\
+         int mitBefore=0;\
+         for(int m=0;m<g_OB_Count;m++) if(g_OB[m].status==OB_MITIGATED) mitBefore++;\
+         OB_CheckMitigationGeneric(bar, hH, hL, hC, hT, g_OB, g_OB_Count);\
+         int mitAfter=0;\
+         for(int m=0;m<g_OB_Count;m++) if(g_OB[m].status==OB_MITIGATED) mitAfter++;\
+         dbg_Mitigated += (mitAfter - mitBefore);\
+      \}\
+      else OB_CheckMitigationGeneric(bar, hH, hL, hC, hT, g_OB, g_OB_Count);\
+   \}\
+   OB_GarbageCollect();\
+   for(int i = 0; i < g_OB_Count; i++) if(g_OB[i].touchCount > 0) g_OB[i].cfAlerted = true;\
+   int survBull=0,survBear=0,survTested=0;\
+   for(int i=0;i<g_OB_Count;i++) \{ if(g_OB[i].type==OB_BULLISH)survBull++;else survBear++; if(g_OB[i].status==OB_TESTED_1)survTested++; \}\
+   if(!silent)\
+      Print("OB v5.61 PRIMARY: Scan done \'97 Created=", dbg_Created, " Survived=", g_OB_Count, " (Bull:", survBull, " Bear:", survBear, " Tested:", survTested, ") Ghost=", g_Ghost_Count, " Trend=", g_Trend);\
+   return true;\
+\}\
+\
+void OB_PostScanM1Mitigation()\
+\{\
+   MqlRates m1[];\
+   int copied = CopyRates(_Symbol, PERIOD_M1, TimeCurrent()-3*86400, TimeCurrent(), m1);\
+   if(copied <= 0) return;\
+   int mitCount = 0;\
+   for(int b = 0; b < copied; b++)\
+   \{\
+      for(int i = 0; i < g_OB_Count; i++)\
+      \{\
+         if(g_OB[i].status == OB_MITIGATED) continue;\
+         datetime protectedUntil = g_OB[i].breakTime + (datetime)PeriodSeconds(InpOB_Timeframe);\
+         if(protectedUntil > m1[b].time) continue;\
+         double zH=g_OB[i].high, zL=g_OB[i].low;\
+         bool fullMit = false;\
+         if(g_OB[i].type==OB_BULLISH && m1[b].close<zL) fullMit=true;\
+         if(g_OB[i].type==OB_BEARISH && m1[b].close>zH) fullMit=true;\
+         if(fullMit) \{ g_OB[i].status=OB_MITIGATED; g_OB[i].touchCount++; g_OB[i].lastTouchTime=m1[b].time; mitCount++; \}\
+      \}\
+   \}\
+   if(mitCount > 0) \{ OB_GarbageCollect(); Print("M1_MIT: Removed ", mitCount, " zones that M5 scan missed"); \}\
+\}\
+\
+void OB_IncrementalHTF()\
+\{\
+   OB_ShiftSwingIndices(g_SwH, g_SwL, InpLookback_Bars);\
+   int need = InpSwingStrength * 2 + 5;\
+   MqlRates htf[];\
+   int copied = CopyRates(_Symbol, InpOB_Timeframe, 0, need, htf);\
+   if(copied < need) return;\
+   ArraySetAsSeries(htf, true);\
+   double hH[],hL[],hO[],hC[]; datetime hT[];\
+   OB_ExtractArrays(htf, copied, hH, hL, hO, hC, hT);\
+   OB_TryDetectSwing(InpSwingStrength, hH, hL, hT, copied, g_SwH, g_SwL, InpSwingStrength);\
+   if(copied > 1)\
+      OB_CheckBreaksAtBar(1, hH, hL, hO, hC, hT, copied, true,\
+                          g_SwH, g_SwL, g_OB, g_OB_Count, g_OB_Id, g_Trend,\
+                          InpRequireFVG, InpFVG_MinSize_Pts, InpMaxOB_Count, InpOB_Extension_Pts, InpMinZone_Pts, InpMaxZone_Pts, true);\
+   OB_CheckBreaksAtBar(0, hH, hL, hO, hC, hT, copied, true,\
+                       g_SwH, g_SwL, g_OB, g_OB_Count, g_OB_Id, g_Trend,\
+                       InpRequireFVG, InpFVG_MinSize_Pts, InpMaxOB_Count, InpOB_Extension_Pts, InpMinZone_Pts, InpMaxZone_Pts, true);\
+\}\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553        ENGINE 2B \'97 HTF1 CONFIRM (M15, Invisible)                  \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+bool CF_FullScan(bool silent = false)\
+\{\
+   MqlRates htf[];\
+   int copied = CopyRates(_Symbol, InpHTF_Confirm_TF, 0, InpHTF_Lookback, htf);\
+   if(copied < InpHTF_SwingStr * 2 + 10) \{ if(InpDebugPrint) Print("HTF1 CONFIRM: Insufficient data: copied=", copied); return false; \}\
+   if(!silent) Print("HTF1 CONFIRM: CopyRates got ", copied, " bars of ", EnumToString(InpHTF_Confirm_TF));\
+   ArraySetAsSeries(htf, true);\
+   double hH[],hL[],hO[],hC[]; datetime hT[];\
+   OB_ExtractArrays(htf, copied, hH, hL, hO, hC, hT);\
+   int SS = InpHTF_SwingStr;\
+   int scanStart = MathMin(InpHTF_Lookback, copied - SS - 1);\
+   g_CF_OB_Count=0; g_CF_OB_Id=0; g_CF_Trend=0;\
+   ArrayResize(g_CF_OB, 0, InpHTF_MaxOB + 10);\
+   ArrayResize(g_CF_SwH, 0, 200);\
+   ArrayResize(g_CF_SwL, 0, 200);\
+   for(int bar = scanStart; bar >= 0; bar--)\
+   \{\
+      int pivotCandidate = bar + SS;\
+      if(pivotCandidate + SS < copied)\
+         OB_TryDetectSwing(pivotCandidate, hH, hL, hT, copied, g_CF_SwH, g_CF_SwL, SS);\
+      OB_CheckBreaksAtBar(bar, hH, hL, hO, hC, hT, copied, false,\
+                          g_CF_SwH, g_CF_SwL, g_CF_OB, g_CF_OB_Count, g_CF_OB_Id, g_CF_Trend,\
+                          false, 0, InpHTF_MaxOB, 0, InpHTF_MinZone_Pts, InpHTF_MaxZone_Pts, false);\
+      OB_CheckMitigationGeneric(bar, hH, hL, hC, hT, g_CF_OB, g_CF_OB_Count);\
+   \}\
+   CF_GarbageCollect();\
+   if(!silent) Print("HTF1 CONFIRM: Scan done \'97 Survived=", g_CF_OB_Count);\
+   return true;\
+\}\
+\
+void CF_Incremental()\
+\{\
+   OB_ShiftSwingIndices(g_CF_SwH, g_CF_SwL, InpHTF_Lookback);\
+   int need = InpHTF_SwingStr * 2 + 5;\
+   MqlRates htf[];\
+   int copied = CopyRates(_Symbol, InpHTF_Confirm_TF, 0, need, htf);\
+   if(copied < need) return;\
+   ArraySetAsSeries(htf, true);\
+   double hH[],hL[],hO[],hC[]; datetime hT[];\
+   OB_ExtractArrays(htf, copied, hH, hL, hO, hC, hT);\
+   OB_TryDetectSwing(InpHTF_SwingStr, hH, hL, hT, copied, g_CF_SwH, g_CF_SwL, InpHTF_SwingStr);\
+   OB_CheckBreaksAtBar(0, hH, hL, hO, hC, hT, copied, true,\
+                       g_CF_SwH, g_CF_SwL, g_CF_OB, g_CF_OB_Count, g_CF_OB_Id, g_CF_Trend,\
+                       false, 0, InpHTF_MaxOB, 0, InpHTF_MinZone_Pts, InpHTF_MaxZone_Pts, false);\
+\}\
+\
+void CF_CheckMitigationCurrent(double barHigh, double barLow, double barClose, datetime barTime)\
+\{\
+   for(int i = 0; i < g_CF_OB_Count; i++)\
+   \{\
+      if(g_CF_OB[i].status == OB_MITIGATED) continue;\
+      datetime protectedUntil = g_CF_OB[i].breakTime + (datetime)PeriodSeconds(InpHTF_Confirm_TF);\
+      if(protectedUntil > barTime) continue;\
+      double zH=g_CF_OB[i].high, zL=g_CF_OB[i].low;\
+      bool fullMit = false;\
+      if(g_CF_OB[i].type==OB_BULLISH && barClose<zL) fullMit=true;\
+      if(g_CF_OB[i].type==OB_BEARISH && barClose>zH) fullMit=true;\
+      if(fullMit) \{ g_CF_OB[i].status=OB_MITIGATED; g_CF_OB[i].touchCount++; g_CF_OB[i].lastTouchTime=barTime; g_CF_OB[i].isCurrentlyInside=false; continue; \}\
+      bool entered = (barLow <= zH && barHigh >= zL);\
+      if(!entered) \{ g_CF_OB[i].isCurrentlyInside=false; continue; \}\
+      if(barTime != g_CF_OB[i].lastTouchTime)\
+      \{ g_CF_OB[i].lastTouchTime=barTime; if(!g_CF_OB[i].isCurrentlyInside) \{ g_CF_OB[i].touchCount++; g_CF_OB[i].status=OB_TESTED_1; \} \}\
+      g_CF_OB[i].isCurrentlyInside=true;\
+   \}\
+\}\
+\
+void CF_GarbageCollect()\
+\{\
+   int w=0;\
+   for(int i=0;i<g_CF_OB_Count;i++) \{ if(g_CF_OB[i].status==OB_MITIGATED) continue; if(w!=i) g_CF_OB[w]=g_CF_OB[i]; w++; \}\
+   if(w!=g_CF_OB_Count) \{ g_CF_OB_Count=w; ArrayResize(g_CF_OB,g_CF_OB_Count); \}\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553        ENGINE 2C \'97 HTF2 LAYER (H1, Visible)                       \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+bool HTF2_FullScan(bool silent = false)\
+\{\
+   if(!InpHTF2_Enabled) return false;\
+   MqlRates htf[];\
+   int copied = CopyRates(_Symbol, InpHTF2_TF, 0, InpHTF2_Lookback, htf);\
+   if(copied < InpHTF2_SwingStr * 2 + 10)\
+   \{ if(InpDebugPrint) Print("HTF2: Insufficient data: copied=", copied); return false; \}\
+   if(!silent) Print("HTF2: CopyRates got ", copied, " bars of ", EnumToString(InpHTF2_TF));\
+   ArraySetAsSeries(htf, true);\
+   double hH[],hL[],hO[],hC[]; datetime hT[];\
+   OB_ExtractArrays(htf, copied, hH, hL, hO, hC, hT);\
+   int SS = InpHTF2_SwingStr;\
+   int scanStart = MathMin(InpHTF2_Lookback, copied - SS - 1);\
+   g_HTF2_OB_Count=0; g_HTF2_OB_Id=0; g_HTF2_Trend=0;\
+   ArrayResize(g_HTF2_OB, 0, InpHTF2_MaxOB + 10);\
+   ArrayResize(g_HTF2_SwH, 0, 200);\
+   ArrayResize(g_HTF2_SwL, 0, 200);\
+   for(int bar = scanStart; bar >= 0; bar--)\
+   \{\
+      int pivotCandidate = bar + SS;\
+      if(pivotCandidate + SS < copied)\
+         OB_TryDetectSwing(pivotCandidate, hH, hL, hT, copied, g_HTF2_SwH, g_HTF2_SwL, SS);\
+      OB_CheckBreaksAtBar(bar, hH, hL, hO, hC, hT, copied, false,\
+                          g_HTF2_SwH, g_HTF2_SwL, g_HTF2_OB, g_HTF2_OB_Count, g_HTF2_OB_Id, g_HTF2_Trend,\
+                          false, 0, InpHTF2_MaxOB, 0, InpHTF2_MinZone_Pts, InpHTF2_MaxZone_Pts, false);\
+      OB_CheckMitigationGeneric(bar, hH, hL, hC, hT, g_HTF2_OB, g_HTF2_OB_Count);\
+   \}\
+   HTF2_GarbageCollect();\
+   if(!silent) Print("HTF2: Scan done \'97 Survived=", g_HTF2_OB_Count, " on ", EnumToString(InpHTF2_TF));\
+   return true;\
+\}\
+\
+void HTF2_Incremental()\
+\{\
+   if(!InpHTF2_Enabled) return;\
+   OB_ShiftSwingIndices(g_HTF2_SwH, g_HTF2_SwL, InpHTF2_Lookback);\
+   int need = InpHTF2_SwingStr * 2 + 5;\
+   MqlRates htf[];\
+   int copied = CopyRates(_Symbol, InpHTF2_TF, 0, need, htf);\
+   if(copied < need) return;\
+   ArraySetAsSeries(htf, true);\
+   double hH[],hL[],hO[],hC[]; datetime hT[];\
+   OB_ExtractArrays(htf, copied, hH, hL, hO, hC, hT);\
+   OB_TryDetectSwing(InpHTF2_SwingStr, hH, hL, hT, copied, g_HTF2_SwH, g_HTF2_SwL, InpHTF2_SwingStr);\
+   OB_CheckBreaksAtBar(0, hH, hL, hO, hC, hT, copied, true,\
+                       g_HTF2_SwH, g_HTF2_SwL, g_HTF2_OB, g_HTF2_OB_Count, g_HTF2_OB_Id, g_HTF2_Trend,\
+                       false, 0, InpHTF2_MaxOB, 0, InpHTF2_MinZone_Pts, InpHTF2_MaxZone_Pts, false);\
+\}\
+\
+void HTF2_CheckMitigationCurrent(double barHigh, double barLow, double barClose, datetime barTime)\
+\{\
+   if(!InpHTF2_Enabled) return;\
+   for(int i = 0; i < g_HTF2_OB_Count; i++)\
+   \{\
+      if(g_HTF2_OB[i].status == OB_MITIGATED) continue;\
+      datetime protectedUntil = g_HTF2_OB[i].breakTime + (datetime)PeriodSeconds(InpHTF2_TF);\
+      if(protectedUntil > barTime) continue;\
+      double zH=g_HTF2_OB[i].high, zL=g_HTF2_OB[i].low;\
+      bool fullMit = false;\
+      if(g_HTF2_OB[i].type==OB_BULLISH && barClose<zL) fullMit=true;\
+      if(g_HTF2_OB[i].type==OB_BEARISH && barClose>zH) fullMit=true;\
+      if(fullMit)\
+      \{\
+         g_HTF2_OB[i].status=OB_MITIGATED;\
+         g_HTF2_OB[i].touchCount++;\
+         g_HTF2_OB[i].lastTouchTime=barTime;\
+         g_HTF2_OB[i].isCurrentlyInside=false;\
+         ObjectDelete(0, "H2_R_" + IntegerToString(g_HTF2_OB[i].id));\
+         ObjectDelete(0, "H2_L_" + IntegerToString(g_HTF2_OB[i].id));\
+         continue;\
+      \}\
+      bool entered = (barLow <= zH && barHigh >= zL);\
+      if(!entered) \{ g_HTF2_OB[i].isCurrentlyInside=false; continue; \}\
+      if(barTime != g_HTF2_OB[i].lastTouchTime)\
+      \{ g_HTF2_OB[i].lastTouchTime=barTime; if(!g_HTF2_OB[i].isCurrentlyInside) \{ g_HTF2_OB[i].touchCount++; g_HTF2_OB[i].status=OB_TESTED_1; \} \}\
+      g_HTF2_OB[i].isCurrentlyInside=true;\
+   \}\
+\}\
+\
+void HTF2_GarbageCollect()\
+\{\
+   int w=0;\
+   for(int i=0;i<g_HTF2_OB_Count;i++)\
+   \{\
+      if(g_HTF2_OB[i].status==OB_MITIGATED)\
+      \{\
+         ObjectDelete(0, "H2_R_" + IntegerToString(g_HTF2_OB[i].id));\
+         ObjectDelete(0, "H2_L_" + IntegerToString(g_HTF2_OB[i].id));\
+         continue;\
+      \}\
+      if(w!=i) g_HTF2_OB[w]=g_HTF2_OB[i]; w++;\
+   \}\
+   if(w!=g_HTF2_OB_Count) \{ g_HTF2_OB_Count=w; ArrayResize(g_HTF2_OB,g_HTF2_OB_Count); \}\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553        SHARED OB UTILITY FUNCTIONS                                 \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+void OB_ExtractArrays(MqlRates &rates[], int count, double &h[], double &l[], double &o[], double &c[], datetime &t[])\
+\{\
+   ArrayResize(h,count); ArrayResize(l,count); ArrayResize(o,count); ArrayResize(c,count); ArrayResize(t,count);\
+   ArraySetAsSeries(h,true); ArraySetAsSeries(l,true); ArraySetAsSeries(o,true); ArraySetAsSeries(c,true); ArraySetAsSeries(t,true);\
+   for(int i=0;i<count;i++) \{ h[i]=rates[i].high; l[i]=rates[i].low; o[i]=rates[i].open; c[i]=rates[i].close; t[i]=rates[i].time; \}\
+\}\
+\
+void OB_TryDetectSwing(int pivot, const double &high[], const double &low[], const datetime &time[], int rates_total, SSwingPoint &swH[], SSwingPoint &swL[], int SS)\
+\{\
+   if(pivot-SS<0||pivot+SS>=rates_total) return;\
+   datetime pTime=time[pivot];\
+   bool isSH=true;\
+   for(int i=1;i<=SS;i++) \{ if(high[pivot+i]>=high[pivot])\{isSH=false;break;\} if(high[pivot-i]>=high[pivot])\{isSH=false;break;\} \}\
+   if(isSH&&!OB_SwingExists(swH,pTime)) \{ SSwingPoint sp; sp.price=high[pivot]; sp.time=pTime; sp.barIndex=pivot; sp.broken=false; int sz=ArraySize(swH); ArrayResize(swH,sz+1); swH[sz]=sp; \}\
+   bool isSL=true;\
+   for(int i=1;i<=SS;i++) \{ if(low[pivot+i]<=low[pivot])\{isSL=false;break;\} if(low[pivot-i]<=low[pivot])\{isSL=false;break;\} \}\
+   if(isSL&&!OB_SwingExists(swL,pTime)) \{ SSwingPoint sp; sp.price=low[pivot]; sp.time=pTime; sp.barIndex=pivot; sp.broken=false; int sz=ArraySize(swL); ArrayResize(swL,sz+1); swL[sz]=sp; \}\
+\}\
+\
+bool OB_SwingExists(SSwingPoint &arr[], datetime t)\
+\{\
+   int sz=ArraySize(arr);\
+   for(int i=sz-1;i>=MathMax(0,sz-5);i--) if(arr[i].time==t) return true;\
+   return false;\
+\}\
+\
+void OB_CheckBreaksAtBar(int barIdx, const double &high[], const double &low[], const double &open[], const double &close[], const datetime &time[], int rates_total, bool isRealtime, SSwingPoint &swH[], SSwingPoint &swL[], SOB_Zone &obArr[], int &obCount, long &obId, int &trend, bool requireFVG, double fvgMinPts, int maxOBCount, double obExtPts, double minZonePts, double maxZonePts, bool drawStructLines)\
+\{\
+   double barClose=close[barIdx]; datetime barTime=time[barIdx];\
+   int bestSH=-1,bestBI=999999,shCount=ArraySize(swH);\
+   for(int i=0;i<shCount;i++) \{ if(swH[i].broken)continue; if(swH[i].barIndex<=barIdx)continue; if(swH[i].barIndex<bestBI)\{bestSH=i;bestBI=swH[i].barIndex;\} \}\
+   if(bestSH>=0&&barClose>swH[bestSH].price)\
+   \{\
+      swH[bestSH].broken=true;\
+      ENUM_STRUCTURE_TYPE sType=(trend<=0)?STRUCT_CHOCH:STRUCT_BOS;\
+      trend=1;\
+      int obBar=OB_FindOBCandle(OB_BULLISH,swH[bestSH].barIndex,open,close,rates_total);\
+      if(obBar>=0)\
+      \{\
+         bool fvgOk=true; double fH=0,fL=0;\
+         if(requireFVG) fvgOk=OB_DetectFVG(obBar,OB_BULLISH,high,low,fH,fL,rates_total,fvgMinPts);\
+         if(fvgOk)\
+         \{\
+            OB_AddGeneric(OB_BULLISH,sType,high[obBar],low[obBar],time[obBar],barTime,fH,fL,isRealtime,obArr,obCount,obId,maxOBCount,obExtPts,minZonePts,maxZonePts,drawStructLines);\
+            if(drawStructLines&&InpShowBOS_Lines) OB_DrawStructLine(sType,swH[bestSH].price,swH[bestSH].time,barTime);\
+         \}\
+      \}\
+   \}\
+   int bestSL=-1; bestBI=999999; int slCount=ArraySize(swL);\
+   for(int i=0;i<slCount;i++) \{ if(swL[i].broken)continue; if(swL[i].barIndex<=barIdx)continue; if(swL[i].barIndex<bestBI)\{bestSL=i;bestBI=swL[i].barIndex;\} \}\
+   if(bestSL>=0&&barClose<swL[bestSL].price)\
+   \{\
+      swL[bestSL].broken=true;\
+      ENUM_STRUCTURE_TYPE sType=(trend>=0)?STRUCT_CHOCH:STRUCT_BOS;\
+      trend=-1;\
+      int obBar=OB_FindOBCandle(OB_BEARISH,swL[bestSL].barIndex,open,close,rates_total);\
+      if(obBar>=0)\
+      \{\
+         bool fvgOk=true; double fH=0,fL=0;\
+         if(requireFVG) fvgOk=OB_DetectFVG(obBar,OB_BEARISH,high,low,fH,fL,rates_total,fvgMinPts);\
+         if(fvgOk)\
+         \{\
+            OB_AddGeneric(OB_BEARISH,sType,high[obBar],low[obBar],time[obBar],barTime,fH,fL,isRealtime,obArr,obCount,obId,maxOBCount,obExtPts,minZonePts,maxZonePts,drawStructLines);\
+            if(drawStructLines&&InpShowBOS_Lines) OB_DrawStructLine(sType,swL[bestSL].price,swL[bestSL].time,barTime);\
+         \}\
+      \}\
+   \}\
+\}\
+\
+int OB_FindOBCandle(ENUM_OB_TYPE obType, int swingBar, const double &open[], const double &close[], int rates_total)\
+\{\
+   int limit=MathMin(swingBar+15,rates_total-1);\
+   for(int i=swingBar;i<=limit;i++) \{ if(obType==OB_BULLISH&&close[i]<open[i])return i; if(obType==OB_BEARISH&&close[i]>open[i])return i; \}\
+   return -1;\
+\}\
+\
+bool OB_DetectFVG(int obBar, ENUM_OB_TYPE obType, const double &high[], const double &low[], double &fvgH, double &fvgL, int rates_total, double fvgMinPts)\
+\{\
+   int impulseBar=obBar-1;\
+   if(impulseBar<1||obBar+1>=rates_total) return false;\
+   if(obType==OB_BULLISH) \{ double gL=high[obBar],gH=low[impulseBar-1]; if(gH>gL&&(gH-gL)/g_Pt>=fvgMinPts)\{fvgH=gH;fvgL=gL;return true;\} \}\
+   else \{ double gH=low[obBar],gL=high[impulseBar-1]; if(gH>gL&&(gH-gL)/g_Pt>=fvgMinPts)\{fvgH=gH;fvgL=gL;return true;\} \}\
+   return false;\
+\}\
+\
+void OB_AddGeneric(ENUM_OB_TYPE type, ENUM_STRUCTURE_TYPE sType, double zH, double zL, datetime candleTime, datetime brkTime, double fH, double fL, bool isRealtime, SOB_Zone &obArr[], int &obCount, long &obId, int maxOBCount, double obExtPts, double minZonePts, double maxZonePts, bool isPrimary)\
+\{\
+   if(obCount >= maxOBCount) OB_RemoveOldestGeneric(obArr, obCount);\
+   double ext=obExtPts*g_Pt;\
+   if(type==OB_BULLISH) zL-=ext; else zH+=ext;\
+   double sizePts=(zH-zL)/g_Pt;\
+   if(minZonePts>0&&sizePts<minZonePts) return;\
+   if(maxZonePts>0&&sizePts>maxZonePts) return;\
+   for(int i=0;i<obCount;i++) if(obArr[i].timeStart==candleTime&&MathAbs(obArr[i].high-zH)<g_Pt) return;\
+   SOB_Zone ob;\
+   ob.id=++obId; ob.type=type; ob.structType=sType;\
+   ob.status=OB_FRESH; ob.high=zH; ob.low=zL; ob.poc=(zH+zL)/2.0;\
+   ob.timeStart=candleTime; ob.breakTime=brkTime;\
+   ob.touchCount=0; ob.lastTouchTime=0; ob.isCurrentlyInside=false;\
+   ob.hasFVG=(fH>0); ob.fvgHigh=fH; ob.fvgLow=fL;\
+   ob.clusterSize=1; ob.clusterHidden=false;\
+   ob.cfScore=0; ob.cfTier=TIER_3; ob.cfDetail=""; ob.cfAlerted=false;\
+   ob.proximityAlerted=false; ob.sweepAlerted=false; ob.mitigatedAlerted=false;\
+   ob.cfSVP_Locked=0; ob.cfSVP_DetailLocked=""; ob.cfHTF_Locked=0; ob.cfHTF_DetailLocked="";\
+   // v5.62: Init ML fields\
+    ob.mlMaxBounce=0; ob.mlPriceAtBirth=0; ob.mlEmaBig=0; ob.mlEmaLocal=0;\
+    ob.mlSession=-1; ob.mlPOC=0; ob.mlVAH=0; ob.mlVAL=0; ob.mlPrevPOC=0;\
+    ob.mlDistToEMA=0; ob.mlLogged=false;\
+    ob.mlATR=0; ob.mlSpread=0; ob.mlFirstTouchTime=0; ob.mlActiveOBCount=0;\
+   ArrayResize(obArr,obCount+1);\
+   obArr[obCount]=ob; obCount++;\
+\
+ // v5.62: ML Logger \'97 record birth features + ATR/Spread/ActiveCount\
+    if(InpML_Logger && isPrimary && g_OB_Ready && isRealtime)\
+    \{\
+       double mlPrice = iClose(_Symbol, PERIOD_CURRENT, 0);\
+       double mlPOC = 0, mlVAH = 0, mlVAL = 0, mlPrevPOC = 0;\
+       if(g_DayCount > 0)\
+       \{\
+          int t = g_DayCount - 1;\
+          mlPOC = g_Days[t].compositePOC;\
+          mlVAH = g_Days[t].compositeVAH;\
+          mlVAL = g_Days[t].compositeVAL;\
+       \}\
+       if(g_DayCount >= 2)\
+          mlPrevPOC = g_Days[g_DayCount - 2].compositePOC;\
+       double emaBuf[];\
+       ArraySetAsSeries(emaBuf, true);\
+       double emaVal = 0;\
+       if(g_EMA_Handle_M5 != INVALID_HANDLE && CopyBuffer(g_EMA_Handle_M5, 0, 0, 1, emaBuf) > 0)\
+          emaVal = emaBuf[0];\
+       // v5.62: ATR(14) on M5\
+       double mlATR = 0;\
+       int atrHandle = iATR(_Symbol, InpOB_Timeframe, 14);\
+       if(atrHandle != INVALID_HANDLE)\
+       \{\
+          double atrBuf[];\
+          ArraySetAsSeries(atrBuf, true);\
+          if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0)\
+             mlATR = atrBuf[0];\
+          IndicatorRelease(atrHandle);\
+       \}\
+       // v5.62: Spread + Active OB count\
+       int mlSpread = (int)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);\
+       int mlActive = obCount;  // count includes the just-added OB\
+       ML_OnBirth(obArr[obCount - 1], mlPrice, g_BigBias, g_LocalBias,\
+                  mlPOC, mlVAH, mlVAL, mlPrevPOC, emaVal,\
+                  mlATR, mlSpread, mlActive);\
+    \}\
+\
+   if(isPrimary&&isRealtime&&g_OB_Ready)\
+   \{\
+      string htfTag=EnumToString(InpOB_Timeframe); StringReplace(htfTag,"PERIOD_","");\
+      string msg=StringFormat("%s OB (%s) %.2f-%.2f [%s %s]",(type==OB_BULLISH?"Bull":"Bear"),(sType==STRUCT_BOS?"BOS":"CHoCH"),zL,zH,_Symbol,htfTag);\
+      if(InpMT5_OB_New) \{ Alert(msg); if(InpMT5_Push) SendNotification(msg); \}\
+      if(InpTG_Enabled&&InpTG_OB_New) SendToTGQueue(msg);\
+   \}\
+\}\
+\
+void OB_CheckMitigationGeneric(int barIdx, const double &high[], const double &low[], const double &close[], const datetime &time[], SOB_Zone &obArr[], int &obCount)\
+\{\
+   for(int i=0;i<obCount;i++)\
+   \{\
+      if(obArr[i].status==OB_MITIGATED) continue;\
+      if(obArr[i].breakTime>=time[barIdx]) continue;\
+      double zH=obArr[i].high,zL=obArr[i].low;\
+      bool fullMit=false;\
+      if(obArr[i].type==OB_BULLISH&&close[barIdx]<zL) fullMit=true;\
+      if(obArr[i].type==OB_BEARISH&&close[barIdx]>zH) fullMit=true;\
+      if(fullMit) \{ obArr[i].status=OB_MITIGATED; obArr[i].touchCount++; obArr[i].lastTouchTime=time[barIdx]; obArr[i].isCurrentlyInside=false; continue; \}\
+      bool entered=(low[barIdx]<=zH&&high[barIdx]>=zL);\
+      if(!entered) \{ obArr[i].isCurrentlyInside=false; continue; \}\
+      if(time[barIdx]!=obArr[i].lastTouchTime) \{ obArr[i].lastTouchTime=time[barIdx]; if(!obArr[i].isCurrentlyInside)\{obArr[i].touchCount++;obArr[i].status=OB_TESTED_1;\} \}\
+      obArr[i].isCurrentlyInside=true;\
+   \}\
+\}\
+\
+void OB_RemoveOldestGeneric(SOB_Zone &obArr[], int &obCount)\
+\{\
+   if(obCount == 0) return;\
+   int oldest = 0;\
+   for(int i = 1; i < obCount; i++)\
+      if(obArr[i].id < obArr[oldest].id) oldest = i;\
+   // v5.61: Log dropped OB\
+   if(InpML_Logger) ML_OnDeath(obArr[oldest], "DROPPED", iClose(_Symbol, PERIOD_CURRENT, 0));\
+   for(int i = oldest; i < obCount - 1; i++)\
+      obArr[i] = obArr[i + 1];\
+   obCount--;\
+   ArrayResize(obArr, obCount);\
+\}\
+\
+void OB_ShiftSwingIndices(SSwingPoint &swH[], SSwingPoint &swL[], int maxBI)\
+\{\
+   int sz=ArraySize(swH); for(int i=0;i<sz;i++) swH[i].barIndex++;\
+   sz=ArraySize(swL); for(int i=0;i<sz;i++) swL[i].barIndex++;\
+   OB_TrimSwings(swH,maxBI); OB_TrimSwings(swL,maxBI);\
+\}\
+\
+void OB_TrimSwings(SSwingPoint &arr[], int maxBI)\
+\{\
+   int sz=ArraySize(arr),w=0;\
+   for(int i=0;i<sz;i++) \{ if(arr[i].barIndex<maxBI)\{if(w!=i)arr[w]=arr[i];w++;\} \}\
+   if(w<sz) ArrayResize(arr,w);\
+\}\
+\
+void OB_CheckMitigationCurrent(double barHigh, double barLow, double barClose, datetime barTime)\
+\{\
+   for(int i=0;i<g_OB_Count;i++)\
+   \{\
+      if(g_OB[i].status==OB_MITIGATED) continue;\
+      double zH=g_OB[i].high,zL=g_OB[i].low;\
+      if(InpDebugPrint)\
+      \{\
+         string typeStr=(g_OB[i].type==OB_BULLISH)?"BULL":"BEAR";\
+         bool skipBreak=(g_OB[i].breakTime>=barTime);\
+         bool wouldMit=false;\
+         if(g_OB[i].type==OB_BULLISH&&barClose<zL) wouldMit=true;\
+         if(g_OB[i].type==OB_BEARISH&&barClose>zH) wouldMit=true;\
+         bool entered=(barLow<=zH&&barHigh>=zL);\
+         Print("MIT_DBG id=",g_OB[i].id," ",typeStr," zH=",DoubleToString(zH,2)," zL=",DoubleToString(zL,2)," | bar H=",DoubleToString(barHigh,2)," L=",DoubleToString(barLow,2)," C=",DoubleToString(barClose,2)," T=",TimeToString(barTime)," | skipBrk=",skipBreak," entered=",entered," wouldMit=",wouldMit," status=",g_OB[i].status);\
+      \}\
+      datetime protectedUntil=g_OB[i].breakTime+(datetime)PeriodSeconds(InpOB_Timeframe);\
+      if(protectedUntil>barTime) continue;\
+      bool fullMit=false;\
+      if(g_OB[i].type==OB_BULLISH&&barClose<zL) fullMit=true;\
+      if(g_OB[i].type==OB_BEARISH&&barClose>zH) fullMit=true;\
+      if(fullMit)\
+      \{\
+         if(InpDebugPrint) Print("MIT_KILL id=",g_OB[i].id," MITIGATED! close=",DoubleToString(barClose,2)," vs zH=",DoubleToString(zH,2)," zL=",DoubleToString(zL,2));\
+         // v5.61: Log mitigated OB\
+         if(InpML_Logger) ML_OnDeath(g_OB[i], "MITIGATED", barClose);\
+         g_OB[i].status=OB_MITIGATED; g_OB[i].touchCount++; g_OB[i].lastTouchTime=barTime; g_OB[i].isCurrentlyInside=false;\
+         if(!g_OB[i].mitigatedAlerted&&g_OB_Ready)\
+         \{\
+            g_OB[i].mitigatedAlerted=true;\
+            string priTag=EnumToString(InpOB_Timeframe); StringReplace(priTag,"PERIOD_","");\
+            string dir=(g_OB[i].type==OB_BULLISH)?"BULL":"BEAR";\
+            string tierStr=OB_TierStr(g_OB[i].cfTier);\
+            string htfInfo=(g_OB[i].cfHTF_Locked>0)?" HTF":"";\
+            string prevStatus=(g_OB[i].touchCount>1)?"Tested":"Fresh";\
+            string msg=StringFormat("MITIGATED [%s:%d]%s\\n%s OB (%s) DESTROYED\\nZone: %.2f - %.2f\\nClose: %.2f | Was: %s\\nTouches: %d\\n%s\\n%s",tierStr,g_OB[i].cfScore,htfInfo,dir,priTag,zL,zH,barClose,prevStatus,g_OB[i].touchCount,TG_SafeStr(g_OB[i].cfDetail),_Symbol);\
+            if(InpMT5_Mitigated)\{Alert("MITIGATED "+msg);if(InpMT5_Push)SendNotification("MITIGATED "+msg);\}\
+            if(InpTG_Enabled&&InpTG_Mitigated)\{if(InpTG_TierS_Only&&g_OB[i].cfTier!=TIER_S)\{\}else SendToTGQueue("MITIGATED\\n"+msg);\}\
+         \}\
+         continue;\
+      \}\
+      bool entered=(barLow<=zH&&barHigh>=zL);\
+      if(!entered)\{g_OB[i].isCurrentlyInside=false;continue;\}\
+       if(barTime!=g_OB[i].lastTouchTime)\{g_OB[i].lastTouchTime=barTime;if(!g_OB[i].isCurrentlyInside)\{if(g_OB[i].touchCount==0&&g_OB[i].mlFirstTouchTime==0)g_OB[i].mlFirstTouchTime=barTime;g_OB[i].touchCount++;g_OB[i].status=OB_TESTED_1;\}\}\
+      g_OB[i].isCurrentlyInside=true;\
+   \}\
+\}\
+\
+void OB_ClusterAnalysis()\
+\{\
+   if(InpClusterDist_Pts<=0) return;\
+   double clusterDist=InpClusterDist_Pts*g_Pt;\
+   for(int i=0;i<g_OB_Count;i++)\{g_OB[i].clusterSize=1;g_OB[i].clusterHidden=false;\}\
+   for(int i=0;i<g_OB_Count;i++)\
+   \{\
+      if(g_OB[i].status==OB_MITIGATED||g_OB[i].clusterHidden) continue;\
+      for(int j=i+1;j<g_OB_Count;j++)\
+      \{\
+         if(g_OB[j].status==OB_MITIGATED||g_OB[j].clusterHidden) continue;\
+         if(g_OB[i].type!=g_OB[j].type) continue;\
+         double dist=MathAbs(g_OB[i].poc-g_OB[j].poc);\
+         bool overlapping=(g_OB[i].low<=g_OB[j].high&&g_OB[i].high>=g_OB[j].low);\
+         if(dist<=clusterDist||overlapping)\{int winner=OB_CompareStrength(i,j);int loser=(winner==i)?j:i;g_OB[winner].clusterSize+=g_OB[loser].clusterSize;g_OB[loser].clusterSize=0;g_OB[loser].clusterHidden=true;\}\
+      \}\
+   \}\
+\}\
+\
+int OB_CompareStrength(int a, int b)\
+\{\
+   if(g_OB[a].structType==STRUCT_CHOCH&&g_OB[b].structType!=STRUCT_CHOCH) return a;\
+   if(g_OB[b].structType==STRUCT_CHOCH&&g_OB[a].structType!=STRUCT_CHOCH) return b;\
+   if(g_OB[a].hasFVG&&!g_OB[b].hasFVG) return a;\
+   if(g_OB[b].hasFVG&&!g_OB[a].hasFVG) return b;\
+   double sA=g_OB[a].high-g_OB[a].low,sB=g_OB[b].high-g_OB[b].low;\
+   if(sA<sB) return a; if(sB<sA) return b;\
+   return (g_OB[a].id>g_OB[b].id)?a:b;\
+\}\
+\
+void OB_GarbageCollect()\
+\{\
+   int w=0;\
+   for(int i=0;i<g_OB_Count;i++)\
+   \{\
+      if(g_OB[i].status==OB_MITIGATED)\{OB_DeleteObj(g_OB[i].id);if(InpGhost_Enabled)Ghost_Add(g_OB[i]);continue;\}\
+      if(w!=i) g_OB[w]=g_OB[i]; w++;\
+   \}\
+   if(w!=g_OB_Count)\{g_OB_Count=w;ArrayResize(g_OB,g_OB_Count);\}\
+\}\
+\
+void Ghost_Add(SOB_Zone &ob)\
+\{\
+   ob.status=OB_GHOST;\
+   if(g_Ghost_Count>=InpGhost_Max)\
+   \{\
+      int oldest=0;\
+      for(int i=1;i<g_Ghost_Count;i++) if(g_Ghost[i].id<g_Ghost[oldest].id) oldest=i;\
+      Ghost_DeleteObj(g_Ghost[oldest].id);\
+      for(int i=oldest;i<g_Ghost_Count-1;i++) g_Ghost[i]=g_Ghost[i+1];\
+      g_Ghost_Count--;\
+   \}\
+   ArrayResize(g_Ghost,g_Ghost_Count+1); g_Ghost[g_Ghost_Count]=ob; g_Ghost_Count++;\
+\}\
+\
+void Ghost_DeleteObj(long obId)\{string id=IntegerToString(obId);ObjectDelete(0,"GH_R_"+id);ObjectDelete(0,"GH_L_"+id);\}\
+void OB_DeleteObj(long obId)\{string id=IntegerToString(obId);ObjectDelete(0,"OB_R_"+id);ObjectDelete(0,"OB_L_"+id);\}\
+\
+string OB_TierStr(ENUM_CONFLUENCE_TIER tier)\
+\{\
+   switch(tier)\{case TIER_S:return "S";case TIER_1:return "T1";case TIER_2:return "T2";default:return "T3";\}\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553              ENGINE 3 \'97 CONFLUENCE SCORING                         \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+string BuildHTFDetail(double obH, double obL, ENUM_OB_TYPE obType)\
+\{\
+   bool m15hit = false, h1hit = false;\
+   if(InpHTF_Enabled && g_CF_Ready)\
+      for(int j = 0; j < g_CF_OB_Count && !m15hit; j++)\
+         if(g_CF_OB[j].status != OB_MITIGATED && g_CF_OB[j].type == obType)\
+            if(obL <= g_CF_OB[j].high && obH >= g_CF_OB[j].low) m15hit = true;\
+   if(InpHTF2_Enabled && g_HTF2_Ready)\
+      for(int j = 0; j < g_HTF2_OB_Count && !h1hit; j++)\
+         if(g_HTF2_OB[j].status != OB_MITIGATED && g_HTF2_OB[j].type == obType)\
+            if(obL <= g_HTF2_OB[j].high && obH >= g_HTF2_OB[j].low) h1hit = true;\
+   if(m15hit && h1hit) return "M15+H1";\
+   if(h1hit)           return "H1";\
+   if(m15hit)          return "M15";\
+   return "";\
+\}\
+\
+void ScoreAllOBs()\
+\{\
+   g_stat_TierS=0;g_stat_Tier1=0;g_stat_Tier2=0;g_stat_Tier3=0;\
+   g_stat_TotalScored=0;double totalScore=0;g_stat_HTF_Confirmed=0;\
+   double todayPOC=0,todayVAH=0,todayVAL=0,prevPOC=0,prevVAH=0,prevVAL=0;\
+   double sessionPOC[3]=\{0,0,0\};\
+   if(g_DayCount>0)\{int t=g_DayCount-1;todayPOC=g_Days[t].compositePOC;todayVAH=g_Days[t].compositeVAH;todayVAL=g_Days[t].compositeVAL;for(int s=0;s<3;s++)sessionPOC[s]=g_Days[t].sessions[s].pocPrice;\}\
+   if(g_DayCount>=2)\{int p=g_DayCount-2;prevPOC=g_Days[p].compositePOC;prevVAH=g_Days[p].compositeVAH;prevVAL=g_Days[p].compositeVAL;\}\
+   double radius=InpConfluence_Radius_Pts*g_Pt;\
+   ENUM_SESSION_TYPE curSes; bool hasCurSes=SVP_GetSessionType(TimeCurrent(),curSes);\
+   for(int i=0;i<g_OB_Count;i++)\
+   \{\
+      if(g_OB[i].status==OB_MITIGATED||g_OB[i].clusterHidden) continue;\
+      int score=0;string detail="";\
+      double obH=g_OB[i].high,obL=g_OB[i].low,obMid=g_OB[i].poc;\
+      int svpScore=0;string svpDetail="";\
+      if(todayPOC>0&&IsNearZone(obH,obL,todayPOC,radius))\{svpScore+=40;svpDetail+="POC";\}\
+      if(todayVAH>0&&IsNearZone(obH,obL,todayVAH,radius))\{svpScore=MathMax(svpScore,30);AppendDetail(svpDetail,"VAH");\}\
+      if(todayVAL>0&&IsNearZone(obH,obL,todayVAL,radius))\{svpScore=MathMax(svpScore,30);AppendDetail(svpDetail,"VAL");\}\
+      if(todayVAH>0&&todayVAL>0&&obMid>=todayVAL&&obMid<=todayVAH&&svpScore<30)\{svpScore+=15;AppendDetail(svpDetail,"inVA");\}\
+      if(prevPOC>0&&IsNearZone(obH,obL,prevPOC,radius))\{svpScore+=25;AppendDetail(svpDetail,"pPOC");\}\
+      if(prevVAH>0&&IsNearZone(obH,obL,prevVAH,radius))\{svpScore+=12;AppendDetail(svpDetail,"pVAH");\}\
+      if(prevVAL>0&&IsNearZone(obH,obL,prevVAL,radius))\{svpScore+=12;AppendDetail(svpDetail,"pVAL");\}\
+      int sessionBonus=0;\
+      for(int s=0;s<3;s++)\{if(sessionPOC[s]>0&&IsNearZone(obH,obL,sessionPOC[s],radius))\{sessionBonus+=8;AppendDetail(svpDetail,(s==0?"sPOC_A":(s==1?"sPOC_L":"sPOC_N")));\}\}\
+      svpScore+=MathMin(sessionBonus,16);\
+      int currentSVP=MathMin(svpScore,40);\
+      if(currentSVP>g_OB[i].cfSVP_Locked)\{g_OB[i].cfSVP_Locked=currentSVP;g_OB[i].cfSVP_DetailLocked=svpDetail;\}\
+      score+=g_OB[i].cfSVP_Locked;\
+      if(g_OB[i].cfSVP_Locked>currentSVP) detail=g_OB[i].cfSVP_DetailLocked; else detail=svpDetail;\
+      int obQ=0;\
+      if(g_OB[i].structType==STRUCT_CHOCH)\{obQ+=15;AppendDetail(detail,"CHoCH");\}else\{obQ+=5;AppendDetail(detail,"BOS");\}\
+      if(g_OB[i].hasFVG)\{obQ+=10;AppendDetail(detail,"FVG");\}\
+      if(g_OB[i].status==OB_FRESH) obQ+=5;\
+      double zonePts=(obH-obL)/g_Pt;\
+      if(zonePts>0&&zonePts<500.0) obQ+=5;\
+      score+=MathMin(obQ,35);\
+      int clBonus=MathMin((g_OB[i].clusterSize-1)*5,15);\
+      if(clBonus>0)\{score+=clBonus;AppendDetail(detail,"x"+IntegerToString(g_OB[i].clusterSize));\}\
+      if(hasCurSes)\{ENUM_SESSION_TYPE obSes;if(SVP_GetSessionType(g_OB[i].timeStart,obSes))\{if(obSes==curSes)\{score+=10;AppendDetail(detail,"ActSes");\}\}\}\
+      if(InpHTF_Enabled || InpHTF2_Enabled)\
+      \{\
+         int currentHTF = GetHTFOverlapBonus(obH, obL, g_OB[i].type);\
+         string htfDetail = BuildHTFDetail(obH, obL, g_OB[i].type);\
+         if(currentHTF > g_OB[i].cfHTF_Locked) \{ g_OB[i].cfHTF_Locked = currentHTF; g_OB[i].cfHTF_DetailLocked = htfDetail; \}\
+         if(g_OB[i].cfHTF_Locked > 0) \{ score += g_OB[i].cfHTF_Locked; AppendDetail(detail, g_OB[i].cfHTF_DetailLocked); \}\
+         if(currentHTF > 0) g_stat_HTF_Confirmed++;\
+      \}\
+      if(g_OB[i].touchCount>0&&InpTouchBonus_Score>0)\{int touchBonus=MathMin(g_OB[i].touchCount*InpTouchBonus_Score,15);score+=touchBonus;AppendDetail(detail,"Def:"+IntegerToString(g_OB[i].touchCount));\}\
+      score=MathMin(score,100);\
+      g_OB[i].cfScore=score; g_OB[i].cfDetail=detail;\
+      if(score>=InpTierS_Threshold) g_OB[i].cfTier=TIER_S;\
+      else if(score>=InpTier1_Threshold) g_OB[i].cfTier=TIER_1;\
+      else if(score>=InpTier2_Threshold) g_OB[i].cfTier=TIER_2;\
+      else g_OB[i].cfTier=TIER_3;\
+      g_stat_TotalScored++;totalScore+=score;\
+      switch(g_OB[i].cfTier)\{case TIER_S:g_stat_TierS++;break;case TIER_1:g_stat_Tier1++;break;case TIER_2:g_stat_Tier2++;break;case TIER_3:g_stat_Tier3++;break;\}\
+   \}\
+   g_stat_AvgScore=(g_stat_TotalScored>0)?totalScore/g_stat_TotalScored:0;\
+\}\
+\
+int GetHTFOverlapBonus(double obH, double obL, ENUM_OB_TYPE obType)\
+\{\
+   int htf1Bonus = 0;\
+   int htf2Bonus = 0;\
+   if(InpHTF_Enabled)\
+   \{\
+      for(int j = 0; j < g_CF_OB_Count; j++)\
+      \{\
+         if(g_CF_OB[j].status == OB_MITIGATED) continue;\
+         if(g_CF_OB[j].type  != obType)        continue;\
+         if(obL <= g_CF_OB[j].high && obH >= g_CF_OB[j].low)\
+         \{\
+            int b = (g_CF_OB[j].structType == STRUCT_CHOCH) ? InpHTF_Bonus_CHoCH : InpHTF_Bonus_BOS;\
+            if(b > htf1Bonus) htf1Bonus = b;\
+         \}\
+      \}\
+   \}\
+   if(InpHTF2_Enabled && g_HTF2_Ready)\
+   \{\
+      for(int j = 0; j < g_HTF2_OB_Count; j++)\
+      \{\
+         if(g_HTF2_OB[j].status == OB_MITIGATED) continue;\
+         if(g_HTF2_OB[j].type  != obType)        continue;\
+         if(obL <= g_HTF2_OB[j].high && obH >= g_HTF2_OB[j].low)\
+         \{\
+            int b = (g_HTF2_OB[j].structType == STRUCT_CHOCH) ? InpHTF2_Bonus_CHoCH : InpHTF2_Bonus_BOS;\
+            if(b > htf2Bonus) htf2Bonus = b;\
+         \}\
+      \}\
+   \}\
+   return MathMin(htf1Bonus + htf2Bonus, 40);\
+\}\
+\
+bool IsNearZone(double zH, double zL, double level, double radius)\
+\{\
+   if(level>=zL&&level<=zH) return true;\
+   if(MathAbs(level-zH)<=radius) return true;\
+   if(MathAbs(level-zL)<=radius) return true;\
+   return false;\
+\}\
+\
+void AppendDetail(string &detail, string item)\
+\{ if(StringLen(detail)>0) detail+="+"; detail+=item; \}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553                     DRAWING                                        \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+void DrawAll(datetime now)\
+\{\
+   ObjectsDeleteAll(0,"SVP_");\
+   for(int d=0;d<g_DayCount;d++)\{if(g_Days[d].isToday)SVP_DrawTodayProfile(d,now);else if(InpShowPrevDay)SVP_DrawPrevDayLevels(d,now);\}\
+   for(int i=0;i<g_OB_Count;i++)\{if(g_OB[i].clusterHidden)\{OB_DeleteObj(g_OB[i].id);continue;\}DrawOB_Confluence(g_OB[i],now);\}\
+   if(InpGhost_Enabled)\{for(int i=0;i<g_Ghost_Count;i++)DrawGhostZone(g_Ghost[i],now);\}\
+   if(InpHTF2_Enabled && InpHTF2_ShowZones && g_HTF2_Ready) DrawHTF2_Zones(now);\
+   if(InpShowDashboard) DrawDashboard();\
+   ChartRedraw(0);\
+\}\
+\
+void DrawHTF2_Zones(datetime now)\
+\{\
+   double buffer = InpHTF2_HideBuffer_Pts * g_Pt;\
+   for(int i = 0; i < g_HTF2_OB_Count; i++)\
+   \{\
+      if(g_HTF2_OB[i].status == OB_MITIGATED) continue;\
+      double h2H = g_HTF2_OB[i].high;\
+      double h2L = g_HTF2_OB[i].low;\
+      bool hasM5Overlap = false;\
+      for(int j = 0; j < g_OB_Count; j++)\
+      \{\
+         if(g_OB[j].status == OB_MITIGATED || g_OB[j].clusterHidden) continue;\
+         if((g_OB[j].low - buffer) <= h2H && (g_OB[j].high + buffer) >= h2L)\
+         \{ hasM5Overlap = true; break; \}\
+      \}\
+      if(hasM5Overlap)\
+      \{\
+         ObjectDelete(0, "H2_R_" + IntegerToString(g_HTF2_OB[i].id));\
+         ObjectDelete(0, "H2_L_" + IntegerToString(g_HTF2_OB[i].id));\
+         continue;\
+      \}\
+      DrawHTF2_Zone(g_HTF2_OB[i], now);\
+   \}\
+\}\
+\
+void DrawHTF2_Zone(SOB_Zone &ob, datetime now)\
+\{\
+   string rName = "H2_R_" + IntegerToString(ob.id);\
+   string lName = "H2_L_" + IntegerToString(ob.id);\
+   bool isBull  = (ob.type == OB_BULLISH);\
+   color clr    = isBull ? InpHTF2_Bull_Color : InpHTF2_Bear_Color;\
+   datetime endT = now + (datetime)((long)PeriodSeconds() * 30);\
+   if(ObjectFind(0, rName) < 0)\
+   \{\
+      ObjectCreate(0, rName, OBJ_RECTANGLE, 0, ob.timeStart, ob.high, endT, ob.low);\
+      ObjectSetInteger(0, rName, OBJPROP_COLOR, clr);\
+      ObjectSetInteger(0, rName, OBJPROP_FILL, false);\
+      ObjectSetInteger(0, rName, OBJPROP_BACK, true);\
+      ObjectSetInteger(0, rName, OBJPROP_WIDTH, 2);\
+      ObjectSetInteger(0, rName, OBJPROP_STYLE, STYLE_DASH);\
+      ObjectSetInteger(0, rName, OBJPROP_SELECTABLE, false);\
+      ObjectSetInteger(0, rName, OBJPROP_HIDDEN, true);\
+   \}\
+   else\
+   \{\
+      ObjectSetInteger(0, rName, OBJPROP_TIME,  0, ob.timeStart);\
+      ObjectSetDouble(0, rName,  OBJPROP_PRICE, 0, ob.high);\
+      ObjectSetDouble(0, rName,  OBJPROP_PRICE, 1, ob.low);\
+      ObjectSetInteger(0, rName, OBJPROP_TIME,  1, endT);\
+      ObjectSetInteger(0, rName, OBJPROP_COLOR, clr);\
+   \}\
+   if(InpOB_LabelMode != LABEL_OFF)\
+   \{\
+      string sTypeLbl = (ob.structType == STRUCT_BOS) ? "BOS" : "CHoCH";\
+      string dirLbl   = isBull ? "Bull" : "Bear";\
+      string touchTxt = (ob.touchCount > 0) ? " D:" + IntegerToString(ob.touchCount) : "";\
+      string htf1Lbl  = EnumToString(InpHTF2_TF); StringReplace(htf1Lbl, "PERIOD_", "");\
+      string txt = StringFormat("[%s] %s %s %.2f-%.2f%s", htf1Lbl, dirLbl, sTypeLbl, ob.low, ob.high, touchTxt);\
+      datetime labelTime = endT - (datetime)((long)PeriodSeconds() * 2);\
+      double   labelPrice = (ob.high + ob.low) / 2.0;\
+      if(ObjectFind(0, lName) < 0)\
+      \{\
+         ObjectCreate(0, lName, OBJ_TEXT, 0, labelTime, labelPrice);\
+         ObjectSetString(0,  lName, OBJPROP_TEXT,      txt);\
+         ObjectSetInteger(0, lName, OBJPROP_COLOR,     clr);\
+         ObjectSetInteger(0, lName, OBJPROP_FONTSIZE,  InpDashFontSize);\
+         ObjectSetString(0,  lName, OBJPROP_FONT,      "Arial");\
+         ObjectSetInteger(0, lName, OBJPROP_ANCHOR,    ANCHOR_RIGHT);\
+         ObjectSetInteger(0, lName, OBJPROP_SELECTABLE,false);\
+         ObjectSetInteger(0, lName, OBJPROP_HIDDEN,    true);\
+      \}\
+      else\
+      \{\
+         ObjectSetString(0,  lName, OBJPROP_TEXT,  txt);\
+         ObjectSetInteger(0, lName, OBJPROP_COLOR, clr);\
+         ObjectSetInteger(0, lName, OBJPROP_TIME,  0, labelTime);\
+         ObjectSetDouble(0,  lName, OBJPROP_PRICE, 0, labelPrice);\
+      \}\
+   \}\
+   else ObjectDelete(0, lName);\
+\}\
+\
+void DrawOB_Confluence(SOB_Zone &ob, datetime now)\
+\{\
+   string rName="OB_R_"+IntegerToString(ob.id);\
+   string lName="OB_L_"+IntegerToString(ob.id);\
+   bool isBull=(ob.type==OB_BULLISH);\
+   color clr;\
+   switch(ob.cfTier)\{case TIER_S:clr=InpTierS_Color;break;case TIER_1:clr=InpTier1_Color;break;case TIER_2:clr=InpTier2_Color;break;default:clr=isBull?InpTier3_Bull_Color:InpTier3_Bear_Color;break;\}\
+   color txtClr=(ob.status==OB_TESTED_1)?InpTested_Color:clr;\
+   datetime endT=now+PeriodSeconds()*15;\
+   if(ObjectFind(0,rName)<0)\
+   \{\
+      ObjectCreate(0,rName,OBJ_RECTANGLE,0,ob.timeStart,ob.high,endT,ob.low);\
+      ObjectSetInteger(0,rName,OBJPROP_COLOR,clr);\
+      ObjectSetInteger(0,rName,OBJPROP_FILL,InpOB_Fill);\
+      ObjectSetInteger(0,rName,OBJPROP_BACK,true);\
+      ObjectSetInteger(0,rName,OBJPROP_WIDTH,InpBorderWidth);\
+      ObjectSetInteger(0,rName,OBJPROP_STYLE,InpBorderStyle);\
+      ObjectSetInteger(0,rName,OBJPROP_SELECTABLE,false);\
+      ObjectSetInteger(0,rName,OBJPROP_HIDDEN,true);\
+   \}\
+   else\
+   \{\
+      ObjectSetInteger(0,rName,OBJPROP_TIME,0,ob.timeStart);\
+      ObjectSetDouble(0,rName,OBJPROP_PRICE,0,ob.high);\
+      ObjectSetDouble(0,rName,OBJPROP_PRICE,1,ob.low);\
+      ObjectSetInteger(0,rName,OBJPROP_TIME,1,endT);\
+      ObjectSetInteger(0,rName,OBJPROP_COLOR,clr);\
+      ObjectSetInteger(0,rName,OBJPROP_FILL,InpOB_Fill);\
+      ObjectSetInteger(0,rName,OBJPROP_WIDTH,InpBorderWidth);\
+      ObjectSetInteger(0,rName,OBJPROP_STYLE,InpBorderStyle);\
+   \}\
+   if(InpOB_LabelMode!=LABEL_OFF)\
+   \{\
+      string tierChar="";\
+      switch(ob.cfTier)\{case TIER_S:tierChar="S";break;case TIER_1:tierChar="T1";break;case TIER_2:tierChar="T2";break;case TIER_3:tierChar="T3";break;\}\
+      string txt="";\
+      string touchTxt=(ob.touchCount>0)?" D:"+IntegerToString(ob.touchCount):"";\
+      if(InpOB_LabelMode==LABEL_SHORT)\
+         txt=StringFormat("%s %s [%s:%d]%s",(isBull?"Bull":"Bear"),(ob.structType==STRUCT_BOS?"BOS":"CHoCH"),tierChar,ob.cfScore,touchTxt);\
+      else\
+      \{\
+         string clusterTxt=(ob.clusterSize>1)?" x"+IntegerToString(ob.clusterSize):"";\
+         string htfTag=EnumToString(InpOB_Timeframe);StringReplace(htfTag,"PERIOD_","");\
+         txt=StringFormat("%s %s [%s:%d] x%d%s %s \{%s\}",(isBull?"Bull":"Bear"),(ob.structType==STRUCT_BOS?"BOS":"CHoCH"),tierChar,ob.cfScore,ob.touchCount,clusterTxt,ob.cfDetail,htfTag);\
+      \}\
+      datetime labelTime=endT-PeriodSeconds()*1;\
+      double labelPrice=(ob.high+ob.low)/2.0;\
+      if(ObjectFind(0,lName)<0)\
+      \{\
+         ObjectCreate(0,lName,OBJ_TEXT,0,labelTime,labelPrice);\
+         ObjectSetString(0,lName,OBJPROP_TEXT,txt);\
+         ObjectSetInteger(0,lName,OBJPROP_COLOR,txtClr);\
+         ObjectSetInteger(0,lName,OBJPROP_FONTSIZE,InpDashFontSize);\
+         ObjectSetString(0,lName,OBJPROP_FONT,"Arial");\
+         ObjectSetInteger(0,lName,OBJPROP_ANCHOR,ANCHOR_RIGHT);\
+         ObjectSetInteger(0,lName,OBJPROP_SELECTABLE,false);\
+         ObjectSetInteger(0,lName,OBJPROP_HIDDEN,true);\
+      \}\
+      else\
+      \{\
+         ObjectSetString(0,lName,OBJPROP_TEXT,txt);\
+         ObjectSetInteger(0,lName,OBJPROP_COLOR,txtClr);\
+         ObjectSetInteger(0,lName,OBJPROP_TIME,0,labelTime);\
+         ObjectSetDouble(0,lName,OBJPROP_PRICE,0,labelPrice);\
+      \}\
+   \}\
+   else ObjectDelete(0,lName);\
+\}\
+\
+void DrawGhostZone(SOB_Zone &ob, datetime now)\
+\{\
+   string rName="GH_R_"+IntegerToString(ob.id);\
+   string lName="GH_L_"+IntegerToString(ob.id);\
+   bool isBull=(ob.type==OB_BULLISH);\
+   color clr=isBull?InpGhost_Bull_Color:InpGhost_Bear_Color;\
+   datetime endT=ob.lastTouchTime>0?ob.lastTouchTime:now;\
+   if(ObjectFind(0,rName)<0)\{ObjectCreate(0,rName,OBJ_RECTANGLE,0,ob.timeStart,ob.high,endT,ob.low);ObjectSetInteger(0,rName,OBJPROP_COLOR,clr);ObjectSetInteger(0,rName,OBJPROP_FILL,true);ObjectSetInteger(0,rName,OBJPROP_BACK,true);ObjectSetInteger(0,rName,OBJPROP_WIDTH,1);ObjectSetInteger(0,rName,OBJPROP_STYLE,STYLE_DOT);ObjectSetInteger(0,rName,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,rName,OBJPROP_HIDDEN,true);\}\
+   if(InpOB_LabelMode!=LABEL_OFF)\
+   \{\
+      string txt=StringFormat("Ghost %s %s %.0f-%.0f D:%d",(isBull?"Bull":"Bear"),(ob.structType==STRUCT_BOS?"BOS":"CHoCH"),ob.low,ob.high,ob.touchCount);\
+      double labelPrice=(ob.high+ob.low)/2.0;\
+      if(ObjectFind(0,lName)<0)\{ObjectCreate(0,lName,OBJ_TEXT,0,endT,labelPrice);ObjectSetString(0,lName,OBJPROP_TEXT,txt);ObjectSetInteger(0,lName,OBJPROP_COLOR,clr);ObjectSetInteger(0,lName,OBJPROP_FONTSIZE,InpDashFontSize-1);ObjectSetString(0,lName,OBJPROP_FONT,"Arial");ObjectSetInteger(0,lName,OBJPROP_ANCHOR,ANCHOR_LEFT);ObjectSetInteger(0,lName,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,lName,OBJPROP_HIDDEN,true);\}\
+   \}\
+\}\
+\
+void OB_DrawStructLine(ENUM_STRUCTURE_TYPE sType, double price, datetime t1, datetime t2)\
+\{\
+   string pfx=(sType==STRUCT_BOS)?"BOS_":"CHO_";\
+   string name=pfx+IntegerToString((long)t1);\
+   if(ObjectFind(0,name)>=0) return;\
+   color clr=(sType==STRUCT_BOS)?InpBOS_Color:InpCHoCH_Color;\
+   ENUM_LINE_STYLE sty=(sType==STRUCT_BOS)?STYLE_DOT:STYLE_DASH;\
+   int w=(sType==STRUCT_CHOCH)?2:1;\
+   ObjectCreate(0,name,OBJ_TREND,0,t1,price,t2,price);\
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);ObjectSetInteger(0,name,OBJPROP_STYLE,sty);ObjectSetInteger(0,name,OBJPROP_WIDTH,w);ObjectSetInteger(0,name,OBJPROP_RAY_RIGHT,false);ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);ObjectSetInteger(0,name,OBJPROP_BACK,true);\
+\}\
+\
+void SVP_DrawTodayProfile(int dIdx, datetime now)\
+\{\
+   int nRows=g_Days[dIdx].rowCount; if(nRows==0) return;\
+   double rowSize=InpRowSize_Points*g_Pt; long barDur=PeriodSeconds();\
+   double maxVol=0;\
+   for(int r=0;r<nRows;r++) if(g_Days[dIdx].rows[r].totalVol>maxVol) maxVol=g_Days[dIdx].rows[r].totalVol;\
+   if(maxVol==0) return;\
+   datetime histStart=now+(datetime)((long)barDur*InpHistOffset);\
+   for(int r=0;r<nRows;r++)\
+   \{\
+      double rTop=g_Days[dIdx].rows[r].price+rowSize/2.0,rBot=g_Days[dIdx].rows[r].price-rowSize/2.0;\
+      double aVol=g_Days[dIdx].rows[r].asiaVol,lVol=g_Days[dIdx].rows[r].londonVol,nVol=g_Days[dIdx].rows[r].nyVol,tVol=g_Days[dIdx].rows[r].totalVol;\
+      if(tVol==0) continue;\
+      double totalRatio=tVol/maxVol; int totalBars=MathMax(1,(int)(InpHistBars*totalRatio));\
+      int aBars=(int)(totalBars*(aVol/tVol)),lBars=(int)(totalBars*(lVol/tVol)),nBars=totalBars-aBars-lBars;\
+      datetime cursor=histStart;\
+      if(aBars>0)\{datetime e=(datetime)(cursor+aBars*barDur);SVP_DrawRect(StringFormat("SVP_HA_%d_%d",dIdx,r),cursor,rTop,e,rBot,InpAsia_Color,InpHistFill);cursor=e;\}\
+      if(lBars>0)\{datetime e=(datetime)(cursor+lBars*barDur);SVP_DrawRect(StringFormat("SVP_HL_%d_%d",dIdx,r),cursor,rTop,e,rBot,InpLondon_Color,InpHistFill);cursor=e;\}\
+      if(nBars>0)\{datetime e=(datetime)(cursor+nBars*barDur);SVP_DrawRect(StringFormat("SVP_HN_%d_%d",dIdx,r),cursor,rTop,e,rBot,InpNY_Color,InpHistFill);\}\
+   \}\
+   SVP_DrawTrend("SVP_CPOC",g_Days[dIdx].firstBarTime,g_Days[dIdx].compositePOC,now,g_Days[dIdx].compositePOC,InpPOC_Color,STYLE_SOLID,2);\
+   SVP_DrawTrend("SVP_CVAH",g_Days[dIdx].firstBarTime,g_Days[dIdx].compositeVAH,now,g_Days[dIdx].compositeVAH,InpVAH_Color,STYLE_DASH,1);\
+   SVP_DrawTrend("SVP_CVAL",g_Days[dIdx].firstBarTime,g_Days[dIdx].compositeVAL,now,g_Days[dIdx].compositeVAL,InpVAL_Color,STYLE_DASH,1);\
+   color sPocC[3];sPocC[0]=InpAsia_Color;sPocC[1]=InpLondon_Color;sPocC[2]=InpNY_Color;\
+   for(int s=0;s<3;s++)\{if(g_Days[dIdx].sessions[s].pocPrice==0||g_Days[dIdx].sessions[s].tStart==0)continue;SVP_DrawTrend(StringFormat("SVP_SPOC_%d_%d",dIdx,s),g_Days[dIdx].sessions[s].tStart,g_Days[dIdx].sessions[s].pocPrice,now,g_Days[dIdx].sessions[s].pocPrice,sPocC[s],STYLE_DOT,1);\}\
+\}\
+\
+void SVP_DrawPrevDayLevels(int dIdx, datetime now)\
+\{\
+   datetime start=g_Days[dIdx].firstBarTime;\
+   if(g_Days[dIdx].compositePOC>0) SVP_DrawTrend("SVP_PPOC",start,g_Days[dIdx].compositePOC,now,g_Days[dIdx].compositePOC,InpPrevPOC_Color,STYLE_DASHDOTDOT,2);\
+   if(g_Days[dIdx].compositeVAH>0) SVP_DrawTrend("SVP_PVAH",start,g_Days[dIdx].compositeVAH,now,g_Days[dIdx].compositeVAH,InpPrevVA_Color,STYLE_DOT,1);\
+   if(g_Days[dIdx].compositeVAL>0) SVP_DrawTrend("SVP_PVAL",start,g_Days[dIdx].compositeVAL,now,g_Days[dIdx].compositeVAL,InpPrevVA_Color,STYLE_DOT,1);\
+\}\
+\
+void SVP_DrawRect(string name, datetime t1, double p1, datetime t2, double p2, color clr, bool fill)\
+\{\
+   if(ObjectFind(0,name)<0)\{ObjectCreate(0,name,OBJ_RECTANGLE,0,t1,p1,t2,p2);ObjectSetInteger(0,name,OBJPROP_COLOR,clr);ObjectSetInteger(0,name,OBJPROP_FILL,fill);ObjectSetInteger(0,name,OBJPROP_BACK,true);ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);\}\
+   else\{ObjectSetInteger(0,name,OBJPROP_TIME,0,t1);ObjectSetDouble(0,name,OBJPROP_PRICE,0,p1);ObjectSetInteger(0,name,OBJPROP_TIME,1,t2);ObjectSetDouble(0,name,OBJPROP_PRICE,1,p2);ObjectSetInteger(0,name,OBJPROP_COLOR,clr);\}\
+\}\
+\
+void SVP_DrawTrend(string name, datetime t1, double p1, datetime t2, double p2, color clr, ENUM_LINE_STYLE style, int width)\
+\{\
+   if(p1==0||p2==0) return;\
+   if(ObjectFind(0,name)<0)\{ObjectCreate(0,name,OBJ_TREND,0,t1,p1,t2,p2);ObjectSetInteger(0,name,OBJPROP_COLOR,clr);ObjectSetInteger(0,name,OBJPROP_STYLE,style);ObjectSetInteger(0,name,OBJPROP_WIDTH,width);ObjectSetInteger(0,name,OBJPROP_RAY_RIGHT,false);ObjectSetInteger(0,name,OBJPROP_BACK,true);ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);\}\
+   else\{ObjectMove(0,name,0,t1,p1);ObjectMove(0,name,1,t2,p2);ObjectSetInteger(0,name,OBJPROP_COLOR,clr);\}\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553                     DASHBOARD                                      \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+int DashAdd(string &lns[], color &cls[], int cnt, string txt, color clr)\
+\{ ArrayResize(lns,cnt+1);ArrayResize(cls,cnt+1);lns[cnt]=txt;cls[cnt]=clr;return cnt+1; \}\
+\
+void DrawDashboard()\
+\{\
+   ObjectsDeleteAll(0,"DSH_");\
+   int lineH=InpDashFontSize+6;\
+   string lines[]; color clrs[]; int n=0;\
+\
+   string priTag=EnumToString(InpOB_Timeframe);StringReplace(priTag,"PERIOD_","");\
+   string htf1Tag=InpHTF_Enabled?EnumToString(InpHTF_Confirm_TF):"OFF";StringReplace(htf1Tag,"PERIOD_","");\
+   string htf2Tag=InpHTF2_Enabled?EnumToString(InpHTF2_TF):"OFF";StringReplace(htf2Tag,"PERIOD_","");\
+   n=DashAdd(lines,clrs,n,StringFormat("OB+SVP v5.61 [%s+%s+%s SVP:M1]%s",priTag,htf1Tag,htf2Tag,(InpML_Logger?" ML":"")),(InpML_Logger?clrLime:InpTierS_Color));\
+\
+   if(InpCF_Enabled)\
+   \{\
+      color decClr;\
+      switch(g_cfDecision)\
+      \{ case CF_GO:decClr=clrLime;break; case CF_WARN:decClr=clrOrange;break; case CF_WAIT:decClr=clrYellow;break; default:decClr=clrDimGray;break; \}\
+      n=DashAdd(lines,clrs,n,"DECISION: "+g_cf_DecStr,decClr);\
+      n=DashAdd(lines,clrs,n,"\uc0\u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 \u9472 ",C'50,50,50');\
+      n=DashAdd(lines,clrs,n,"Baby : "+g_cf_BabyStr,InpDashText_Color);\
+      n=DashAdd(lines,clrs,n,"TMA  : "+g_cf_TMAStr,InpDashText_Color);\
+      n=DashAdd(lines,clrs,n,"Zone : "+g_cf_ZoneStr,InpTier1_Color);\
+      n=DashAdd(lines,clrs,n,"SVP  : "+g_cf_SVPStr,InpPOC_Color);\
+      color biasClr = (g_BigBias > 0) ? clrLimeGreen : (g_BigBias < 0 ? clrTomato : clrGray);\
+      if(g_BigBias != 0 && g_LocalBias != 0 && g_BigBias != g_LocalBias) biasClr = clrOrange;\
+      n=DashAdd(lines,clrs,n,"Bias : "+g_cf_BiasStr,biasClr);\
+      n=DashAdd(lines,clrs,n,"\uc0\u9472 \u9472  CONFLUENCE \u9472 \u9472 ",C'120,120,50');\
+   \}\
+\
+   string mt5Status="MT5:";\
+   if(InpMT5_OB_New)mt5Status+="New ";if(InpMT5_Retest)mt5Status+="Ret ";if(InpMT5_Proximity)mt5Status+="Prox ";if(InpMT5_Sweep)mt5Status+="Swp ";if(InpMT5_Mitigated)mt5Status+="Mit ";if(InpMT5_SitRep)mt5Status+="RPT ";if(InpMT5_Push)mt5Status+="[Push]";\
+   if(!InpMT5_OB_New&&!InpMT5_Retest&&!InpMT5_Proximity&&!InpMT5_Sweep&&!InpMT5_Mitigated&&!InpMT5_SitRep)mt5Status+="OFF";\
+   n=DashAdd(lines,clrs,n,mt5Status,C'100,100,100');\
+   if(InpTG_Enabled)\
+   \{\
+      string tgStatus="TG:";\
+      if(InpTG_OB_New)tgStatus+="New ";if(InpTG_Retest)tgStatus+="Ret ";if(InpTG_Proximity)tgStatus+="Prox ";if(InpTG_Sweep)tgStatus+="Swp ";if(InpTG_Mitigated)tgStatus+="Mit ";if(InpTG_SitRep)tgStatus+="RPT ";if(InpTG_TierS_Only)tgStatus+="[S]";\
+      n=DashAdd(lines,clrs,n,tgStatus,C'80,140,80');\
+   \}\
+   else n=DashAdd(lines,clrs,n,"TG: OFF",C'80,80,80');\
+\
+   ENUM_SESSION_TYPE curSes;\
+   if(SVP_GetSessionType(TimeCurrent(),curSes))\
+   \{ string sN=(curSes==SESSION_ASIA?"ASIA":(curSes==SESSION_LONDON?"LONDON":"NY")); color sC=(curSes==SESSION_ASIA?InpAsia_Color:(curSes==SESSION_LONDON?InpLondon_Color:InpNY_Color)); n=DashAdd(lines,clrs,n,"Session: "+sN,sC); \}\
+\
+   int indices[]; ArrayResize(indices,g_OB_Count); int vc=0;\
+   for(int i=0;i<g_OB_Count;i++)\{if(g_OB[i].status!=OB_MITIGATED&&!g_OB[i].clusterHidden)indices[vc++]=i;\}\
+   for(int i=0;i<vc-1&&i<InpDashMaxZones;i++)\
+      for(int j=i+1;j<vc;j++)\
+         if(g_OB[indices[j]].cfScore>g_OB[indices[i]].cfScore)\{int tmp=indices[i];indices[i]=indices[j];indices[j]=tmp;\}\
+   int sc=MathMin(vc,InpDashMaxZones);\
+   for(int k=sc-1;k>=0;k--)\
+   \{\
+      int idx=indices[k];\
+      string ts="";color tc=InpDashText_Color;\
+      switch(g_OB[idx].cfTier)\{case TIER_S:ts="S";tc=InpTierS_Color;break;case TIER_1:ts="T1";tc=InpTier1_Color;break;case TIER_2:ts="T2";tc=InpTier2_Color;break;case TIER_3:ts="T3";break;\}\
+      string dir=(g_OB[idx].type==OB_BULLISH)?"Bull":"Bear";\
+      n=DashAdd(lines,clrs,n,StringFormat("%s [%s:%d] %.2f-%.2f  %s",dir,ts,g_OB[idx].cfScore,g_OB[idx].low,g_OB[idx].high,g_OB[idx].cfDetail),tc);\
+   \}\
+   n=DashAdd(lines,clrs,n,"--- Top Zones ---",InpDashText_Color);\
+\
+   n=DashAdd(lines,clrs,n,StringFormat("S:%d T1:%d T2:%d T3:%d  HTF_Conf:%d",g_stat_TierS,g_stat_Tier1,g_stat_Tier2,g_stat_Tier3,g_stat_HTF_Confirmed),InpTierS_Color);\
+   n=DashAdd(lines,clrs,n,StringFormat("Active:%d Avg:%.0f M15:%d H1:%d Ghost:%d",g_stat_TotalScored,g_stat_AvgScore,g_CF_OB_Count,g_HTF2_OB_Count,g_Ghost_Count),InpDashText_Color);\
+   if(g_DayCount>=2)\{int p=g_DayCount-2;n=DashAdd(lines,clrs,n,StringFormat("pPOC:%.2f pVAH:%.2f pVAL:%.2f",g_Days[p].compositePOC,g_Days[p].compositeVAH,g_Days[p].compositeVAL),InpPrevPOC_Color);\}\
+   if(g_DayCount>0)\{int t=g_DayCount-1;n=DashAdd(lines,clrs,n,StringFormat("POC:%.2f VAH:%.2f VAL:%.2f",g_Days[t].compositePOC,g_Days[t].compositeVAH,g_Days[t].compositeVAL),InpPOC_Color);\}\
+\
+   for(int r=0;r<n;r++)\
+   \{\
+      string name="DSH_"+IntegerToString(r);\
+      ObjectCreate(0,name,OBJ_LABEL,0,0,0);\
+      ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_RIGHT_LOWER);\
+      ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_RIGHT_LOWER);\
+      ObjectSetInteger(0,name,OBJPROP_XDISTANCE,InpDashX);\
+      ObjectSetInteger(0,name,OBJPROP_YDISTANCE,InpDashY+r*lineH);\
+      ObjectSetString(0,name,OBJPROP_FONT,"Consolas");\
+      ObjectSetInteger(0,name,OBJPROP_FONTSIZE,InpDashFontSize);\
+      ObjectSetString(0,name,OBJPROP_TEXT,lines[r]);\
+      ObjectSetInteger(0,name,OBJPROP_COLOR,clrs[r]);\
+      ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);\
+      ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);\
+   \}\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553                ALERTS                                              \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+void CheckConfluenceAlerts(double price, datetime now)\
+\{\
+   static datetime lastAlertTime=0;\
+   if(now-lastAlertTime<60) return;\
+   for(int i=0;i<g_OB_Count;i++)\
+   \{\
+      if(g_OB[i].status==OB_MITIGATED||g_OB[i].clusterHidden||g_OB[i].cfAlerted) continue;\
+      if(InpTG_TierS_Only&&g_OB[i].cfTier!=TIER_S) continue;\
+      if(!(price>=g_OB[i].low&&price<=g_OB[i].high)) continue;\
+      string tierStr=OB_TierStr(g_OB[i].cfTier);\
+      string priTag=EnumToString(InpOB_Timeframe);StringReplace(priTag,"PERIOD_","");\
+      string dir=(g_OB[i].type==OB_BULLISH)?"BULL":"BEAR";\
+      string sName=(g_OB[i].structType==STRUCT_BOS)?"BOS":"CHoCH";\
+      string htfInfo=(g_OB[i].cfHTF_Locked>0)?" "+g_OB[i].cfHTF_DetailLocked:"";\
+      string statusStr=(g_OB[i].status==OB_FRESH)?"Fresh":"Retest";\
+      string msg=StringFormat("RETEST [%s:%d]%s\\n%s %s %s OB (%s)\\nScore: %d/100\\nZone: %.2f - %.2f\\n%s\\n%s",tierStr,g_OB[i].cfScore,htfInfo,statusStr,dir,sName,priTag,g_OB[i].cfScore,g_OB[i].low,g_OB[i].high,TG_SafeStr(g_OB[i].cfDetail),_Symbol);\
+      if(InpMT5_Retest)\{Alert("RETEST "+msg);if(InpMT5_Push)SendNotification("RETEST "+msg);\}\
+      if(InpTG_Enabled&&InpTG_Retest) SendToTGQueue("RETEST\\n"+msg);\
+      g_OB[i].cfAlerted=true; lastAlertTime=now; break;\
+   \}\
+\}\
+\
+void CheckProximityAlerts(double price, datetime now)\
+\{\
+   static datetime lastProxTime=0;\
+   if(now-lastProxTime<60) return;\
+   double proxDist=InpAlert_Proximity_Pts*g_Pt;\
+   for(int i=0;i<g_OB_Count;i++)\
+   \{\
+      if(g_OB[i].status==OB_MITIGATED||g_OB[i].clusterHidden) continue;\
+      if(g_OB[i].proximityAlerted) continue;\
+      if((int)g_OB[i].cfTier>(int)InpProximity_MinTier) continue;\
+      if(price>=g_OB[i].low&&price<=g_OB[i].high) continue;\
+      double distToZone=0;\
+      if(g_OB[i].type==OB_BULLISH) distToZone=g_OB[i].high-price;\
+      else distToZone=price-g_OB[i].low;\
+      if(distToZone<=0||distToZone>proxDist) continue;\
+      string tierStr=OB_TierStr(g_OB[i].cfTier);\
+      string priTag=EnumToString(InpOB_Timeframe);StringReplace(priTag,"PERIOD_","");\
+      string dir=(g_OB[i].type==OB_BULLISH)?"DEMAND":"SUPPLY";\
+      int distPts=(int)MathRound(distToZone/g_Pt);\
+      string htfInfo=(g_OB[i].cfHTF_Locked>0)?" "+g_OB[i].cfHTF_DetailLocked:"";\
+      string msg=StringFormat("APPROACHING %s [%s:%d]%s\\n%s zone %.2f - %.2f\\nDistance: %d pts\\n%s\\n%s",dir,tierStr,g_OB[i].cfScore,htfInfo,(g_OB[i].structType==STRUCT_BOS?"BOS":"CHoCH"),g_OB[i].low,g_OB[i].high,distPts,TG_SafeStr(g_OB[i].cfDetail),_Symbol);\
+      if(InpMT5_Proximity)\{Alert("APPROACHING "+msg);if(InpMT5_Push)SendNotification("APPROACHING "+msg);\}\
+      if(InpTG_Enabled&&InpTG_Proximity) SendToTGQueue("APPROACHING\\n"+msg);\
+      g_OB[i].proximityAlerted=true; lastProxTime=now; break;\
+   \}\
+\}\
+\
+void CheckSweepAlerts(double barHigh, double barLow, double barClose, double barOpen, datetime now)\
+\{\
+   static datetime lastSweepTime=0;\
+   if(now-lastSweepTime<60) return;\
+   double maxPierce=InpAlert_Sweep_Pts*g_Pt;\
+   for(int i=0;i<g_OB_Count;i++)\
+   \{\
+      if(g_OB[i].status==OB_MITIGATED||g_OB[i].clusterHidden) continue;\
+      if(g_OB[i].sweepAlerted) continue;\
+      if(g_OB[i].breakTime>=now) continue;\
+      if((int)g_OB[i].cfTier>(int)InpSweep_MinTier) continue;\
+      double zH=g_OB[i].high,zL=g_OB[i].low;\
+      bool swept=false;string sweepDir="";double pierceAmount=0;\
+      if(g_OB[i].type==OB_BULLISH)\{double pierce=zL-barLow;if(pierce>0&&pierce<=maxPierce&&barClose>=zL)\{swept=true;sweepDir="BULL SWEEP";pierceAmount=pierce;\}\}\
+      else\{double pierce=barHigh-zH;if(pierce>0&&pierce<=maxPierce&&barClose<=zH)\{swept=true;sweepDir="BEAR SWEEP";pierceAmount=pierce;\}\}\
+      if(!swept) continue;\
+      string tierStr=OB_TierStr(g_OB[i].cfTier);\
+      string priTag=EnumToString(InpOB_Timeframe);StringReplace(priTag,"PERIOD_","");\
+      int piercePts=(int)MathRound(pierceAmount/g_Pt);\
+      string htfInfo=(g_OB[i].cfHTF_Locked>0)?" "+g_OB[i].cfHTF_DetailLocked:"";\
+      double bodySize=MathAbs(barClose-barOpen),fullRange=barHigh-barLow;\
+      string rejType="";\
+      if(fullRange>0&&bodySize/fullRange<0.35)rejType=" Pinbar";\
+      else if(fullRange>0&&bodySize/fullRange<0.50)rejType=" Rejection";\
+      string msg=StringFormat("%s%s [%s:%d]%s\\nZone: %.2f - %.2f (%s)\\nPierce: %d pts | Close: %.2f\\n%s\\n%s",sweepDir,rejType,tierStr,g_OB[i].cfScore,htfInfo,g_OB[i].low,g_OB[i].high,priTag,piercePts,barClose,TG_SafeStr(g_OB[i].cfDetail),_Symbol);\
+      if(InpMT5_Sweep)\{Alert("SWEEP "+msg);if(InpMT5_Push)SendNotification("SWEEP "+msg);\}\
+      if(InpTG_Enabled&&InpTG_Sweep) SendToTGQueue("SWEEP\\n"+msg);\
+      g_OB[i].sweepAlerted=true; lastSweepTime=now; break;\
+   \}\
+\}\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553                     TELEGRAM QUEUE                                 \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+string TG_SafeStr(string text)\
+\{\
+   StringReplace(text,"&","&amp;");StringReplace(text,"<","&lt;");StringReplace(text,">","&gt;");\
+   return text;\
+\}\
+\
+string TG_EscapeNonHTML(string text)\
+\{\
+   StringReplace(text,"<b>","\\x02BOLD_O\\x03");StringReplace(text,"</b>","\\x02BOLD_C\\x03");\
+   StringReplace(text,"<i>","\\x02ITAL_O\\x03");StringReplace(text,"</i>","\\x02ITAL_C\\x03");\
+   StringReplace(text,"<u>","\\x02UNDR_O\\x03");StringReplace(text,"</u>","\\x02UNDR_C\\x03");\
+   StringReplace(text,"<s>","\\x02STRK_O\\x03");StringReplace(text,"</s>","\\x02STRK_C\\x03");\
+   StringReplace(text,"<code>","\\x02CODE_O\\x03");StringReplace(text,"</code>","\\x02CODE_C\\x03");\
+   StringReplace(text,"<pre>","\\x02PRE_O\\x03");StringReplace(text,"</pre>","\\x02PRE_C\\x03");\
+   StringReplace(text,"&","&amp;");StringReplace(text,"<","&lt;");StringReplace(text,">","&gt;");\
+   StringReplace(text,"\\x02BOLD_O\\x03","<b>");StringReplace(text,"\\x02BOLD_C\\x03","</b>");\
+   StringReplace(text,"\\x02ITAL_O\\x03","<i>");StringReplace(text,"\\x02ITAL_C\\x03","</i>");\
+   StringReplace(text,"\\x02UNDR_O\\x03","<u>");StringReplace(text,"\\x02UNDR_C\\x03","</u>");\
+   StringReplace(text,"\\x02STRK_O\\x03","<s>");StringReplace(text,"\\x02STRK_C\\x03","</s>");\
+   StringReplace(text,"\\x02CODE_O\\x03","<code>");StringReplace(text,"\\x02CODE_C\\x03","</code>");\
+   StringReplace(text,"\\x02PRE_O\\x03","<pre>");StringReplace(text,"\\x02PRE_C\\x03","</pre>");\
+   return text;\
+\}\
+\
+void SendToTGQueue(string message)\
+\{\
+   string gvName="BABY_ALERT_NEW";\
+   long queueId=0;\
+   if(GlobalVariableCheck(gvName)) queueId=(long)GlobalVariableGet(gvName);\
+   queueId++;\
+   string header=TG_SafeStr(_Symbol)+" "+TG_SafeStr(InpTG_Prefix);\
+   string fullMsg="<b>"+header+"</b>\\n"+TG_EscapeNonHTML(message);\
+   string fileName="baby_alert_"+IntegerToString(queueId)+".txt";\
+   int handle=FileOpen(fileName,FILE_WRITE|FILE_TXT|FILE_COMMON);\
+   if(handle!=INVALID_HANDLE)\{FileWriteString(handle,fullMsg);FileClose(handle);GlobalVariableSet(gvName,(double)queueId);\}\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553               SITUATION REPORT                                     \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+void CheckSituationReport(double price, datetime now)\
+\{\
+   MqlDateTime mdt; TimeToStruct(now,mdt); int curHour=mdt.hour;\
+   ENUM_SESSION_TYPE curSes; bool inSession=SVP_GetSessionType(now,curSes);\
+   bool sendHourly=false,sendSession=false;\
+   if(InpReport_Freq==RPT_HOURLY||InpReport_Freq==RPT_BOTH)\{if(curHour!=g_RPT_LastHour&&g_RPT_LastHour>=0)sendHourly=true;\}\
+   if(InpReport_Freq==RPT_SESSION||InpReport_Freq==RPT_BOTH)\{if(inSession&&g_RPT_SessionInit&&curSes!=g_RPT_LastSession)sendSession=true;\}\
+   g_RPT_LastHour=curHour;\
+   if(inSession)\{if(!g_RPT_SessionInit)g_RPT_SessionInit=true;g_RPT_LastSession=curSes;\}\
+   if(sendHourly||sendSession)\
+   \{\
+      string trigger=sendSession?"SESSION":"HOURLY";\
+      string report=BuildSituationReport(price,now,trigger);\
+      if(StringLen(report)>0)\
+      \{\
+         if(InpTG_Enabled&&InpTG_SitRep)\
+         \{ string sesTag="OFF";if(inSession)sesTag=(curSes==SESSION_ASIA?"ASIA":(curSes==SESSION_LONDON?"LONDON":"NY"));SendToTGQueue("[SCREENSHOT:"+trigger+"|"+sesTag+"]\\n"+report); \}\
+         if(InpMT5_SitRep) Alert("SITREP: "+trigger);\
+         if(InpDebugPrint) Print(report);\
+      \}\
+   \}\
+\}\
+\
+string BuildSituationReport(double price, datetime now, string trigger)\
+\{\
+   ENUM_SESSION_TYPE curSes; string sesName="OFF-SESSION";\
+   if(SVP_GetSessionType(now,curSes))sesName=(curSes==SESSION_ASIA?"ASIA":(curSes==SESSION_LONDON?"LONDON":"NEW YORK"));\
+   string priTag=EnumToString(InpOB_Timeframe);StringReplace(priTag,"PERIOD_","");\
+   string htfTag=InpHTF_Enabled?EnumToString(InpHTF_Confirm_TF):"OFF";StringReplace(htfTag,"PERIOD_","");\
+   string bigLabel   = (g_BigBias   >  0) ? "Bull" : (g_BigBias   < 0 ? "Bear" : "Neutral");\
+   string localLabel = (g_LocalBias >  0) ? "Bull" : (g_LocalBias < 0 ? "Bear" : "Neutral");\
+   bool   htfV = InpHTF_Enabled && PeriodSeconds(InpHTF_Confirm_TF) > PeriodSeconds(InpOB_Timeframe);\
+   string tfLbl = htfV ? EnumToString(InpHTF_Confirm_TF) : EnumToString(InpOB_Timeframe);\
+   StringReplace(tfLbl,"PERIOD_","");\
+   string trendStr = StringFormat("%s(%s) | %s(M5)", bigLabel, tfLbl, localLabel);\
+   string rpt="<b>SITREP "+trigger+"</b> - "+sesName+"\\n";\
+   rpt+=StringFormat("Price: <b>%.2f</b> | Bias: %s\\n",price,trendStr);\
+   rpt+=StringFormat("OB: %s+%s+H1 | Zones: %d | HTF_Conf: %d | H1: %d\\n",priTag,htfTag,g_stat_TotalScored,g_stat_HTF_Confirmed,g_HTF2_OB_Count);\
+   rpt+="-----------------\\n";\
+   if(InpReport_SVP_Context&&g_DayCount>0)\
+   \{\
+      int d=g_DayCount-1;\
+      double poc=g_Days[d].compositePOC,vah=g_Days[d].compositeVAH,val=g_Days[d].compositeVAL;\
+      string posStr="";\
+      if(price>vah)posStr="ABOVE VA";else if(price<val)posStr="BELOW VA";else if(poc>0&&MathAbs(price-poc)<InpRowSize_Points*g_Pt*2)posStr="AT POC";else if(price>poc)posStr="Upper VA";else posStr="Lower VA";\
+      rpt+=StringFormat("Position: %s\\n",posStr);\
+      rpt+=StringFormat("POC:%.2f VAH:%.2f VAL:%.2f\\n",poc,vah,val);\
+      if(g_DayCount>=2)\{int p=g_DayCount-2;rpt+=StringFormat("pPOC:%.2f pVAH:%.2f pVAL:%.2f\\n",g_Days[p].compositePOC,g_Days[p].compositeVAH,g_Days[p].compositeVAL);\}\
+      rpt+="-----------------\\n";\
+   \}\
+   int supplyIdx[],demandIdx[]; double supplyDist[],demandDist[]; int supplyN=0,demandN=0;\
+   ArrayResize(supplyIdx,g_OB_Count);ArrayResize(supplyDist,g_OB_Count);ArrayResize(demandIdx,g_OB_Count);ArrayResize(demandDist,g_OB_Count);\
+   for(int i=0;i<g_OB_Count;i++)\
+   \{\
+      if(g_OB[i].status==OB_MITIGATED||g_OB[i].clusterHidden) continue;\
+      if((int)g_OB[i].cfTier>(int)InpReport_MinTier) continue;\
+      double zMid=g_OB[i].poc,dist=MathAbs(price-zMid);\
+      if(g_OB[i].type==OB_BEARISH&&zMid>price)\{supplyIdx[supplyN]=i;supplyDist[supplyN]=dist;supplyN++;\}\
+      else if(g_OB[i].type==OB_BULLISH&&zMid<price)\{demandIdx[demandN]=i;demandDist[demandN]=dist;demandN++;\}\
+   \}\
+   RPT_SortByDist(supplyIdx,supplyDist,supplyN);RPT_SortByDist(demandIdx,demandDist,demandN);\
+   rpt+="<b>SUPPLY (above)</b>\\n";if(supplyN==0)rpt+="  none\\n";\
+   int showS=MathMin(supplyN,InpReport_MaxZones);for(int k=0;k<showS;k++)rpt+=RPT_FormatZone(g_OB[supplyIdx[k]],price);\
+   rpt+="<b>DEMAND (below)</b>\\n";if(demandN==0)rpt+="  none\\n";\
+   int showD=MathMin(demandN,InpReport_MaxZones);for(int k=0;k<showD;k++)rpt+=RPT_FormatZone(g_OB[demandIdx[k]],price);\
+   if(InpReport_Plan)\{rpt+="-----------------\\n";rpt+=RPT_BuildPlan(price,supplyIdx,supplyDist,supplyN,demandIdx,demandDist,demandN);\}\
+   return rpt;\
+\}\
+\
+string RPT_FormatZone(SOB_Zone &ob, double price)\
+\{\
+   string tierStr=OB_TierStr(ob.cfTier),sType=(ob.structType==STRUCT_BOS)?"BOS":"CHoCH";\
+   string htfStr=(ob.cfHTF_Locked>0)?" "+ob.cfHTF_DetailLocked:"";\
+   string freshStr=(ob.status==OB_FRESH)?"Fresh":"Tested";\
+   double nearEdge=(ob.type==OB_BULLISH)?ob.high:ob.low;\
+   int distPts=(int)MathRound(MathAbs(price-nearEdge)/g_Pt);\
+   return StringFormat("  [%s:%d]%s %s %s %.2f-%.2f (%d pts) %s\\n    %s\\n",tierStr,ob.cfScore,htfStr,freshStr,sType,ob.low,ob.high,distPts,_Symbol,TG_SafeStr(ob.cfDetail));\
+\}\
+\
+string RPT_BuildPlan(double price, int &sIdx[], double &sDist[], int sN, int &dIdx[], double &dDist[], int dN)\
+\{\
+   string plan="<b>PLAN:</b>\\n";\
+   if(sN>0)\{int si=sIdx[0];int distPts=(int)MathRound(MathAbs(price-g_OB[si].low)/g_Pt);string sTier=OB_TierStr(g_OB[si].cfTier);if(distPts<InpAlert_Proximity_Pts)plan+=StringFormat("  Supply %s [%d] only %d pts above!\\n",sTier,g_OB[si].cfScore,distPts);else plan+=StringFormat("  Nearest supply %s [%d] at %d pts\\n",sTier,g_OB[si].cfScore,distPts);\}\
+   else plan+="  No supply zones above\\n";\
+   if(dN>0)\{int di=dIdx[0];int distPts=(int)MathRound(MathAbs(price-g_OB[di].high)/g_Pt);string dTier=OB_TierStr(g_OB[di].cfTier);if(distPts<InpAlert_Proximity_Pts)plan+=StringFormat("  Demand %s [%d] only %d pts below!\\n",dTier,g_OB[di].cfScore,distPts);else plan+=StringFormat("  Nearest demand %s [%d] at %d pts\\n",dTier,g_OB[di].cfScore,distPts);\}\
+   else plan+="  No demand zones below\\n";\
+   if(sN>0&&dN>0)\{double ratio=(dDist[0]>0)?sDist[0]/dDist[0]:99;if(ratio>2.0)plan+="  Bias: Near DEMAND - watch for bounce\\n";else if(ratio<0.5)plan+="  Bias: Near SUPPLY - watch for rejection\\n";else plan+="  Bias: Mid-range - wait for directional move\\n";\}\
+   if(InpReport_SVP_Context&&g_DayCount>0)\{int d=g_DayCount-1;double poc=g_Days[d].compositePOC,vah=g_Days[d].compositeVAH,val=g_Days[d].compositeVAL;if(price>vah)plan+="  Above VA - extended, mean-reversion risk\\n";else if(price<val)plan+="  Below VA - undervalued, bounce potential\\n";else if(poc>0&&MathAbs(price-poc)<InpRowSize_Points*g_Pt*3)plan+="  Near POC - fair value, expect range\\n";\}\
+   if(sN>=2)\{double clusterRange=MathAbs(g_OB[sIdx[0]].poc-g_OB[sIdx[MathMin(sN-1,InpReport_MaxZones-1)]].poc);int clusterPts=(int)MathRound(clusterRange/g_Pt);if(clusterPts<500&&sN>=2)plan+=StringFormat("  Supply cluster: %d zones within %d pts\\n",MathMin(sN,InpReport_MaxZones),clusterPts);\}\
+   if(dN>=2)\{double clusterRange=MathAbs(g_OB[dIdx[0]].poc-g_OB[dIdx[MathMin(dN-1,InpReport_MaxZones-1)]].poc);int clusterPts=(int)MathRound(clusterRange/g_Pt);if(clusterPts<500&&dN>=2)plan+=StringFormat("  Demand cluster: %d zones within %d pts\\n",MathMin(dN,InpReport_MaxZones),clusterPts);\}\
+   return plan;\
+\}\
+\
+void RPT_SortByDist(int &idx[], double &dist[], int n)\
+\{\
+   for(int i=0;i<n-1;i++)for(int j=i+1;j<n;j++)if(dist[j]<dist[i])\{double td=dist[i];dist[i]=dist[j];dist[j]=td;int ti=idx[i];idx[i]=idx[j];idx[j]=ti;\}\
+\}\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553        v5.60 \'97 EMA BIAS ENGINE                                     \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+int GetEMABias(int handle, ENUM_TIMEFRAMES tf)\
+\{\
+   if(handle == INVALID_HANDLE) return 0;\
+   double buf[];\
+   ArraySetAsSeries(buf, true);\
+   if(CopyBuffer(handle, 0, 1, 1, buf) <= 0) return 0;  // bar[1] = closed bar\
+   double ema = buf[0];\
+   if(ema <= 0) return 0;\
+   double price = iClose(_Symbol, tf, 1);               // bar[1] = closed bar\
+   if(price <= 0) return 0;\
+   double threshold = InpEMA_Threshold_Pts * _Point;\
+   if(price > ema + threshold) return  1;\
+   if(price < ema - threshold) return -1;\
+   return 0;\
+\}\
+\
+int GetOBContext()\
+\{\
+   int bullCount = 0, bearCount = 0;\
+   for(int i = 0; i < g_OB_Count; i++)\
+   \{\
+      if(g_OB[i].status == OB_MITIGATED || g_OB[i].clusterHidden) continue;\
+      if(g_OB[i].cfTier == TIER_3) continue;\
+      if(g_OB[i].type == OB_BULLISH) bullCount++;\
+      else                           bearCount++;\
+   \}\
+   if(bullCount > bearCount) return  1;\
+   if(bearCount > bullCount) return -1;\
+   return 0;\
+\}\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553           PHASE 2 \'97 CONFLUENCE DECISION ENGINE                     \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+void CF_Update(double price, datetime now)\
+\{\
+   if(!InpCF_Enabled) return;\
+   bool htfValid = InpHTF_Enabled &&\
+                   PeriodSeconds(InpHTF_Confirm_TF) > PeriodSeconds(InpOB_Timeframe);\
+   g_BigBias   = htfValid ? GetEMABias(g_EMA_Handle_HTF, InpHTF_Confirm_TF)\
+                       : GetEMABias(g_EMA_Handle_M5,  InpOB_Timeframe);\
+   g_LocalBias = GetEMABias(g_EMA_Handle_M5, InpOB_Timeframe);\
+   int obCtx   = GetOBContext();\
+   double tmaDir   = GlobalVariableCheck("CONF_TMA_DIR")   ? GlobalVariableGet("CONF_TMA_DIR")   : 0.0;\
+   double tmaTime  = GlobalVariableCheck("CONF_TMA_TIME")  ? GlobalVariableGet("CONF_TMA_TIME")  : 0.0;\
+   double tmaPa    = GlobalVariableCheck("CONF_TMA_PA")    ? GlobalVariableGet("CONF_TMA_PA")    : 0.0;\
+   double babyDir  = GlobalVariableCheck("CONF_BABY_DIR")  ? GlobalVariableGet("CONF_BABY_DIR")  : 0.0;\
+   double babyTime = GlobalVariableCheck("CONF_BABY_TIME") ? GlobalVariableGet("CONF_BABY_TIME") : 0.0;\
+   double babyType = GlobalVariableCheck("CONF_BABY_TYPE") ? GlobalVariableGet("CONF_BABY_TYPE") : 0.0;\
+   int bias = g_BigBias;\
+   string bigStr   = (g_BigBias   >  0) ? "BULL" : (g_BigBias   < 0 ? "BEAR" : "NEUT");\
+   string localStr = (g_LocalBias >  0) ? "BULL" : (g_LocalBias < 0 ? "BEAR" : "NEUT");\
+   string tfBigStr = htfValid ? EnumToString(InpHTF_Confirm_TF) : EnumToString(InpOB_Timeframe);\
+   StringReplace(tfBigStr, "PERIOD_", "");\
+   string ctxTag = "";\
+   if(g_BigBias != 0 && g_LocalBias != 0 && g_BigBias != g_LocalBias) ctxTag = " X";\
+   obCtx = GetOBContext();\
+   string obTag = "";\
+   if(obCtx != 0 && obCtx != g_BigBias) obTag = (obCtx > 0) ? " [OB:Bull]" : " [OB:Bear]";\
+   g_cf_BiasStr = StringFormat("%s(%s) | %s(M5)%s%s", bigStr, tfBigStr, localStr, ctxTag, obTag);\
+   if(g_DayCount > 0)\
+   \{\
+      int d = g_DayCount - 1;\
+      double poc    = g_Days[d].compositePOC;\
+      double vah    = g_Days[d].compositeVAH;\
+      double val    = g_Days[d].compositeVAL;\
+      double rowPts = InpRowSize_Points * g_Pt * 2.0;\
+      if(poc > 0)\
+      \{\
+         if(price > vah)                        g_cf_SVPStr = StringFormat("Above VAH (%.2f)", vah);\
+         else if(price < val)                   g_cf_SVPStr = StringFormat("Below VAL (%.2f)", val);\
+         else if(MathAbs(price - poc) < rowPts) g_cf_SVPStr = StringFormat("At POC (%.2f)", poc);\
+         else if(price > poc)                   g_cf_SVPStr = StringFormat("Upper VA / POC %.2f", poc);\
+         else                                   g_cf_SVPStr = StringFormat("Lower VA / POC %.2f", poc);\
+      \}\
+      else g_cf_SVPStr = "No SVP data";\
+   \}\
+   else g_cf_SVPStr = "No SVP data";\
+   if(bias == 0)\
+   \{\
+      g_cfDecision = CF_SKIP;\
+      g_cf_DecStr  = "SKIP - No structural bias";\
+      g_cf_ZoneStr = "-"; g_cf_TMAStr = "-";\
+      g_cf_BabyStr = "-";\
+      return;\
+   \}\
+   double proxDist   = InpAlert_Proximity_Pts * g_Pt;\
+   bool   zoneFound  = false;\
+   bool   zoneStrong = false;\
+   bool   inOppZone  = false;\
+   int    bestIdx    = -1;\
+   double bestDist   = DBL_MAX;\
+   for(int i = 0; i < g_OB_Count; i++)\
+   \{\
+      if(g_OB[i].status == OB_MITIGATED || g_OB[i].clusterHidden) continue;\
+      if(bias > 0 && g_OB[i].type == OB_BEARISH && price >= g_OB[i].low && price <= g_OB[i].high) inOppZone = true;\
+      if(bias < 0 && g_OB[i].type == OB_BULLISH && price >= g_OB[i].low && price <= g_OB[i].high) inOppZone = true;\
+      if(bias > 0 && g_OB[i].type != OB_BULLISH) continue;\
+      if(bias < 0 && g_OB[i].type != OB_BEARISH) continue;\
+      double zH = g_OB[i].high, zL = g_OB[i].low;\
+      double dist;\
+      if(price >= zL && price <= zH)  dist = 0.0;\
+      else if(bias > 0)               dist = MathMax(0.0, price - zH);\
+      else                            dist = MathMax(0.0, zL - price);\
+      if(dist > proxDist) continue;\
+      if(dist < bestDist) \{ bestDist = dist; bestIdx = i; zoneFound = true; \}\
+   \}\
+   if(zoneFound && bestIdx >= 0)\
+   \{\
+      zoneStrong = (g_OB[bestIdx].cfTier == TIER_S || g_OB[bestIdx].cfTier == TIER_1);\
+      string tierStr = OB_TierStr(g_OB[bestIdx].cfTier);\
+      string dirStr  = (g_OB[bestIdx].type == OB_BULLISH) ? "Demand" : "Supply";\
+      g_cf_ZoneStr = StringFormat("%s [%s:%d] @ %.2f-%.2f",\
+                                  dirStr, tierStr, g_OB[bestIdx].cfScore,\
+                                  g_OB[bestIdx].low, g_OB[bestIdx].high);\
+   \}\
+   else g_cf_ZoneStr = inOppZone ? "In opposite zone" : "No zone nearby";\
+   long maxAge = (long)InpCF_SignalMaxBars * (long)PeriodSeconds(PERIOD_M5);\
+   bool tmaValid   = false;\
+   bool tmaAligned = false;\
+   if(tmaDir != 0.0 && tmaTime > 0.0)\
+   \{\
+      long age   = (long)(now - (datetime)(long)tmaTime);\
+      tmaValid   = (age >= 0 && age <= maxAge);\
+      tmaAligned = tmaValid && ((bias > 0 && tmaDir > 0.0) || (bias < 0 && tmaDir < 0.0));\
+   \}\
+   if(tmaValid)\
+   \{\
+      string paStr  = (tmaPa >= 2.0) ? "PinBar" : "PA";\
+      string dirLbl = (tmaDir > 0.0) ? "BUY" : "SELL";\
+      string ctxLbl = tmaAligned ? "" : " (reversal)";\
+      g_cf_TMAStr = StringFormat("%s %s%s", dirLbl, paStr, ctxLbl);\
+   \}\
+   else g_cf_TMAStr = "No signal";\
+   bool babyValid   = false;\
+   bool babyAligned = false;\
+   bool babyAgainst = false;\
+   if(babyDir != 0.0 && babyTime > 0.0)\
+   \{\
+      long age    = (long)(now - (datetime)(long)babyTime);\
+      babyValid   = (age >= 0 && age <= maxAge);\
+      babyAligned = babyValid && ((bias > 0 && babyDir > 0.0) || (bias < 0 && babyDir < 0.0));\
+      babyAgainst = babyValid && !babyAligned;\
+   \}\
+   if(babyAligned)\
+   \{\
+      string typeStr = (babyType >= 2.0) ? "confirm 3 bars" : "warning 2 bars";\
+      g_cf_BabyStr = StringFormat("%s %s", (babyDir > 0.0 ? "BUY" : "SELL"), typeStr);\
+   \}\
+   else if(babyAgainst)\
+      g_cf_BabyStr = StringFormat("%s - Against Trend", (babyDir > 0.0 ? "BUY" : "SELL"));\
+   else\
+      g_cf_BabyStr = "No signal";\
+   bool hasSignal = (tmaValid || babyValid);\
+   g_cf_WarnStr = "";\
+   if(!hasSignal)\
+   \{\
+      g_cfDecision = CF_WAIT;\
+      g_cf_DecStr  = zoneFound ? "WAIT - Zone ready, no signal" : "WAIT - No signal";\
+   \}\
+   else\
+   \{\
+      string reasons = "";\
+      if(!zoneFound && !inOppZone)  reasons += (StringLen(reasons) > 0 ? " | " : "") + "No zone";\
+      if(inOppZone)                 reasons += (StringLen(reasons) > 0 ? " | " : "") + "In Opp Zone";\
+      if(zoneFound && !zoneStrong)  reasons += (StringLen(reasons) > 0 ? " | " : "") + "Zone T2/T3";\
+      if(babyAgainst)               reasons += (StringLen(reasons) > 0 ? " | " : "") + "Baby - Against Trend";\
+      if(g_BigBias != 0 && g_LocalBias != 0 && g_BigBias != g_LocalBias)\
+         reasons += (StringLen(reasons) > 0 ? " | " : "") + "Against Trend";\
+      g_cf_WarnStr = reasons;\
+      if(StringLen(reasons) == 0)\
+      \{\
+         g_cfDecision = CF_GO;\
+         g_cf_DecStr  = (bias > 0) ? "GO - BUY" : "GO - SELL";\
+      \}\
+      else\
+      \{\
+         g_cfDecision = CF_WARN;\
+         g_cf_DecStr  = ((bias > 0) ? "WARN - BUY " : "WARN - SELL ") + reasons;\
+      \}\
+   \}\
+   datetime lastSigTime = 0;\
+   if(tmaValid  && (datetime)(long)tmaTime  > lastSigTime) lastSigTime = (datetime)(long)tmaTime;\
+   if(babyValid && (datetime)(long)babyTime > lastSigTime) lastSigTime = (datetime)(long)babyTime;\
+   double fix6_tmaEntry  = (tmaValid  && GlobalVariableCheck("CONF_TMA_ENTRY"))  ? GlobalVariableGet("CONF_TMA_ENTRY")  : 0.0;\
+   double fix6_babyEntry = (babyValid && GlobalVariableCheck("CONF_BABY_ENTRY")) ? GlobalVariableGet("CONF_BABY_ENTRY") : 0.0;\
+   double fix6_useEntry  = (fix6_tmaEntry > 0.0) ? fix6_tmaEntry : fix6_babyEntry;\
+   bool entryChanged = (fix6_useEntry == 0.0)\
+                       || (MathAbs(fix6_useEntry - g_cfLastAlertEntry) > g_Pt);\
+   bool shouldAlert = hasSignal\
+                      && (g_cfDecision == CF_GO || (g_cfDecision == CF_WARN && !InpCF_TG_GO_Only))\
+                      && InpTG_Enabled\
+                      && lastSigTime > 0\
+                      && lastSigTime != g_cfLastAlertSigTime\
+                      && entryChanged;\
+   if(shouldAlert)\
+   \{\
+      g_cfLastAlertSigTime = lastSigTime;\
+      g_cfLastAlertEntry   = fix6_useEntry;\
+      CF_SendAlert(price, bestIdx, g_cfDecision, tmaValid, babyValid);\
+   \}\
+\}\
+\
+void CF_SendAlert(double price, int zoneIdx, ENUM_CF_DECISION dec, bool tmaValid, bool babyValid)\
+\{\
+   long alertNum = 1;\
+   if(GlobalVariableCheck("MARIO_CF_ALERT_NUM"))\
+      alertNum = (long)GlobalVariableGet("MARIO_CF_ALERT_NUM") + 1;\
+   GlobalVariableSet("MARIO_CF_ALERT_NUM", (double)alertNum);\
+   string dash14 = "";\
+   for(int k = 0; k < 14; k++) dash14 += ShortToString(0x2500);\
+   string sep = "\\n" + dash14;\
+   string s_warn       = ShortToString(0x26A0);\
+   string emoji_green  = ShortToString(0xD83D) + ShortToString(0xDFE2);\
+   string emoji_red    = ShortToString(0xD83D) + ShortToString(0xDD34);\
+   string emoji_yellow = ShortToString(0xD83D) + ShortToString(0xDFE1);\
+   bool   isBull   = (g_BigBias > 0);\
+   string trendLbl = isBull ? "Bullish Trend" : "Bearish Trend";\
+   string emoji, decLabel;\
+   if(dec == CF_GO)\
+   \{ emoji = isBull ? emoji_green : emoji_red; decLabel = "CONF"; \}\
+   else\
+   \{ emoji = isBull ? emoji_yellow : emoji_red; decLabel = "WARN"; \}\
+   string headline = emoji + " " + decLabel + " - " + trendLbl;\
+   string warnLine = "";\
+   if(dec == CF_WARN && StringLen(g_cf_WarnStr) > 0)\
+      warnLine = "\\n" + s_warn + " " + g_cf_WarnStr;\
+   string bigLabel   = (g_BigBias   >  0) ? "BULL" : (g_BigBias   < 0 ? "BEAR" : "NEUT");\
+   string localLabel = (g_LocalBias >  0) ? "BULL" : (g_LocalBias < 0 ? "BEAR" : "NEUT");\
+   bool   htfV  = InpHTF_Enabled && PeriodSeconds(InpHTF_Confirm_TF) > PeriodSeconds(InpOB_Timeframe);\
+   string tfLbl = htfV ? EnumToString(InpHTF_Confirm_TF) : EnumToString(InpOB_Timeframe);\
+   StringReplace(tfLbl, "PERIOD_", "");\
+   string biasStr = StringFormat("%s(%s) | %s(M5)", bigLabel, tfLbl, localLabel);\
+   string zoneStr = "-";\
+   if(zoneIdx >= 0 && zoneIdx < g_OB_Count)\
+   \{\
+      string tierStr = OB_TierStr(g_OB[zoneIdx].cfTier);\
+      string dirStr  = (g_OB[zoneIdx].type == OB_BULLISH) ? "Demand" : "Supply";\
+      zoneStr = StringFormat("%s [%s:%d] %.2f-%.2f",\
+                             dirStr, tierStr, g_OB[zoneIdx].cfScore,\
+                             g_OB[zoneIdx].low, g_OB[zoneIdx].high);\
+   \}\
+   double tmaEntry  = (tmaValid  && GlobalVariableCheck("CONF_TMA_ENTRY"))  ? GlobalVariableGet("CONF_TMA_ENTRY")  : 0.0;\
+   double tmaTP     = (tmaValid  && GlobalVariableCheck("CONF_TMA_TP"))     ? GlobalVariableGet("CONF_TMA_TP")     : 0.0;\
+   double tmaSL     = (tmaValid  && GlobalVariableCheck("CONF_TMA_SL"))     ? GlobalVariableGet("CONF_TMA_SL")     : 0.0;\
+   double babyEntry = (babyValid && GlobalVariableCheck("CONF_BABY_ENTRY")) ? GlobalVariableGet("CONF_BABY_ENTRY") : 0.0;\
+   double babyTP    = (babyValid && GlobalVariableCheck("CONF_BABY_TP"))    ? GlobalVariableGet("CONF_BABY_TP")    : 0.0;\
+   double babySL    = (babyValid && GlobalVariableCheck("CONF_BABY_SL"))    ? GlobalVariableGet("CONF_BABY_SL")    : 0.0;\
+   double useEntry = 0.0, useTP = 0.0, useSL = 0.0;\
+   if(tmaEntry > 0.0)       \{ useEntry = tmaEntry;  useTP = tmaTP;  useSL = tmaSL;  \}\
+   else if(babyEntry > 0.0) \{ useEntry = babyEntry; useTP = babyTP; useSL = babySL; \}\
+   string etpsl;\
+   if(useEntry > 0.0)\
+      etpsl = StringFormat("%s\\nEntry: %.2f\\nTP:    %.2f\\nSL:    %.2f%s",\
+                           sep, useEntry, useTP, useSL, sep);\
+   else etpsl = sep;\
+   string screenshotTag = (dec == CF_GO) ? "[SCREENSHOT:GO|CONF]\\n" : "";\
+   string msg = StringFormat(\
+      "CONF %s #%d\\n%s%s%s\\nBias:  %s\\nSVP:   %s\\nZone:  %s\\nTMA:   %s\\nBaby:  %s",\
+      _Symbol, alertNum,\
+      headline, warnLine, etpsl,\
+      biasStr, g_cf_SVPStr, zoneStr,\
+      g_cf_TMAStr, g_cf_BabyStr);\
+   SendToTGQueue(screenshotTag + msg);\
+\}\
+\
+\
+// \uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+// \uc0\u9553                     PUBLIC API                                     \u9553 \
+// \uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+\
+int    GetActiveOBCount()  \{ return g_OB_Count; \}\
+int    GetTierSCount()     \{ return g_stat_TierS; \}\
+int    GetTier1Count()     \{ return g_stat_Tier1; \}\
+double GetAvgScore()       \{ return g_stat_AvgScore; \}\
+int    GetHTFConfirmed()   \{ return g_stat_HTF_Confirmed; \}\
+int    GetHTF2Count()      \{ return g_HTF2_OB_Count; \}\
+\
+bool GetOBZone(int index, SOB_Zone &zone)\
+\{ if(index<0||index>=g_OB_Count)return false;zone=g_OB[index];return true; \}\
+\
+double GetTodayPOC() \{ return (g_DayCount>0)?g_Days[g_DayCount-1].compositePOC:0; \}\
+double GetTodayVAH() \{ return (g_DayCount>0)?g_Days[g_DayCount-1].compositeVAH:0; \}\
+double GetTodayVAL() \{ return (g_DayCount>0)?g_Days[g_DayCount-1].compositeVAL:0; \}\
+\
+bool IsInValueArea(double price)\
+\{\
+   if(g_DayCount==0) return false;\
+   int d=g_DayCount-1;\
+   return (price>=g_Days[d].compositeVAL&&price<=g_Days[d].compositeVAH);\
+\}\
+//+------------------------------------------------------------------+}

@@ -53,7 +53,7 @@ function round(n, d = 2) {
 // Reads the two live tables and folds them into one object the trigger engine
 // and Claude both consume. A source older than maxStateAgeMin is dropped to null.
 async function buildState(db) {
-  const [sitRes, fiboRes, priceRes] = await Promise.all([
+  const [sitRes, fiboRes, priceRes, posRes] = await Promise.all([
     db.from('market_sitreps')
       .select('id, created_at, symbol, price, bias_m15, bias_m5, vp_position, poc, vah, val, ppoc, pvah, pval, htf_conf, h1_count, ob_summary, supply_zones, demand_zones')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
@@ -62,10 +62,14 @@ async function buildState(db) {
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     // live price heartbeat (JournalSync → api/price); table may not exist yet
     db.from('kp_price').select('symbol, price, ts').order('ts', { ascending: false }).limit(1).maybeSingle(),
+    // live open-positions snapshot (JournalSync → api/positions); table may not exist yet
+    db.from('kp_positions').select('account_login, ts, symbol, positions')
+      .eq('account_login', CFG.studyAccount).order('ts', { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (sitRes.error && sitRes.error.code !== 'PGRST116') throw sitRes.error;
   if (fiboRes.error && fiboRes.error.code !== 'PGRST116') throw fiboRes.error;
   const livePrice = (priceRes.error) ? null : (priceRes.data || null);   // 42P01 pre-migration → null
+  const posSnap = (posRes.error) ? null : (posRes.data || null);          // 42P01 pre-migration → null
 
   let sitrep = sitRes.data || null;
   let fibo = fiboRes.data || null;
@@ -126,14 +130,27 @@ async function buildState(db) {
     nearestDemand = zones.filter(z => z.side === 'demand' && z.lo <= price).sort((a, b) => b.mid - a.mid)[0] || null;
   }
 
-  // live open positions (server-side reconstruct from trade_events)
-  const positions = CFG.coachPositions ? await getOpenPositions(db, CFG.studyAccount) : [];
+  // live open positions — prefer the direct JournalSync snapshot (ground truth,
+  // self-healing). Only replay trade_events when no snapshot row exists yet
+  // (pre-migration / EA not patched). A stale snapshot is still used (a direct
+  // broker read beats a replay) but carries its age so the read can warn.
+  let positions = [], positionsSource = 'none', positionsAgeMin = null;
+  if (posSnap && Array.isArray(posSnap.positions)) {
+    positions = posSnap.positions.map(normSnapPos).filter(Boolean);
+    positionsSource = 'snapshot';
+    const a = ageMin(posSnap.ts);
+    positionsAgeMin = a == null ? null : round(a, 1);
+  } else if (CFG.coachPositions) {
+    positions = await getOpenPositions(db, CFG.studyAccount);
+    positionsSource = 'replay';
+  }
   const pos = positionView(positions, price);
 
   return {
     ts: new Date().toISOString(),
     symbol, price, price_source: priceSource, price_age_min: priceAgeMin,
     positions, pos,
+    positions_source: positionsSource, positions_age_min: positionsAgeMin,
     sitrep: sitFresh ? sitrep : null,
     fibo: fibFresh ? fibo : null,
     sitrep_id: sitrep?.id ?? null,
@@ -167,6 +184,24 @@ async function buildState(db) {
 // so the co-pilot reported a phantom position (already closed) and missed the
 // real ones. We reverse the fetched page back to chronological order before the
 // OPEN→MODIFY→CLOSE replay below.
+// Normalize one kp_positions snapshot entry into the shape positionView expects.
+// The snapshot is the broker's live truth, so it carries exact P&L (broker_profit)
+// which positionView surfaces instead of the price-derived estimate.
+function normSnapPos(p) {
+  if (!p || p.ticket == null) return null;
+  const dir = (p.dir === 'sell') ? 'sell' : (p.dir === 'buy') ? 'buy' : (num(p.type) === 1 ? 'sell' : 'buy');
+  const sl = num(p.sl), tp = num(p.tp);
+  return {
+    ticket: p.ticket, dir,
+    lots: num(p.lots), entry: num(p.entry),
+    sl: sl && sl > 0 ? sl : null,
+    tp: tp && tp > 0 ? tp : null,
+    magic: p.magic ?? null,
+    broker_profit: num(p.profit),
+    kind: null, partial: false, orig_lots: null, opened_at: null,
+  };
+}
+
 async function getOpenPositions(db, account) {
   const sinceIso = new Date(Date.now() - CFG.positionLookbackDays * 86400000).toISOString();
   const { data, error } = await db.from('trade_events')
@@ -233,7 +268,8 @@ function positionView(positions, price) {
       has_sl: p.sl != null, has_tp: p.tp != null,
       partial_closed: !!p.partial,                       // true = already scaled out (default 50%)
       orig_lots: p.partial ? p.orig_lots : undefined,    // size before the partial, for context
-      unrealized_usd: usd(unreal),           // real account P&L (lot-scaled)
+      unrealized_usd: p.broker_profit != null ? round(p.broker_profit, 2) : usd(unreal),  // exact broker P&L when from snapshot, else price-derived
+      broker_profit: p.broker_profit != null ? round(p.broker_profit, 2) : undefined,     // present = exact (not an estimate)
       sl_dist_price: toSL == null ? null : round(toSL, 2),   // how far price is from SL
       tp_dist_price: toTP == null ? null : round(toTP, 2),   // how far price is from TP
       risk_to_sl_usd: usd(toSL),             // $ still at risk if SL hits (neg = profit locked past BE)
@@ -241,13 +277,14 @@ function positionView(positions, price) {
       rr, kind: p.kind, opened_at: p.opened_at,
     };
   });
-  let netLots = 0, buyLots = 0, sellLots = 0;
+  let netLots = 0, buyLots = 0, sellLots = 0, floatUsd = 0, haveProfit = positions.length > 0;
   for (const p of positions) {
     const l = num(p.lots) || 0;
     if (p.dir === 'buy') { buyLots += l; netLots += l; } else { sellLots += l; netLots -= l; }
+    if (p.broker_profit == null) haveProfit = false; else floatUsd += p.broker_profit;
   }
   const netSide = netLots > 0 ? 'net long' : netLots < 0 ? 'net short' : 'flat/hedged';
-  return { rows, count: rows.length, net_lots: round(netLots, 2), buy_lots: round(buyLots, 2), sell_lots: round(sellLots, 2), net_side: netSide };
+  return { rows, count: rows.length, net_lots: round(netLots, 2), buy_lots: round(buyLots, 2), sell_lots: round(sellLots, 2), net_side: netSide, float_usd: haveProfit ? round(floatUsd, 2) : null };
 }
 
 // Persist a snapshot row (history for sweep/flip triggers + provenance).
@@ -443,7 +480,7 @@ async function callClaude(state, trigger) {
     trigger: { type: trigger.trigger_type, reason: trigger.reason },
     symbol: state.symbol,
     price: state.price,
-    freshness: { price_source: state.price_source, price_age_min: state.price_age_min, mt5_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min },
+    freshness: { price_source: state.price_source, price_age_min: state.price_age_min, mt5_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min, positions_source: state.positions_source, positions_age_min: state.positions_age_min },
     structure,
     mt5: state.sitrep ? {
       bias_m15: state.bias_m15, bias_m5: state.bias_m5, vp_position: state.vp_position,
@@ -465,6 +502,12 @@ async function callClaude(state, trigger) {
       state.h4_trend ? null : 'ยังไม่มี H4 trend จาก TradingView',
       (state.price_age_min != null && state.price_age_min > 15)
         ? `ราคาอ้างอิงเป็น snapshot จาก ${state.price_source} เมื่อ ${state.price_age_min} นาทีก่อน — ราคาจริงตอนนี้อาจต่างไปแล้ว ให้เตือนผู้ใช้และให้ระดับ zone เป็นหลัก`
+        : null,
+      (state.positions_source === 'snapshot' && state.positions_age_min != null && state.positions_age_min > CFG.positionsStaleWarnMin)
+        ? `ข้อมูลไม้เป็น snapshot เมื่อ ${state.positions_age_min} นาทีก่อน (PC อาจปิด/หลับ) — อาจไม่ตรงพอร์ตจริงตอนนี้ ให้เตือนผู้ใช้`
+        : null,
+      (state.positions_source === 'replay')
+        ? 'ไม้สร้างจาก replay log (ยังไม่มี snapshot สด) — อาจไม่ครบทุกไม้ ให้ถือเป็นค่าประมาณและเตือนผู้ใช้'
         : null,
     ].filter(Boolean),
   };

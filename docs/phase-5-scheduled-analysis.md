@@ -1,6 +1,6 @@
 # Phase 5 — Scheduled Market Analysis
 
-**Status:** ✅ Live as of 2026-04-28. End-to-end pipeline verified. 3 routines scheduled.
+**Status:** ✅ Live as of 2026-04-29. **Trigger model: manual via `/plan` slash command** (cron routines retired — see "Why manual" below).
 
 ## Live components
 
@@ -11,19 +11,37 @@
 | Vercel `/api/sitrep-latest` read | ✅ Returns row + 16 recent_trades within 90-min window |
 | Vercel `/api/post-plan` write | ✅ 3 plans posted to @Kp56_superbot DM (plan_id 1-3) |
 | Supabase `market_sitreps` + `trade_plans` + `sitrep-images` bucket | ✅ All schemas applied, public-read working |
-| 3 scheduled routines | ✅ Created, enabled, fire daily |
+| `/plan` slash command (`.claude/commands/plan.md` in `KP56/`) | ✅ Replaces all 3 cron routines |
 
-## Routine IDs
+## Why manual instead of scheduled
 
-| Slot | Routine ID | Cron (UTC) | Manage |
-|---|---|---|---|
-| 09:00 Thai (Asian) | `trig_0196EizNk74VGhUUbDvV6dbn` | `0 2 * * *` | [link](https://claude.ai/code/routines/trig_0196EizNk74VGhUUbDvV6dbn) |
-| 14:00 Thai (London) | `trig_01QZLbbPpfqo68UxC51zxxRm` | `0 7 * * *` | [link](https://claude.ai/code/routines/trig_01QZLbbPpfqo68UxC51zxxRm) |
-| 21:00 Thai (NY) | `trig_01FrDLA34a1fH2PB6yfXRjpE` | `0 14 * * *` | [link](https://claude.ai/code/routines/trig_01FrDLA34a1fH2PB6yfXRjpE) |
+The 3 originally-scheduled `/schedule` routines couldn't reach Vercel — Anthropic's CCR sandbox returned `403 Host not in allowlist` on every outbound request. Options considered:
 
-Routine config: `claude-sonnet-4-6`, repo cloned (`kp56-trade-journal`), tools `[Bash, Read]`, env `Default` (`env_01M2KVvoPHdPnqPnagpst4bT`). Prompt template lives in this doc (see "Agent prompt template" below).
+1. **Vercel Cron + `api/analyze.js` calling `api.anthropic.com`** — works, but needs a separate `ANTHROPIC_API_KEY`, eats vision-call quota independent of Claude Code, and adds infra to maintain.
+2. **`/plan` slash command in Claude Code** ✅ chosen — Claude Code is already the LLM, so no extra API key; user invokes whenever they want; zero new infra; pieces (`sitrep-latest`, `post-plan`) keep working as-is. If auto-scheduling becomes a priority later, option 1 can be added without removing this.
 
-(Plus one disabled `smoke test` routine `trig_01Y3fLbw4Q2YrvmDaF5dL37P` — first-create test, never fires; safe to delete via web UI.)
+Trigger: user types `/plan` (optional arg `Asian|London|NY|Manual`) in any Claude Code session in `Documents/KP56/`. The command sources `~/.kp56/agent.env`, calls `/api/sitrep-latest`, fetches the chart image, analyzes with vision, posts to Telegram via `/api/post-plan`.
+
+## Old routine IDs (deleted 2026-04-29)
+
+All 4 cron routines (3 session slots + 1 smoke test) were deleted via the Claude Code web UI on 2026-04-29 after migrating to `/plan`. IDs kept here only for audit history:
+
+- `trig_0196EizNk74VGhUUbDvV6dbn` — 09:00 Asian
+- `trig_01QZLbbPpfqo68UxC51zxxRm` — 14:00 London
+- `trig_01FrDLA34a1fH2PB6yfXRjpE` — 21:00 NY
+- `trig_01Y3fLbw4Q2YrvmDaF5dL37P` — smoke test
+
+## Local secrets (manual flow)
+
+`~/.kp56/agent.env` (chmod 700 dir, never committed):
+
+```
+VERCEL_BASE_URL="https://kp56-trade-journal.vercel.app"
+AGENT_READ_KEY=""
+AGENT_WRITE_KEY=""
+```
+
+Template at `~/.kp56/agent.env.example`. Values come from Vercel project env vars (same keys already deployed for the cron flow).
 
 ## Original design notes
 

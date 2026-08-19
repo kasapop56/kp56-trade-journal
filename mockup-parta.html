@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Part A mockup — History pagination</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --surface2: #242424;
+    --border: #2e2e2e;
+    --gold: #f0b429;
+    --gold-dim: #a07820;
+    --bull: #26a69a;
+    --bear: #ef5350;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --radius: 10px;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 15px;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  h1 { font-size: 18px; color: var(--gold); margin-bottom: 4px; }
+  h1 .sub { color: var(--text-dim); font-size: 13px; font-weight: 400; margin-left: 8px; }
+  .intro { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; line-height: 1.5; max-width: 900px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .panel h2 { font-size: 15px; margin-bottom: 6px; }
+  .panel.current h2 { color: var(--bear); }
+  .panel.proposed h2 { color: var(--bull); }
+  .panel .desc { color: var(--text-dim); font-size: 12px; margin-bottom: 14px; line-height: 1.5; }
+
+  .pill {
+    display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    margin-left: 8px;
+  }
+  .pill.warn  { background: rgba(239,83,80,0.15); color: var(--bear); }
+  .pill.good  { background: rgba(38,166,154,0.15); color: var(--bull); }
+  .pill.info  { background: rgba(240,180,41,0.12); color: var(--gold); }
+
+  /* Filter row */
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+  .filters .grp { display: flex; gap: 4px; }
+  .filters .grp-label { font-size: 10px; color: var(--text-dim); align-self: center; margin-right: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .fbtn { background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; }
+  .fbtn.active { background: var(--gold-dim); color: #000; border-color: var(--gold); }
+  .fbtn:hover { color: var(--text); }
+
+  /* Summary line */
+  .summary { font-size: 12px; color: var(--text-dim); margin: 6px 2px 10px; display: flex; align-items: center; gap: 10px; }
+  .summary .pos { color: var(--bull); font-weight: 600; }
+  .summary .neg { color: var(--bear); font-weight: 600; }
+  .summary .loading {
+    display: inline-flex; align-items: center; gap: 6px; color: var(--gold); font-weight: 600;
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .spinner { width: 10px; height: 10px; border: 2px solid var(--gold-dim); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Trade cards */
+  .list { display: flex; flex-direction: column; gap: 8px; max-height: 560px; overflow-y: auto; padding-right: 4px; }
+  .trade-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: border-color 0.15s; }
+  .trade-card:hover { border-color: var(--gold-dim); }
+  .trade-card .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .trade-card .date { font-size: 12px; color: var(--text-dim); }
+  .trade-card .pnl { font-weight: 700; font-size: 15px; }
+  .trade-card .pnl.pos { color: var(--bull); }
+  .trade-card .pnl.neg { color: var(--bear); }
+  .trade-card .tags { display: flex; gap: 5px; flex-wrap: wrap; }
+  .tag { font-size: 10px; padding: 2px 7px; border-radius: 4px; }
+  .tag.bull    { background: rgba(38,166,154,0.15); color: var(--bull); }
+  .tag.bear    { background: rgba(239,83,80,0.15); color: var(--bear); }
+  .tag.be      { background: rgba(33,150,243,0.15); color: #2196f3; }
+  .tag.session { background: var(--surface); color: var(--text-dim); }
+  .tag.src-mt5    { background: rgba(240,180,41,0.15); color: var(--gold); border: 1px solid var(--gold-dim); }
+  .tag.src-manual { background: rgba(120,120,120,0.12); color: #aaa; border: 1px solid var(--border); }
+
+  /* Load more */
+  .load-more {
+    display: block; width: 100%; margin-top: 10px; padding: 10px; background: var(--surface2);
+    border: 1px dashed var(--gold-dim); color: var(--gold); border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 600; transition: background 0.15s;
+  }
+  .load-more:hover { background: rgba(240,180,41,0.08); }
+  .load-more:disabled { opacity: 0.5; cursor: default; }
+
+  /* Network timeline viz */
+  .netviz { margin-top: 12px; padding: 10px 12px; background: #0a0a0a; border: 1px solid var(--border); border-radius: 6px; font-family: 'SF Mono', Menlo, monospace; font-size: 11px; }
+  .netviz .title { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .netviz .row { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
+  .netviz .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
+  .netviz .time { color: var(--text-dim); font-size: 10px; min-width: 60px; }
+  .netviz .verb { color: var(--bull); font-weight: 600; }
+  .netviz .path { color: var(--text); }
+  .netviz .size { color: var(--text-dim); margin-left: auto; }
+  .netviz .size.big { color: var(--bear); font-weight: 700; }
+
+  .footnote { color: var(--text-dim); font-size: 11px; margin-top: 10px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<h1>Part A mockup <span class="sub">History page — current vs. proposed pagination</span></h1>
+<p class="intro">
+  Both panels render the same sample dataset (87 trades). The <b>left panel</b> mimics today's behavior: one fetch pulls
+  every row, all filtering happens in memory. The <b>right panel</b> mimics Part A: 10 rows per request (production
+  will be 50), filters re-query Supabase with pushdown, "Load more" fetches the next page.
+  Interact with both — change filters, scroll, click "Load more" — and watch the simulated network trace at the bottom of each panel.
+</p>
+
+<div class="split">
+
+  <!-- ── CURRENT ───────────────────────────────────────────────────── -->
+  <div class="panel current">
+    <h2>CURRENT <span class="pill warn">Loads all 87 rows up-front</span></h2>
+    <div class="desc">
+      On first open → <code>fetchAllPaged('trade_ideas')</code> + <code>fetchAllPaged('mt5_trades')</code> in parallel.
+      Filters mutate <code>historyCache</code> in memory — no network.
+      With 3,721 rows today, every visit downloads ~1 MB of JSON and parses 3,721 trade cards.
+    </div>
+
+    <div class="filters" id="curFilters">
+      <div class="grp">
+        <span class="grp-label">Dir</span>
+        <button class="fbtn active" data-g="direction" data-v="ALL">All</button>
+        <button class="fbtn" data-g="direction" data-v="BUY">Buy</button>
+        <button class="fbtn" data-g="direction" data-v="SELL">Sell</button>
+      </div>
+      <div class="grp">
+        <span class="grp-label">Result</span>
+        <button class="fbtn active" data-g="outcome" data-v="ALL">All</button>
+        <button class="fbtn" data-g="outcome" data-v="WIN">Win</button>
+        <button class="fbtn" data-g="outcome" data-v="LOSS">Loss</button>
+        <button class="fbtn" data-g="outcome" data-v="BE">BE</button>
+      </div>
+      <div class="grp">
+        <span class="grp-label">Src</span>
+        <button class="fbtn active" data-g="source" data-v="ALL">All</button>
+        <button class="fbtn" data-g="source" data-v="MT5">MT5</button>
+        <button class="fbtn" data-g="source" data-v="MANUAL">Manual</button>
+      </div>
+    </div>
+
+    <div class="summary" id="curSummary"></div>
+    <div class="list" id="curList"></div>
+
+    <div class="netviz">
+      <div class="title">Simulated network — current</div>
+      <div id="curNet"></div>
+    </div>
+    <div class="footnote">
+      Filter changes = <b>0 network requests</b> (instant, but everything's already in RAM).<br>
+      Initial load = <b>2 big requests</b> (one per table, each paging through 1,000 rows at a time).
+    </div>
+  </div>
+
+  <!-- ── PROPOSED — PART A ─────────────────────────────────────────── -->
+  <div class="panel proposed">
+    <h2>PROPOSED — PART A <span class="pill good">10 rows per request</span></h2>
+    <div class="desc">
+      Unified Postgres view <code>v_trades_unified</code> merges <code>trade_ideas</code> + <code>mt5_trades</code>
+      into one shape. History queries it with <code>.range(offset, offset+9)</code> + <code>.eq()</code>/<code>.ilike()</code>
+      pushdown. Changing a filter re-queries Supabase. "Load more" fetches the next 10.
+      <i>(Production page size = 50; the mockup uses 10 to make the pagination visible on a small dataset.)</i>
+    </div>
+
+    <div class="filters" id="propFilters">
+      <div class="grp">
+        <span class="grp-label">Dir</span>
+        <button class="fbtn active" data-g="direction" data-v="ALL">All</button>
+        <button class="fbtn" data-g="direction" data-v="BUY">Buy</button>
+        <button class="fbtn" data-g="direction" data-v="SELL">Sell</button>
+      </div>
+      <div class="grp">
+        <span class="grp-label">Result</span>
+        <button class="fbtn active" data-g="outcome" data-v="ALL">All</button>
+        <button class="fbtn" data-g="outcome" data-v="WIN">Win</button>
+        <button class="fbtn" data-g="outcome" data-v="LOSS">Loss</button>
+        <button class="fbtn" data-g="outcome" data-v="BE">BE</button>
+      </div>
+      <div class="grp">
+        <span class="grp-label">Src</span>
+        <button class="fbtn active" data-g="source" data-v="ALL">All</button>
+        <button class="fbtn" data-g="source" data-v="MT5">MT5</button>
+        <button class="fbtn" data-g="source" data-v="MANUAL">Manual</button>
+      </div>
+    </div>
+
+    <div class="summary" id="propSummary"></div>
+    <div class="list" id="propList"></div>
+    <button class="load-more" id="loadMoreBtn">Load more (10)</button>
+
+    <div class="netviz">
+      <div class="title">Simulated network — proposed</div>
+      <div id="propNet"></div>
+    </div>
+    <div class="footnote">
+      Filter changes = <b>1 small request</b> (~10 rows, pushed-down WHERE).<br>
+      Scroll down → <b>1 small request per page</b>. First render ≈ 15 KB JSON instead of ~1 MB.
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Sample data: 87 trades over ~3 months ─────────────────────────
+const sessions = ['ASIA','LONDON','OVERLAP','NY','QUIET'];
+function makeTrades() {
+  const out = [];
+  const start = new Date('2026-01-25').getTime();
+  for (let i = 0; i < 87; i++) {
+    const d = new Date(start + i * 21.5 * 3600 * 1000);
+    const date = d.toISOString().slice(0,10);
+    const hh = String(8 + (i*3)%10).padStart(2,'0');
+    const mm = String((i*17)%60).padStart(2,'0');
+    const exitTime = `${hh}:${mm}`;
+    const direction = (i % 3 === 0) ? 'SELL' : 'BUY';
+    const source = (i % 4 === 0) ? 'MANUAL' : 'MT5';
+    const r = (i * 7919) % 100;
+    let outcome, pnl;
+    if (r < 12)       { outcome = 'BE';   pnl = (r % 2 ? 0.15 : -0.22); }
+    else if (r < 55)  { outcome = 'WIN';  pnl = 3 + (r % 40); }
+    else              { outcome = 'LOSS'; pnl = -(2 + (r % 25)); }
+    out.push({
+      id: i, date, exitTime, direction, source, outcome,
+      pnl: +pnl.toFixed(2),
+      session: sessions[i % 5],
+      symbol: source === 'MT5' ? 'XAUUSDr' : null,
+      volume: source === 'MT5' ? (0.05 + (i % 3) * 0.05) : null,
+      biasM15: (i % 2 ? 'BULL' : 'BEAR'),
+      biasM5:  (i % 3 ? 'BULL' : 'BEAR'),
+    });
+  }
+  return out.sort((a,b) => (b.date + b.exitTime).localeCompare(a.date + a.exitTime));
+}
+const ALL = makeTrades();
+
+// ── Shared rendering helpers ──────────────────────────────────────
+function tradeCard(t) {
+  const pnlCls = t.pnl > 0 ? 'pos' : t.pnl < 0 ? 'neg' : '';
+  const pnlTxt = (t.pnl >= 0 ? '+' : '') + '$' + t.pnl.toFixed(2);
+  const srcTag = t.source === 'MT5'
+    ? '<span class="tag src-mt5">MT5</span>'
+    : '<span class="tag src-manual">Manual</span>';
+  const dirTag = `<span class="tag ${t.direction === 'BUY' ? 'bull' : 'bear'}">${t.direction}</span>`;
+  const outTag = t.outcome === 'BE' ? '<span class="tag be">BE</span>' : '';
+  const extras = t.source === 'MT5'
+    ? `<span class="tag session">${t.symbol}</span><span class="tag session">${t.volume.toFixed(2)} lots</span>`
+    : `<span class="tag ${t.biasM15.toLowerCase()}">M15 ${t.biasM15}</span><span class="tag ${t.biasM5.toLowerCase()}">M5 ${t.biasM5}</span>`;
+  return `
+    <div class="trade-card">
+      <div class="header">
+        <span class="date">${t.date} · ${t.exitTime}</span>
+        <span class="pnl ${pnlCls}">${pnlTxt}</span>
+      </div>
+      <div class="tags">${srcTag}${dirTag}${outTag}${extras}<span class="tag session">${t.session}</span></div>
+    </div>`;
+}
+function applyFilters(rows, f) {
+  return rows.filter(r => {
+    if (f.direction !== 'ALL' && r.direction !== f.direction) return false;
+    if (f.outcome   !== 'ALL' && r.outcome   !== f.outcome)   return false;
+    if (f.source    !== 'ALL' && r.source    !== f.source)    return false;
+    return true;
+  });
+}
+function summary(rows) {
+  const net = rows.reduce((s,r) => s + r.pnl, 0);
+  const wins = rows.filter(r => r.outcome === 'WIN').length;
+  const cls = net > 0 ? 'pos' : net < 0 ? 'neg' : '';
+  return `${rows.length} trade${rows.length!==1?'s':''} · <span class="${cls}">Net ${net>=0?'+':''}$${net.toFixed(2)}</span> · ${wins} win${wins!==1?'s':''}`;
+}
+
+// ── Network trace renderer ────────────────────────────────────────
+function logNet(container, entries, maxRows = 6) {
+  const rows = entries.slice(-maxRows).map(e => `
+    <div class="row">
+      <span class="dot"></span>
+      <span class="time">${e.time}</span>
+      <span class="verb">GET</span>
+      <span class="path">${e.path}</span>
+      <span class="size ${e.big ? 'big' : ''}">${e.size}</span>
+    </div>`).join('');
+  container.innerHTML = rows || '<div style="color:#555;font-style:italic">(no requests yet)</div>';
+}
+function nowTs() { const d = new Date(); return d.toTimeString().slice(0,8); }
+
+// ── CURRENT panel ─────────────────────────────────────────────────
+const curFilters = { direction: 'ALL', outcome: 'ALL', source: 'ALL' };
+const curNet = [];
+function renderCurrent() {
+  const rows = applyFilters(ALL, curFilters);
+  document.getElementById('curSummary').innerHTML = summary(rows);
+  document.getElementById('curList').innerHTML = rows.map(tradeCard).join('');
+}
+// Initial load logs 2 big requests
+curNet.push({ time: nowTs(), path: '/rest/v1/trade_ideas?select=*', size: '~430 KB', big: true });
+curNet.push({ time: nowTs(), path: '/rest/v1/mt5_trades?select=*',  size: '~610 KB', big: true });
+logNet(document.getElementById('curNet'), curNet);
+renderCurrent();
+
+document.querySelectorAll('#curFilters .fbtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const g = btn.dataset.g;
+    document.querySelectorAll(`#curFilters [data-g="${g}"]`).forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    curFilters[g] = btn.dataset.v;
+    renderCurrent();
+    // No network request — pure in-memory filter
+  });
+});
+
+// ── PROPOSED panel ────────────────────────────────────────────────
+const propFilters = { direction: 'ALL', outcome: 'ALL', source: 'ALL' };
+const propNet = [];
+const PAGE_SIZE = 10;
+let propOffset = 0;
+let propRows = [];
+let propTotalMatching = 0;
+
+function buildQueryString() {
+  const p = [];
+  if (propFilters.direction !== 'ALL') p.push(`direction=eq.${propFilters.direction}`);
+  if (propFilters.outcome   !== 'ALL') p.push(`outcome=eq.${propFilters.outcome}`);
+  if (propFilters.source    !== 'ALL') p.push(`source=eq.${propFilters.source}`);
+  p.push(`order=sort_key.desc`);
+  p.push(`limit=${PAGE_SIZE}&offset=${propOffset}`);
+  return p.join('&');
+}
+
+function fakeQuery() {
+  // Simulate the network round-trip visually
+  document.getElementById('propSummary').innerHTML =
+    `<span class="loading"><span class="spinner"></span> Fetching from Supabase…</span>`;
+  return new Promise(resolve => {
+    setTimeout(() => {
+      const matching = applyFilters(ALL, propFilters);
+      const page = matching.slice(propOffset, propOffset + PAGE_SIZE);
+      propTotalMatching = matching.length;
+      const sizeKb = Math.max(3, Math.round(page.length * 1.3));
+      propNet.push({
+        time: nowTs(),
+        path: `/rest/v1/v_trades_unified?${buildQueryString()}`,
+        size: `~${sizeKb} KB`,
+      });
+      logNet(document.getElementById('propNet'), propNet);
+      resolve(page);
+    }, 350);
+  });
+}
+
+async function loadPage(reset) {
+  if (reset) {
+    propRows = [];
+    propOffset = 0;
+    document.getElementById('propList').innerHTML = '';
+  }
+  const page = await fakeQuery();
+  propRows = propRows.concat(page);
+  propOffset += page.length;
+  document.getElementById('propSummary').innerHTML =
+    `Showing <b>${propRows.length}</b> of <b>${propTotalMatching}</b> · ${summary(propRows).replace(/^\d+ trades? · /, '')}`;
+  document.getElementById('propList').innerHTML = propRows.map(tradeCard).join('');
+  const btn = document.getElementById('loadMoreBtn');
+  const hasMore = propOffset < propTotalMatching;
+  btn.disabled = !hasMore;
+  btn.textContent = hasMore
+    ? `Load more (${Math.min(PAGE_SIZE, propTotalMatching - propOffset)})`
+    : `All ${propTotalMatching} loaded`;
+}
+
+document.querySelectorAll('#propFilters .fbtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const g = btn.dataset.g;
+    document.querySelectorAll(`#propFilters [data-g="${g}"]`).forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    propFilters[g] = btn.dataset.v;
+    loadPage(true); // re-query from offset 0 with new filter
+  });
+});
+document.getElementById('loadMoreBtn').addEventListener('click', () => loadPage(false));
+loadPage(true);
+</script>
+</body>
+</html>

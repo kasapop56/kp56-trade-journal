@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "trade-journal",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["/Users/kasapopprapaspongsa/Documents/KP56/trade-journal/.claude/serve.py"],
+      "port": 3456
+    }
+  ]
+}

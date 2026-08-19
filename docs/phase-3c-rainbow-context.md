@@ -1,6 +1,6 @@
 # Phase 3c — RainbowMA context capture
 
-**Status:** Deployed 2026-04-26. End-to-end backend verified 2026-04-27. Frontend "Setup Verdict" modal section built 2026-04-27 (commit pending) — awaiting Vercel deploy verification.
+**Status:** Deployed 2026-04-26. End-to-end backend verified 2026-04-27. Frontend "Setup Verdict" modal section shipped 2026-04-27 (commit `8ca9ebc`) — verified live on Vercel deploy URL, deal 7236714855 renders correctly with Conviction 64%, Mario:WAIT badge, all 7 verdict rows.
 
 ## TL;DR
 
@@ -111,3 +111,4 @@ CSS: `.verdict-section` / `.verdict-table` / `.conviction` / `.va` `.vx` `.vn` `
 
 - `6eec2b7` — Phase 3c: capture RainbowMA context at trade open + close
 - `1e429c3` — Track RainbowMA v1.30 alongside JournalSync
+- `8ca9ebc` — Phase 3c: Setup Verdict modal section (frontend)
