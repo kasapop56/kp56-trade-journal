@@ -24,15 +24,6 @@
     },
     "api/analyze.js": {
       "maxDuration": 30
-    },
-    "api/analyze/now.js": {
-      "maxDuration": 30
     }
-  },
-  "crons": [
-    {
-      "path": "/api/analyze",
-      "schedule": "*/15 * * * *"
-    }
-  ]
+  }
 }

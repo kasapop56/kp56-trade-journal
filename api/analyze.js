@@ -1,25 +1,27 @@
-// api/analyze.js — KP56 Co-pilot trigger engine entry (Phase 3).
+// api/analyze.js — KP56 Co-pilot analysis endpoint (Phase 3).
 //
-// Two callers:
-//   GET  /api/analyze         — Vercel Cron. Auth: Authorization: Bearer <CRON_SECRET>
-//                               (Vercel sets this automatically when CRON_SECRET
-//                               is configured). Evaluates triggers; comments only
-//                               if one fires and isn't debounced.
-//   POST /api/analyze         — server-to-server. Auth: X-Agent-Key: <AGENT_WRITE_KEY>
-//                               Body: { force?:bool, trigger_type?:string }
+// One route, three callers:
+//   POST /api/analyze  { manual: true }        — dashboard "อ่านให้หน่อย" button.
+//                                                 No auth header (user's own page);
+//                                                 rate-limited server-side. Forces
+//                                                 a fresh Claude read.
+//   POST /api/analyze  { force?, trigger_type? } + header X-Agent-Key
+//                                               — server-to-server / your routine.
+//   GET  /api/analyze                           — scheduler (Vercel cron or your
+//                                                 remote routine). Auth via either
+//                                                 Authorization: Bearer <CRON_SECRET>
+//                                                 or X-Agent-Key. Evaluates triggers;
+//                                                 comments only if one fires + not
+//                                                 debounced.
 //
-// The heavy Claude call happens only when a trigger actually fires, so quiet
-// ticks return fast. Cron cadence is set in vercel.json.
+// Collapsed into a single file (no api/analyze/ folder) to avoid any
+// file+directory name collision on the Vercel builder.
 //
-// Env vars:
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-//   ANTHROPIC_API_KEY
-//   CRON_SECRET               — for the Vercel cron GET
-//   AGENT_WRITE_KEY           — for POST (reused from post-plan.js)
-//   COPILOT_TELEGRAM_CHAT_ID / _BOT_TOKEN  — optional; else reuses TELEGRAM_PLAN_*
-//   COPILOT_MODEL, COPILOT_EFFORT          — optional Claude overrides
+// Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY,
+//      AGENT_WRITE_KEY, CRON_SECRET (for cron GET),
+//      COPILOT_TELEGRAM_* (optional; else TELEGRAM_PLAN_*), COPILOT_MODEL/EFFORT.
 
-const { getDb, runAnalysis } = require('./_kp_lib');
+const { getDb, runAnalysis, CFG } = require('./_kp_lib');
 
 function bad(res, code, msg) { res.status(code).json({ ok: false, error: msg }); }
 
@@ -31,12 +33,12 @@ async function readJson(req) {
 }
 
 module.exports = async (req, res) => {
-  // ── auth ──────────────────────────────────────────────────────────────────
   let force = false;
   let triggerType = null;
+  let manual = false;
+  let source = 'server';
 
   if (req.method === 'GET') {
-    // Vercel cron path (or manual GET with the agent key for testing)
     const cronSecret = process.env.CRON_SECRET;
     const authHeader = req.headers['authorization'] || '';
     const agentKey = req.headers['x-agent-key'];
@@ -45,23 +47,40 @@ module.exports = async (req, res) => {
     if (!cronOk && !agentOk) return bad(res, 401, 'unauthorized');
     force = String(req.query.force || '') === '1';
     triggerType = req.query.trigger_type || null;
+    source = 'cron';
   } else if (req.method === 'POST') {
-    const expected = process.env.AGENT_WRITE_KEY;
-    if (!expected) return bad(res, 500, 'server_missing_agent_write_key');
-    if (req.headers['x-agent-key'] !== expected) return bad(res, 401, 'bad_agent_key');
     let body;
     try { body = await readJson(req); }
     catch (e) { return bad(res, 400, 'invalid_json: ' + e.message); }
-    force = !!body.force;
-    triggerType = body.trigger_type || null;
+
+    if (body.manual === true) {
+      // browser manual read — no key, rate-limited below
+      manual = true; force = true; triggerType = 'manual'; source = 'manual';
+    } else {
+      const expected = process.env.AGENT_WRITE_KEY;
+      if (!expected) return bad(res, 500, 'server_missing_agent_write_key');
+      if (req.headers['x-agent-key'] !== expected) return bad(res, 401, 'bad_agent_key');
+      force = !!body.force;
+      triggerType = body.trigger_type || null;
+    }
   } else {
     return bad(res, 405, 'method_not_allowed');
   }
 
-  // ── run ───────────────────────────────────────────────────────────────────
   try {
     const db = getDb();
-    const result = await runAnalysis(db, { force, trigger_type: triggerType, source: req.method === 'GET' ? 'cron' : 'server' });
+
+    if (manual) {
+      const sinceIso = new Date(Date.now() - CFG.manualRateLimitSec * 1000).toISOString();
+      const { data: recent } = await db.from('kp_signals')
+        .select('id, ts').eq('trigger_type', 'manual')
+        .gte('ts', sinceIso).order('ts', { ascending: false }).limit(1);
+      if (recent && recent.length) {
+        return res.status(429).json({ ok: false, error: 'rate_limited', retry_after_sec: CFG.manualRateLimitSec, last: recent[0].ts });
+      }
+    }
+
+    const result = await runAnalysis(db, { force, trigger_type: triggerType, source });
     return res.status(result.ok ? 200 : 500).json(result);
   } catch (e) {
     console.error('analyze error:', e);

@@ -260,16 +260,22 @@ async function cpReadNow() {
   const btn = document.getElementById('cpReadNow');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ กำลังอ่าน…'; }
   try {
-    const r = await fetch('/api/analyze/now', { method: 'POST' });
+    const r = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manual: true }),
+    });
     if (r.status === 404) {
-      toast('ยังไม่ได้สร้าง /api/analyze (Phase 3)');
+      showToast('ยังไม่ได้สร้าง /api/analyze (Phase 3)', 'error');
     } else {
       const j = await r.json().catch(() => ({}));
-      toast(j.ok ? 'โคไพลอตอ่านแล้ว' : ('ผิดพลาด: ' + (j.error || r.status)));
+      if (j.ok && j.fired) showToast('โคไพลอตอ่านแล้ว ✓', 'success');
+      else if (j.ok && !j.fired) showToast('อ่านแล้ว — ' + (j.reason || 'ไม่มีสัญญาณ'), '');
+      else showToast('ผิดพลาด: ' + (j.error || r.status), 'error');
       await cpRender();
     }
   } catch (e) {
-    toast('เรียกไม่สำเร็จ: ' + String(e.message || e));
+    showToast('เรียกไม่สำเร็จ: ' + String(e.message || e), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔍 อ่านให้หน่อย'; }
   }
