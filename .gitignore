@@ -1,4 +1,5 @@
 .DS_Store
+node_modules/
 
 # MT5 trade history exports (account data)
 ReportHistory-*.htm
