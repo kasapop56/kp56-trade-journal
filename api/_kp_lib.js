@@ -106,9 +106,14 @@ async function buildState(db) {
     nearestDemand = zones.filter(z => z.side === 'demand' && z.lo <= price).sort((a, b) => b.mid - a.mid)[0] || null;
   }
 
+  // live open positions (server-side reconstruct from trade_events)
+  const positions = CFG.coachPositions ? await getOpenPositions(db, CFG.studyAccount) : [];
+  const pos = positionView(positions, price);
+
   return {
     ts: new Date().toISOString(),
     symbol, price,
+    positions, pos,
     sitrep: sitFresh ? sitrep : null,
     fibo: fibFresh ? fibo : null,
     sitrep_id: sitrep?.id ?? null,
@@ -127,6 +132,75 @@ async function buildState(db) {
     fibo_side: fibFresh ? (fibo.active_side || null) : null,
     zones, nearestSupply, nearestDemand,
   };
+}
+
+// ── live open positions (reconstructed from trade_events) ───────────────────────
+// StudyLog streams OPEN (entry/sl/tp/lots/dir), MODIFY (new sl/tp), CLOSE per
+// ticket. We replay them into the set of positions still open. sl/tp of 0 in MT5
+// means "not set" → normalized to null so Claude flags a missing stop.
+async function getOpenPositions(db, account) {
+  const sinceIso = new Date(Date.now() - CFG.positionLookbackDays * 86400000).toISOString();
+  const { data, error } = await db.from('trade_events')
+    .select('ticket, event, payload, created_at')
+    .eq('account_login', account)
+    .in('event', ['OPEN', 'MODIFY', 'CLOSE'])
+    .gte('created_at', sinceIso)
+    .order('created_at', { ascending: true })
+    .limit(3000);
+  if (error) { console.warn('trade_events read failed:', error.message); return []; }
+
+  const posN = (v) => { const n = num(v); return n && n > 0 ? n : null; };
+  const byTicket = new Map();
+  for (const ev of (data || [])) {
+    const t = ev.ticket;
+    if (t == null) continue;
+    let rec = byTicket.get(String(t));
+    if (!rec) { rec = { ticket: t, closed: false, seenOpen: false }; byTicket.set(String(t), rec); }
+    const p = ev.payload || {};
+    if (ev.event === 'OPEN') {
+      rec.seenOpen = true; rec.closed = false;
+      rec.dir = p.dir || null; rec.lots = num(p.lots); rec.entry = num(p.price);
+      rec.sl = posN(p.sl); rec.tp = posN(p.tp);
+      rec.kind = p.kind || null; rec.origin = p.origin || null; rec.opened_at = ev.created_at;
+    } else if (ev.event === 'MODIFY') {
+      if ('sl' in p) rec.sl = posN(p.sl);
+      if ('tp' in p) rec.tp = posN(p.tp);
+    } else if (ev.event === 'CLOSE') {
+      rec.closed = true;
+    }
+  }
+  return [...byTicket.values()]
+    .filter(r => r.seenOpen && !r.closed && r.dir)
+    .sort((a, b) => new Date(a.opened_at) - new Date(b.opened_at));
+}
+
+// Enrich each position with distance-to-SL/TP and unrealized direction (in $),
+// computed at the current price so Claude reasons about real risk not just levels.
+function positionView(positions, price) {
+  const rows = positions.map(p => {
+    const isBuy = p.dir === 'buy';
+    const unreal = (price != null && p.entry != null) ? (isBuy ? price - p.entry : p.entry - price) : null;
+    const toSL = (price != null && p.sl != null) ? (isBuy ? price - p.sl : p.sl - price) : null;   // + = SL still below/above (room left)
+    const toTP = (price != null && p.tp != null) ? (isBuy ? p.tp - price : price - p.tp) : null;   // + = TP not yet hit
+    const risk = (p.entry != null && p.sl != null) ? Math.abs(p.entry - p.sl) : null;
+    const reward = (p.entry != null && p.tp != null) ? Math.abs(p.tp - p.entry) : null;
+    const rr = (risk && reward) ? Math.round((reward / risk) * 100) / 100 : null;
+    return {
+      ticket: p.ticket, dir: p.dir, lots: p.lots, entry: p.entry, sl: p.sl, tp: p.tp,
+      has_sl: p.sl != null, has_tp: p.tp != null,
+      unrealized_usd: unreal == null ? null : round(unreal, 2),
+      dist_to_sl_usd: toSL == null ? null : round(toSL, 2),
+      dist_to_tp_usd: toTP == null ? null : round(toTP, 2),
+      rr, kind: p.kind, opened_at: p.opened_at,
+    };
+  });
+  let netLots = 0, buyLots = 0, sellLots = 0;
+  for (const p of positions) {
+    const l = num(p.lots) || 0;
+    if (p.dir === 'buy') { buyLots += l; netLots += l; } else { sellLots += l; netLots -= l; }
+  }
+  const netSide = netLots > 0 ? 'net long' : netLots < 0 ? 'net short' : 'flat/hedged';
+  return { rows, count: rows.length, net_lots: round(netLots, 2), buy_lots: round(buyLots, 2), sell_lots: round(sellLots, 2), net_side: netSide };
 }
 
 // Persist a snapshot row (history for sweep/flip triggers + provenance).
@@ -236,7 +310,15 @@ Rules:
 - Flag invalidation explicitly (what would kill the setup).
 - Warn against FOMO, revenge entries, and chasing green/red candles mid-range.
 - When price is mid-range with conflicting bias, the correct call is often "no trade — wait for the edge."
-- Keep it mobile-readable and free of filler. End with one brief discipline reminder.`;
+- Keep it mobile-readable and free of filler. End with one brief discipline reminder.
+
+LIVE POSITIONS: If the trader already has open positions (provided as "positions"), the read is about MANAGING them, not hunting new entries. For each position judge:
+- SL placement — a stop sitting INSIDE an opposing zone is likely to be wicked; suggest moving it just beyond the zone / swept wick. If a position has NO stop (has_sl false), that is the #1 priority — tell them to set one now.
+- TP placement — a target parked in thin air beyond POC/into the next zone is greedy; suggest pulling it to the realistic zone edge. Flag when TP1 is close and a partial is due.
+- R:R & risk — call out sub-1R setups and stops that are unreasonably wide/tight for the structure.
+- Management — when in profit and price stalls at POC/a zone: move to breakeven, take partial, or trail. When the position runs with structure, let it.
+- Invalidation/exit — if the thesis that justified the trade is broken (structure flipped, key level closed through), say so plainly and suggest reducing or closing. Never suggest averaging into a losing position against structure.
+Be specific with levels. Do not invent positions that are not in the data.`;
 
 // Scannable mobile format. HARD RULES: Thai, no markdown (no **, no #, no -),
 // very short lines, use the exact emoji section labels below so the message
@@ -285,11 +367,22 @@ async function callClaude(state, trigger) {
     } : null,
     nearest_supply: state.nearestSupply,
     nearest_demand: state.nearestDemand,
+    positions: state.pos && state.pos.count ? { summary: { count: state.pos.count, net_side: state.pos.net_side, net_lots: state.pos.net_lots, buy_lots: state.pos.buy_lots, sell_lots: state.pos.sell_lots }, list: state.pos.rows } : null,
     notes: [
       state.sitrep ? null : 'ไม่มี SITREP สด (MT5) — ใช้ Fibo อย่างเดียว',
       state.h4_trend ? null : 'ยังไม่มี H4 trend จาก TradingView',
     ].filter(Boolean),
   };
+
+  // When holding live orders, insert a coaching section before the plan.
+  const hasPos = !!(state.pos && state.pos.count);
+  const posHint = hasPos ? `\n\n⚠️ มีโพสิชั่นเปิดอยู่ ${state.pos.count} ไม้ (${state.pos.net_side}). โฟกัสที่การจัดการไม้ที่ถืออยู่ ไม่ใช่หาไม้ใหม่. เพิ่มส่วนนี้ก่อน 🎯 แผน:
+
+🧾 โพสิชั่นสด
+<ต่อไม้: dir/lots @ entry · SL x (โอเค/ควรเลื่อนเป็น y) · TP x (โอเค/ควรเป็น y) · R:R · กำไร/ขาดทุนตอนนี้>
+<ถ้าไม่มี SL ให้เตือนเป็นอันดับแรก · ถ้าควร BE/ปิดบางส่วน/เลื่อน trail บอกชัด>
+
+แล้วใน 🎯 แผน ให้เป็นคำแนะนำจัดการ (ถือ/เลื่อน SL/ปิดบางส่วน/ปิด) ไม่ใช่ไม้เข้าใหม่` : '';
 
   const resp = await client.messages.create({
     model: CFG.model,
@@ -298,7 +391,7 @@ async function callClaude(state, trigger) {
     system: SYSTEM_PROMPT,
     messages: [{
       role: 'user',
-      content: `${OUTPUT_HINT}\n\nMARKET STATE (JSON):\n${JSON.stringify(userPayload, null, 2)}`,
+      content: `${OUTPUT_HINT}${posHint}\n\nMARKET STATE (JSON):\n${JSON.stringify(userPayload, null, 2)}`,
     }],
   });
 
@@ -368,8 +461,11 @@ function buildTelegramMessage(commentary, state, trigger) {
   const em = CALL_EMOJI[commentary.bias_call] || '';
   const call = commentary.bias_call ? ` · ${em} <b>${esc(commentary.bias_call)}</b>` : '';
   const px = state.price == null ? '–' : esc(state.price);
+  const posChip = (state.pos && state.pos.count)
+    ? `\n📌 <b>${state.pos.count} ไม้</b> · ${esc(state.pos.net_side)} ${esc(state.pos.net_lots)} lot`
+    : '';
   return `🤖 <b>โคไพลอต</b> · ${esc(badge)}${call}\n` +
-         `${esc(state.symbol)} @ <b>${px}</b>\n` +
+         `${esc(state.symbol)} @ <b>${px}</b>${posChip}\n` +
          `➖➖➖➖➖➖\n` +
          `<b>${esc(commentary.headline)}</b>\n\n` +
          `${esc(commentary.message)}`;
@@ -420,11 +516,12 @@ async function runAnalysis(db, opts = {}) {
       reason: trigger.reason, model: commentary.model, usage: commentary.usage,
       source: opts.source || (opts.force ? 'manual' : 'auto'),
       telegram: tgResult ? (tgResult.ok ? tgResult.message_id : tgResult.error) : null,
+      positions: (state.pos && state.pos.count) ? { count: state.pos.count, net_side: state.pos.net_side, net_lots: state.pos.net_lots } : null,
     },
   }).select('id, ts').single();
   if (error) return { ok: false, error: 'kp_signals_insert: ' + error.message, commentary };
 
-  return { ok: true, fired: true, trigger_type: trigger.trigger_type, signal_id: sig.id, delivered, commentary, state_id: stateId };
+  return { ok: true, fired: true, trigger_type: trigger.trigger_type, signal_id: sig.id, delivered, commentary, positions: state.pos, state_id: stateId };
 }
 
 module.exports = { getDb, buildState, evaluateTriggers, runAnalysis, callClaude, sendTelegram, CFG };

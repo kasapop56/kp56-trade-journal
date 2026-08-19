@@ -45,4 +45,12 @@ module.exports = {
 
   // ── manual endpoint ────────────────────────────────────────────────────────
   manualRateLimitSec: 45,    // min seconds between /api/analyze/now reads
+
+  // ── live-position coaching ───────────────────────────────────────────────────
+  // Reconstructs current open positions from trade_events (StudyLog OPEN/MODIFY/
+  // CLOSE) for this account, then Claude coaches SL/TP + management. Server-side
+  // only (service-role read of trade_events); no EA change.
+  studyAccount: parseInt(process.env.COPILOT_STUDY_ACCOUNT, 10) || 87464504,
+  positionLookbackDays: 30,   // how far back to scan OPEN events (catches long holds)
+  coachPositions: true,       // include live-order coaching in the read
 };
