@@ -55,8 +55,9 @@ function cpBiasClass(b) {
 
 // Reference price = whichever snapshot (SITREP / Fibo) is MOST RECENT, not always
 // the SITREP (which can be an hour stale while Fibo just redrew near the live tick).
-function cpFreshestPrice(sitrep, fibo) {
+function cpFreshestPrice(sitrep, fibo, live) {
   const cand = [];
+  if (cpNum(live?.price) != null) cand.push({ px: cpNum(live.price), at: live.ts });
   if (cpNum(sitrep?.price) != null) cand.push({ px: cpNum(sitrep.price), at: sitrep.created_at });
   if (cpNum(fibo?.price) != null) cand.push({ px: cpNum(fibo.price), at: fibo.created_at });
   if (!cand.length) return null;
@@ -66,7 +67,7 @@ function cpFreshestPrice(sitrep, fibo) {
 
 // ── data load ────────────────────────────────────────────────────────────────
 async function cpLoadLatest() {
-  const [sitRes, fiboRes, sigRes] = await Promise.all([
+  const [sitRes, fiboRes, sigRes, priceRes] = await Promise.all([
     db.from('market_sitreps')
       .select('id, created_at, symbol, price, bias_m15, bias_m5, vp_position, poc, vah, val, ppoc, pvah, pval, supply_zones, demand_zones')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
@@ -76,12 +77,14 @@ async function cpLoadLatest() {
     db.from('kp_signals')
       .select('*')
       .order('ts', { ascending: false }).limit(30),
+    db.from('kp_price').select('symbol, price, ts').order('ts', { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (sitRes.error && sitRes.error.code !== 'PGRST116') throw sitRes.error;
   if (fiboRes.error && fiboRes.error.code !== 'PGRST116') throw fiboRes.error;
-  // kp_signals may not exist until the migration is run — treat "table missing" as empty.
+  // kp_signals / kp_price may not exist until the migration is run — treat "table missing" as empty.
   const signals = (sigRes.error && sigRes.error.code === '42P01') ? [] : (sigRes.data || []);
-  return { sitrep: sitRes.data || null, fibo: fiboRes.data || null, signals };
+  const live = (priceRes && !priceRes.error) ? (priceRes.data || null) : null;
+  return { sitrep: sitRes.data || null, fibo: fiboRes.data || null, signals, live };
 }
 
 // Merge the two sources into a price-anchored ladder of levels.
@@ -141,10 +144,11 @@ function cpBuildLadder(sitrep, fibo, price) {
 }
 
 // ── render ───────────────────────────────────────────────────────────────────
-function cpRenderHeader(sitrep, fibo) {
-  const price = cpFreshestPrice(sitrep, fibo);
+function cpRenderHeader(sitrep, fibo, live) {
+  const price = cpFreshestPrice(sitrep, fibo, live);
   const sitAge = cpAgeMin(sitrep?.created_at);
   const fibAge = cpAgeMin(fibo?.created_at);
+  const liveAge = cpAgeMin(live?.ts);
   const sym = sitrep?.symbol || fibo?.symbol || 'XAUUSD';
 
   const biasChip = (label, val) =>
@@ -162,6 +166,7 @@ function cpRenderHeader(sitrep, fibo) {
         ${sitrep?.vp_position ? `<span class="cp-vp">${sitrep.vp_position}</span>` : ''}
       </div>
       <div class="cp-fresh-row">
+        ${live ? `<span class="cp-pill ${cpFreshClass(liveAge)}">Live · ${cpAgeLabel(liveAge)}</span>` : ''}
         <span class="cp-pill ${cpFreshClass(sitAge)}">MT5 · ${cpAgeLabel(sitAge)}</span>
         <span class="cp-pill ${cpFreshClass(fibAge)}">Fibo · ${cpAgeLabel(fibAge)}</span>
       </div>
@@ -238,12 +243,12 @@ async function cpRender() {
   const root = document.getElementById('copilotBody');
   if (!root) return;
   try {
-    const { sitrep, fibo, signals } = await cpLoadLatest();
+    const { sitrep, fibo, signals, live } = await cpLoadLatest();
     if (!sitrep && !fibo) {
       root.innerHTML = `<div class="cp-empty">ยังไม่มีข้อมูล market state (รอ SITREP / Fibo webhook แรก)</div>`;
       return;
     }
-    const price = cpFreshestPrice(sitrep, fibo);
+    const price = cpFreshestPrice(sitrep, fibo, live);
     const ladder = cpBuildLadder(sitrep, fibo, price);
 
     // nearest-edge summary line
@@ -255,7 +260,7 @@ async function cpRender() {
       </div>`;
 
     root.innerHTML =
-      cpRenderHeader(sitrep, fibo) +
+      cpRenderHeader(sitrep, fibo, live) +
       nearLine +
       `<h3 class="cp-sub">Zone Ladder</h3>` +
       cpRenderLadder(ladder, price) +

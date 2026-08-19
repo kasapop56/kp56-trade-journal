@@ -53,16 +53,19 @@ function round(n, d = 2) {
 // Reads the two live tables and folds them into one object the trigger engine
 // and Claude both consume. A source older than maxStateAgeMin is dropped to null.
 async function buildState(db) {
-  const [sitRes, fiboRes] = await Promise.all([
+  const [sitRes, fiboRes, priceRes] = await Promise.all([
     db.from('market_sitreps')
       .select('id, created_at, symbol, price, bias_m15, bias_m5, vp_position, poc, vah, val, ppoc, pvah, pval, htf_conf, h1_count, ob_summary, supply_zones, demand_zones')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     db.from('fibo_snapshots')
       .select('id, created_at, symbol, price, active_side, entry_mode, frame_mode, leg_dir, s_focus, s_test, s_tp1, s_sl, b_focus, b_test, b_tp1, b_sl, fh, fl, mid')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    // live price heartbeat (JournalSync → api/price); table may not exist yet
+    db.from('kp_price').select('symbol, price, ts').order('ts', { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (sitRes.error && sitRes.error.code !== 'PGRST116') throw sitRes.error;
   if (fiboRes.error && fiboRes.error.code !== 'PGRST116') throw fiboRes.error;
+  const livePrice = (priceRes.error) ? null : (priceRes.data || null);   // 42P01 pre-migration → null
 
   let sitrep = sitRes.data || null;
   let fibo = fiboRes.data || null;
@@ -76,8 +79,11 @@ async function buildState(db) {
   // (not always the SITREP — the Fibo webhook often fires later and is closer to
   // the live tick). Still a snapshot, so we also carry its age for honesty.
   const sitPx = num(sitrep?.price), fibPx = num(fibo?.price);
+  const livePx = num(livePrice?.price);
+  const liveAge = livePrice ? ageMin(livePrice.ts) : null;
   let price = null, priceSource = null, priceAgeMin = null;
   const cand = [];
+  if (livePx != null) cand.push({ px: livePx, src: 'live', age: liveAge, at: livePrice.ts, fresh: liveAge <= CFG.maxStateAgeMin });
   if (sitPx != null) cand.push({ px: sitPx, src: 'mt5', age: sitAge, at: sitrep.created_at, fresh: sitFresh });
   if (fibPx != null) cand.push({ px: fibPx, src: 'fibo', age: fibAge, at: fibo.created_at, fresh: fibFresh });
   if (cand.length) {
