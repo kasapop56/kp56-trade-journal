@@ -53,4 +53,7 @@ module.exports = {
   studyAccount: parseInt(process.env.COPILOT_STUDY_ACCOUNT, 10) || 87464504,
   positionLookbackDays: 30,   // how far back to scan OPEN events (catches long holds)
   coachPositions: true,       // include live-order coaching in the read
+  // XAUUSD contract: $1 of price move × 1.0 lot = $100 account P&L (100 oz/lot).
+  // Used to convert price distance → real account USD for P&L / risk / reward.
+  usdPerDollarPerLot: 100,
 };

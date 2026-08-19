@@ -177,20 +177,25 @@ async function getOpenPositions(db, account) {
 // Enrich each position with distance-to-SL/TP and unrealized direction (in $),
 // computed at the current price so Claude reasons about real risk not just levels.
 function positionView(positions, price) {
+  const CONTRACT = CFG.usdPerDollarPerLot || 100;   // $/($1 move · 1 lot); XAUUSD=100
   const rows = positions.map(p => {
     const isBuy = p.dir === 'buy';
-    const unreal = (price != null && p.entry != null) ? (isBuy ? price - p.entry : p.entry - price) : null;
-    const toSL = (price != null && p.sl != null) ? (isBuy ? price - p.sl : p.sl - price) : null;   // + = SL still below/above (room left)
-    const toTP = (price != null && p.tp != null) ? (isBuy ? p.tp - price : price - p.tp) : null;   // + = TP not yet hit
+    const lots = num(p.lots) || 0;
+    const usd = (priceDist) => priceDist == null ? null : round(priceDist * lots * CONTRACT, 2);
+    const unreal = (price != null && p.entry != null) ? (isBuy ? price - p.entry : p.entry - price) : null;  // price
+    const toSL = (price != null && p.sl != null) ? (isBuy ? price - p.sl : p.sl - price) : null;   // price; + = room left
+    const toTP = (price != null && p.tp != null) ? (isBuy ? p.tp - price : price - p.tp) : null;   // price; + = TP not yet hit
     const risk = (p.entry != null && p.sl != null) ? Math.abs(p.entry - p.sl) : null;
     const reward = (p.entry != null && p.tp != null) ? Math.abs(p.tp - p.entry) : null;
     const rr = (risk && reward) ? Math.round((reward / risk) * 100) / 100 : null;
     return {
       ticket: p.ticket, dir: p.dir, lots: p.lots, entry: p.entry, sl: p.sl, tp: p.tp,
       has_sl: p.sl != null, has_tp: p.tp != null,
-      unrealized_usd: unreal == null ? null : round(unreal, 2),
-      dist_to_sl_usd: toSL == null ? null : round(toSL, 2),
-      dist_to_tp_usd: toTP == null ? null : round(toTP, 2),
+      unrealized_usd: usd(unreal),           // real account P&L (lot-scaled)
+      sl_dist_price: toSL == null ? null : round(toSL, 2),   // how far price is from SL
+      tp_dist_price: toTP == null ? null : round(toTP, 2),   // how far price is from TP
+      risk_to_sl_usd: usd(toSL),             // $ still at risk if SL hits (neg = profit locked past BE)
+      reward_to_tp_usd: usd(toTP),           // $ remaining to TP
       rr, kind: p.kind, opened_at: p.opened_at,
     };
   });
@@ -379,8 +384,9 @@ async function callClaude(state, trigger) {
   const posHint = hasPos ? `\n\n⚠️ มีโพสิชั่นเปิดอยู่ ${state.pos.count} ไม้ (${state.pos.net_side}). โฟกัสที่การจัดการไม้ที่ถืออยู่ ไม่ใช่หาไม้ใหม่. เพิ่มส่วนนี้ก่อน 🎯 แผน:
 
 🧾 โพสิชั่นสด
-<ต่อไม้: dir/lots @ entry · SL x (โอเค/ควรเลื่อนเป็น y) · TP x (โอเค/ควรเป็น y) · R:R · กำไร/ขาดทุนตอนนี้>
+<ต่อไม้: dir lots @ entry · SL x (โอเค/ควรเลื่อนเป็น y) · TP x (โอเค/ควรเป็น y) · R:R · P&L ตอนนี้>
 <ถ้าไม่มี SL ให้เตือนเป็นอันดับแรก · ถ้าควร BE/ปิดบางส่วน/เลื่อน trail บอกชัด>
+หน่วยตัวเลข: P&L ใช้ค่า unrealized_usd (เงินบัญชีจริง $, คิดตาม lot แล้ว). ระยะถึง SL/TP บอกเป็น "ราคา" (sl_dist_price/tp_dist_price) และถ้าจะพูดเป็นเงินให้ใช้ risk_to_sl_usd / reward_to_tp_usd. ห้ามสับสนระหว่างระยะราคา กับเงิน $.
 
 แล้วใน 🎯 แผน ให้เป็นคำแนะนำจัดการ (ถือ/เลื่อน SL/ปิดบางส่วน/ปิด) ไม่ใช่ไม้เข้าใหม่` : '';
 
