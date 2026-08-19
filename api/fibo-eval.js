@@ -171,9 +171,12 @@ function replaySide(frame, side, mode, bars) {
     }
   }
 
-  // Never entered by day's end → expired (not tradeable next day). Keep TODAY's
-  // still-live frames as 'pending' — their trading day is not over yet.
-  if (status === 'pending' && frameDay < bkkDay(Date.now())) status = 'expired';
+  // Past frame that never reached a verdict → expired: either its zone was never
+  // touched (pending), OR it entered but the Bangkok day closed before TP/SL hit
+  // (entered) — a stale open that can never resolve, so it must not linger as
+  // "เปิดอยู่". Only TODAY's frames stay live (pending = waiting, entered = open).
+  if ((status === 'pending' || status === 'entered') && frameDay < bkkDay(Date.now()))
+    status = 'expired';
 
   const best_tp = mfe == null ? 0 : bestTp(side, mfe, [tp1, near, mid, far]);
 
