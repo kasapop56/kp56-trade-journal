@@ -34,28 +34,27 @@ Grade on:
 2. Discipline scorecard — was an SL always set? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
 4. Lessons — 1–2 concrete, specific things to do differently tomorrow.
-Be specific with numbers and levels. Thai output, mobile-readable, no filler.`;
+Be specific with numbers and levels. Thai output, mobile-readable, no filler.
 
-const REPORT_OUTPUT = `ตอบเป็นภาษาไทย สั้น อ่านบนมือถือได้ ห้ามใช้ markdown (** ## -). ใช้รูปแบบนี้ตามลำดับ:
+BREVITY IS MANDATORY: do the full analysis internally but OUTPUT only a short digest. Never list every trade one-by-one — aggregate (e.g. "สวน 4 ไม้ → SL 3 / TP 1"). Surface at most 1–2 standout trades by name. The whole message must fit a phone glance (≤ ~12 lines).`;
 
-<พาดหัวสรุปวัน 1 บรรทัด>
+// DIGEST, not a per-trade dump. Header already shows P&L/W-L, so DON'T re-list
+// every trade. Aggregate. Keep the whole thing short — a phone glance.
+const REPORT_OUTPUT = `ตอบเป็นภาษาไทย สั้นมาก อ่านบนมือถือแบบชำเลืองได้ ห้าม markdown (** ## -).
+ห้ามไล่รีวิวทุกไม้ทีละไม้ — สรุปเป็นภาพรวม. รวมทั้งหมด ≤ 12 บรรทัด. ใช้รูปแบบนี้:
 
-📊 สรุป
-<P&L รวม · W/L · winrate · ไม้ดีสุด/แย่สุด>
+<พาดหัวสรุปวัน 1 บรรทัด (อารมณ์วันนี้ + ประเด็นหลัก)>
 
-🔍 รีวิวรายไม้
-<ต่อไม้: side @ entry→exit · ผล$ · ตาม/สวนโครงสร้าง · SL/TP โอเคไหม · (ตาม/สวน/ไม่มี co-pilot)>
+🎯 วินัย: <เกรด A-F> — <1 บรรทัด: SL ครบไหม · ถัว/แก้แค้นไหม · ถือเหมาะไหม>
 
-🎯 วินัย
-<SL ครบไหม · ถือนานไป/รีบไป · มีถัวขาดทุน/แก้แค้นไหม · เกรดวันนี้ A-F>
+🤖 ตาม vs สวน
+<สวน co-pilot: กี่ไม้ → โดน SL กี่ / ได้ TP กี่ · รวม$>
+<ตาม co-pilot: กี่ไม้ → ผล · มีอันไหน co-pilot อ่านผิดไหม>
+<สรุปบทเรียน 1 บรรทัด: วันนี้ควร "ตาม" หรือ "อ่านเอง">
 
-🤖 เช็ค co-pilot (ตาม vs สวน)
-<ไม้ที่ตามคำแนะนำ: ผลเป็นไง>
-<ไม้ที่สวนคำแนะนำ: กี่ไม้ → โดน SL กี่ไม้ / ได้ TP กี่ไม้ + ผล$ · สรุปวันนี้ควร "ตาม" หรือ "อ่านเอง">
-<ไม้ที่ตาม co-pilot แต่ยังเสีย = co-pilot อ่านผิด บอกตรง ๆ>
+⭐ ไม้ที่ต้องจำ: <1-2 ไม้เด่นสั้น ๆ (ดีสุด/แย่สุด/บทเรียนชัด) — ไม่ต้องครบทุกไม้>
 
-📌 บทเรียนพรุ่งนี้
-<1-2 ข้อ ชัดเจน ทำได้จริง>`;
+📌 พรุ่งนี้: <1-2 ข้อ ชัดเจน ทำได้จริง>`;
 
 // Merge a closed trade (mt5_trades) with its OPEN/CLOSE study events by ticket.
 function buildTrade(t, evByTicket) {
@@ -157,7 +156,7 @@ async function runReport(db, opts = {}) {
   const client = getAnthropic();
   const resp = await client.messages.create({
     model: CFG.reportModel || CFG.model,
-    max_tokens: 1600,
+    max_tokens: 1000,
     output_config: { effort: CFG.reportEffort },
     system: REPORT_SYSTEM,
     messages: [{ role: 'user', content: `${REPORT_OUTPUT}\n\nDAY DATA (JSON):\n${JSON.stringify(payload, null, 2)}` }],

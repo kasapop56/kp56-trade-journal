@@ -281,6 +281,28 @@ async function cpReadNow() {
   }
 }
 
+// ── nightly report on demand ─────────────────────────────────────────────────
+async function cpReportNow() {
+  const btn = document.getElementById('cpReport');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ สรุป…'; }
+  try {
+    const r = await fetch('/api/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manual: true }),
+    });
+    if (r.status === 404) { showToast('ยังไม่ได้ deploy /api/report', 'error'); return; }
+    const j = await r.json().catch(() => ({}));
+    if (j.ok && j.posted) showToast('ส่งรายงานเข้า Telegram แล้ว 🌙', 'success');
+    else if (j.ok && !j.posted) showToast('วันนี้ยังไม่มีเทรด', '');
+    else showToast('ผิดพลาด: ' + (j.error || r.status), 'error');
+  } catch (e) {
+    showToast('เรียกไม่สำเร็จ: ' + String(e.message || e), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🌙 รายงานวันนี้'; }
+  }
+}
+
 // ── realtime + init ──────────────────────────────────────────────────────────
 function cpSubscribe() {
   if (_cpChannel) return;
@@ -296,6 +318,7 @@ function initCopilotPage() {
   if (_cpInit) return;
   _cpInit = true;
   document.getElementById('cpReadNow')?.addEventListener('click', cpReadNow);
+  document.getElementById('cpReport')?.addEventListener('click', cpReportNow);
   document.getElementById('cpRefresh')?.addEventListener('click', cpRender);
   cpSubscribe();
 }

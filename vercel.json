@@ -28,11 +28,5 @@
     "api/report.js": {
       "maxDuration": 30
     }
-  },
-  "crons": [
-    {
-      "path": "/api/report",
-      "schedule": "30 16 * * *"
-    }
-  ]
+  }
 }
