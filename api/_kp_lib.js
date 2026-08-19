@@ -158,6 +158,15 @@ async function buildState(db) {
 // StudyLog streams OPEN (entry/sl/tp/lots/dir), MODIFY (new sl/tp), CLOSE per
 // ticket. We replay them into the set of positions still open. sl/tp of 0 in MT5
 // means "not set" → normalized to null so Claude flags a missing stop.
+//
+// IMPORTANT ordering: Supabase/PostgREST silently caps a response at ~1000 rows
+// regardless of .limit(). We therefore fetch NEWEST-first so the cap, if hit,
+// drops the OLDEST (long-closed, irrelevant) events — never the live ones. A
+// prior ascending sort here returned the oldest 1000 and truncated the most
+// recent events: a still-open trade's CLOSE and newer trades' OPENs got dropped,
+// so the co-pilot reported a phantom position (already closed) and missed the
+// real ones. We reverse the fetched page back to chronological order before the
+// OPEN→MODIFY→CLOSE replay below.
 async function getOpenPositions(db, account) {
   const sinceIso = new Date(Date.now() - CFG.positionLookbackDays * 86400000).toISOString();
   const { data, error } = await db.from('trade_events')
@@ -165,13 +174,14 @@ async function getOpenPositions(db, account) {
     .eq('account_login', account)
     .in('event', ['OPEN', 'MODIFY', 'CLOSE'])
     .gte('created_at', sinceIso)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(3000);
   if (error) { console.warn('trade_events read failed:', error.message); return []; }
 
+  const chrono = (data || []).slice().reverse();   // newest-first fetch → replay oldest-first
   const posN = (v) => { const n = num(v); return n && n > 0 ? n : null; };
   const byTicket = new Map();
-  for (const ev of (data || [])) {
+  for (const ev of chrono) {
     const t = ev.ticket;
     if (t == null) continue;
     let rec = byTicket.get(String(t));

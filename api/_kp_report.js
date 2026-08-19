@@ -103,7 +103,9 @@ async function runReport(db, opts = {}) {
     db.from('trade_events')
       .select('ticket, event, payload, created_at')
       .eq('account_login', account).gte('created_at', sinceIso)
-      .in('event', ['OPEN', 'MODIFY', 'CLOSE']).order('created_at', { ascending: true }).limit(2000),
+      // newest-first: PostgREST caps ~1000 rows, so drop OLDEST if a busy day
+      // overflows — never the recent events. Reversed to chronological below.
+      .in('event', ['OPEN', 'MODIFY', 'CLOSE']).order('created_at', { ascending: false }).limit(2000),
     db.from('kp_signals')
       .select('ts, trigger_type, headline, bias_call, price, message')
       .gte('ts', sinceIso).order('ts', { ascending: true }).limit(60),
@@ -115,7 +117,8 @@ async function runReport(db, opts = {}) {
 
   // index events by ticket → { open, close }
   const evByTicket = new Map();
-  for (const ev of (evRes.error ? [] : (evRes.data || []))) {
+  const evChrono = (evRes.error ? [] : (evRes.data || [])).slice().reverse();
+  for (const ev of evChrono) {
     const k = String(ev.ticket);
     let rec = evByTicket.get(k);
     if (!rec) { rec = {}; evByTicket.set(k, rec); }
