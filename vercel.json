@@ -26,7 +26,7 @@
       "maxDuration": 30
     },
     "api/report.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   }
 }
