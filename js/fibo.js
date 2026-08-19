@@ -115,6 +115,7 @@ const STATUS = {
   loss:    ['❌ แพ้',    'fb-loss'],
   entered: ['🎯 เข้า',   'fb-open'],
   pending: ['⏳ รอ',    'fb-pend'],
+  expired: ['⌛ หมดอายุ', 'fb-void'],   // never entered before its Bangkok day ended
   void:    ['⚪ ไม่เข้า', 'fb-void'],
 };
 function badge(st) {

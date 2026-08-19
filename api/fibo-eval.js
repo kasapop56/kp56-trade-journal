@@ -35,6 +35,12 @@ function db() {
 
 const isGold = (s) => typeof s === 'string' && s.toUpperCase().replace(/[^A-Z]/g, '').startsWith(SYM);
 
+// Bangkok (UTC+7) civil-day index. A frame's tradeable life is its own trading
+// day: entries days later were look-ahead (a dead swing price wandered back to),
+// so we cap entry+resolution to the frame's Bangkok day. Un-entered past frames
+// become 'expired' (won't be traded), not perpetual 'pending'.
+const bkkDay = (ms) => Math.floor((ms + 7 * 3600e3) / 86400e3);
+
 // "2026.08.10 02:05:00" (GMT) → ms epoch
 function parseGmt(s) {
   const m = typeof s === 'string' && s.match(/(\d{4})\.(\d{2})\.(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
@@ -122,6 +128,7 @@ function replaySide(frame, side, mode, bars) {
   const { isTest, lvl, tp1, sl, mid, near, far, Z } = sideLevels(frame, side, mode);
   const zLo = lvl - Z, zHi = lvl + Z;
   const frameT = Number(frame.bar_time);
+  const frameDay = bkkDay(frameT);   // frame lives one Bangkok trading day
 
   // Three dimensions, deliberately on different windows:
   //   result  — WIN/LOSS = did TP1 come before SL (first touch; tie = LOSS).
@@ -135,6 +142,7 @@ function replaySide(frame, side, mode, bars) {
 
   for (const b of bars) {
     if (b.t <= frameT) continue;   // only bars after the frame was drawn
+    if (bkkDay(b.t) !== frameDay) break;   // frame expired at end of its Bangkok day
     seen++;
     if (status === 'pending') {
       // Test now enters once close REACHES the zone edge and is still short of SL
@@ -163,6 +171,10 @@ function replaySide(frame, side, mode, bars) {
     }
   }
 
+  // Never entered by day's end → expired (not tradeable next day). Keep TODAY's
+  // still-live frames as 'pending' — their trading day is not over yet.
+  if (status === 'pending' && frameDay < bkkDay(Date.now())) status = 'expired';
+
   const best_tp = mfe == null ? 0 : bestTp(side, mfe, [tp1, near, mid, far]);
 
   // ── "Endure past SL" analysis (A) ──────────────────────────────────────────
@@ -177,7 +189,6 @@ function replaySide(frame, side, mode, bars) {
   //   tp1_after_sl = a LOSS whose price later reached TP1 within the day.
   //   recover_bars = bars from entry to that eventual TP1 (the hold you'd endure).
   // Windowed to the entry's Bangkok trading day (the frame's natural intraday life).
-  const bkkDay = ms => Math.floor((ms + 7 * 3600e3) / 86400e3);
   let heat_pts = null, tp1_after_sl = false, recover_bars = null;
   const sl_pts = Math.round(Math.abs(sl - lvl) / POINT);
   if (entered_at != null) {
