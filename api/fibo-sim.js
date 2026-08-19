@@ -105,9 +105,13 @@ function enterHit(side, isTest, b, zLo, zHi, sl) {
 
 // Replay one (frame, side, mode). Returns array of trades: {result, pnl_pts, leg}.
 // leg 0 = first entry, 1.. = re-entries. Cut at SL, tie = loss (SL checked first).
-function replay(frame, side, mode, bars, maxReentry, expireDay) {
+function replay(frame, side, mode, bars, maxReentry, expireDay, spreadPts = 0) {
   const { isTest, lvl, tp1, sl, tp1pts, slpts, Z } = sideLevels(frame, side, mode);
   const zLo = lvl - Z, zHi = lvl + Z;
+  // MT5 bid/ask cost model: you close on the far side of the spread, so TP must be
+  // reached `spread` further and SL triggers `spread` sooner. Near-miss TPs flip to
+  // losses; realized points stay nominal (the give-up shows up as the flip).
+  const Sr = spreadPts * POINT;
   const frameT = Number(frame.bar_time);
   const frameDay = bkkDay(frameT);
   const trades = [];
@@ -134,9 +138,9 @@ function replay(frame, side, mode, bars, maxReentry, expireDay) {
       if (!inTrade) continue;
     }
 
-    // resolution — check SL first (tie = loss), then TP
-    const hitSl = side === 'S' ? b.h >= sl  : b.l <= sl;
-    const hitTp = side === 'S' ? b.l <= tp1 : b.h >= tp1;
+    // resolution — check SL first (tie = loss), then TP. Spread makes SL nearer, TP farther.
+    const hitSl = side === 'S' ? b.h >= sl - Sr : b.l <= sl + Sr;
+    const hitTp = side === 'S' ? b.l <= tp1 - Sr : b.h >= tp1 + Sr;
     if (hitSl) {
       trades.push({ result: 'loss', pnl_pts: -slpts, leg });
       inTrade = false;
@@ -173,6 +177,7 @@ module.exports = async (req, res) => {
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 60, 1), 120);
     const maxRe = Math.min(Math.max(parseInt(req.query.reentry, 10) || 1, 0), 5);
     const expireDay = String(req.query.expire || 'day') !== 'none';
+    const spread = Math.min(Math.max(parseInt(req.query.spread, 10) || 0, 0), 200);
     const sinceISO = new Date(Date.now() - days * 86400e3).toISOString();
 
     const snapRes = await db().from('fibo_snapshots').select('*')
@@ -189,8 +194,8 @@ module.exports = async (req, res) => {
     const totBase = tallyInit(), totRe = tallyInit();
 
     for (const f of frames) for (const side of ['S', 'B']) for (const mode of ['focus', 'test']) {
-      const base = replay(f, side, mode, bars, 0, expireDay);
-      const re   = replay(f, side, mode, bars, maxRe, expireDay);
+      const base = replay(f, side, mode, bars, 0, expireDay, spread);
+      const re   = replay(f, side, mode, bars, maxRe, expireDay, spread);
       tallyAdd(cells[key(side, mode)].base, base); tallyAdd(totBase, base);
       tallyAdd(cells[key(side, mode)].re, re);     tallyAdd(totRe, re);
     }
@@ -199,7 +204,7 @@ module.exports = async (req, res) => {
     for (const k in cells) out[k] = { base: tallyFinal(cells[k].base), re: tallyFinal(cells[k].re) };
     return res.status(200).json({
       ok: true, mode: 'sim-readonly',
-      params: { days, reentry: maxRe, expire: expireDay ? 'day' : 'none' },
+      params: { days, reentry: maxRe, expire: expireDay ? 'day' : 'none', spread },
       frames: frames.length, bars: bars.length,
       per_side_mode: out,
       total: { base: tallyFinal(totBase), re: tallyFinal(totRe) },
