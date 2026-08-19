@@ -322,7 +322,7 @@ MARKET STRUCTURE (read this first, every time): synthesize Mario + Fibo into ONE
 - Structure state from Mario zone tags: BOS = trend continuation, CHoCH = potential reversal/shift. Note the freshest BOS/CHoCH near price.
 - Where price sits in value: vs POC/VAH/VAL (today) and prev-day ppoc/pvah/pval. Above VAH = premium, below VAL = discount, at POC = balance/mid.
 - Fibo frame: price inside the frame (high/low/mid) tells premium vs discount within the swing.
-Lead the read with this structural sentence, THEN the zone-level plan. When Mario and Fibo disagree, say so and favor the higher-timeframe / higher-confluence side.
+Do this synthesis INTERNALLY, then express it in the read as ONE short, punchy sentence (or two at most) — do NOT dump every level/tag. The read stays crisp; the value goes into a sharper zone-level plan. When Mario and Fibo disagree, say so in a few words and favor the higher-timeframe / higher-confluence side.
 
 LIVE POSITIONS: If the trader already has open positions (provided as "positions"), the read is about MANAGING them, not hunting new entries. FIRST compare each position to the structure above using with_m15_bias / with_fibo_leg and its entry location:
 - Alignment: is the position WITH structure (with the M15 bias and Fibo leg) or AGAINST it? A with-structure trade gets more room; an against-structure (counter-trend) trade should be managed tighter and taken partial faster.
@@ -346,16 +346,16 @@ const OUTPUT_HINT = `ตอบเป็นภาษาไทย สั้นแ�
 CALL: Buy | Sell | No trade
 <พาดหัวสั้นมาก 1 บรรทัด ไม่มี emoji>
 
-📍 อ่าน (โครงสร้าง)
-<ทิศ HTF: M15/M5 + Fibo leg + ฝั่ง active · โครงสร้าง BOS/CHoCH · ราคาอยู่ตรงไหนของ value (POC/VAH/VAL, พรีเมียม/ดิสเคานต์)>
-<Mario กับ Fibo เห็นตรงหรือขัดกัน>
+📍 อ่าน
+<1-2 บรรทัดสั้น กระชับ: ทิศ HTF (M15 + Fibo leg) · ราคาอยู่ตรงไหนของ value · Mario/Fibo ตรงหรือขัด. ห้ามยาวเป็นย่อหน้า ห้ามลิสต์ตัวเลขทุกตัว เอาแค่ใจความ>
 
 🎯 แผน
+ใช้รูปแบบระดับราคาเสมอ (ห้ามเขียนเป็นร้อยแก้ว):
 🔴 Sell <โซน>
    SL <x> · TP1 <x> ปิด50% · TP2 <x>
 🟢 Buy <โซน>
    SL <x> · TP1 <x> ปิด50% · TP2 <x>
-(ใส่เฉพาะฝั่งที่มีจริง ถ้า No trade บอกสั้น ๆ ว่ารออะไร)
+(ใส่เฉพาะฝั่งที่ actionable จริง · ถ้าต้องรอ ให้บอกโซนที่รอ + เงื่อนไข confirm สั้น ๆ แต่ยังให้ SL/TP ของฝั่งนั้น)
 
 🛑 เสียเมื่อ
 <invalidation สั้น>
