@@ -53,6 +53,17 @@ function cpBiasClass(b) {
   return 'cp-flat';
 }
 
+// Reference price = whichever snapshot (SITREP / Fibo) is MOST RECENT, not always
+// the SITREP (which can be an hour stale while Fibo just redrew near the live tick).
+function cpFreshestPrice(sitrep, fibo) {
+  const cand = [];
+  if (cpNum(sitrep?.price) != null) cand.push({ px: cpNum(sitrep.price), at: sitrep.created_at });
+  if (cpNum(fibo?.price) != null) cand.push({ px: cpNum(fibo.price), at: fibo.created_at });
+  if (!cand.length) return null;
+  cand.sort((a, b) => new Date(b.at) - new Date(a.at));
+  return cand[0].px;
+}
+
 // ── data load ────────────────────────────────────────────────────────────────
 async function cpLoadLatest() {
   const [sitRes, fiboRes, sigRes] = await Promise.all([
@@ -131,7 +142,7 @@ function cpBuildLadder(sitrep, fibo, price) {
 
 // ── render ───────────────────────────────────────────────────────────────────
 function cpRenderHeader(sitrep, fibo) {
-  const price = cpNum(sitrep?.price) ?? cpNum(fibo?.price);
+  const price = cpFreshestPrice(sitrep, fibo);
   const sitAge = cpAgeMin(sitrep?.created_at);
   const fibAge = cpAgeMin(fibo?.created_at);
   const sym = sitrep?.symbol || fibo?.symbol || 'XAUUSD';
@@ -232,7 +243,7 @@ async function cpRender() {
       root.innerHTML = `<div class="cp-empty">ยังไม่มีข้อมูล market state (รอ SITREP / Fibo webhook แรก)</div>`;
       return;
     }
-    const price = cpNum(sitrep?.price) ?? cpNum(fibo?.price);
+    const price = cpFreshestPrice(sitrep, fibo);
     const ladder = cpBuildLadder(sitrep, fibo, price);
 
     // nearest-edge summary line

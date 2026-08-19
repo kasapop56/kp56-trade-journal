@@ -72,7 +72,21 @@ async function buildState(db) {
   const sitFresh = sitrep && sitAge <= CFG.maxStateAgeMin;
   const fibFresh = fibo && fibAge <= CFG.maxStateAgeMin;
 
-  const price = num(sitFresh ? sitrep.price : null) ?? num(fibFresh ? fibo.price : null) ?? num(sitrep?.price) ?? num(fibo?.price);
+  // Reference price = the snapshot from whichever source fired MOST RECENTLY
+  // (not always the SITREP — the Fibo webhook often fires later and is closer to
+  // the live tick). Still a snapshot, so we also carry its age for honesty.
+  const sitPx = num(sitrep?.price), fibPx = num(fibo?.price);
+  let price = null, priceSource = null, priceAgeMin = null;
+  const cand = [];
+  if (sitPx != null) cand.push({ px: sitPx, src: 'mt5', age: sitAge, at: sitrep.created_at, fresh: sitFresh });
+  if (fibPx != null) cand.push({ px: fibPx, src: 'fibo', age: fibAge, at: fibo.created_at, fresh: fibFresh });
+  if (cand.length) {
+    const fresh = cand.filter(c => c.fresh);
+    const pool = fresh.length ? fresh : cand;   // prefer non-stale; else use what we have
+    pool.sort((a, b) => new Date(b.at) - new Date(a.at));  // most recent first
+    price = pool[0].px; priceSource = pool[0].src;
+    priceAgeMin = pool[0].age == null ? null : round(pool[0].age, 1);
+  }
   const symbol = sitrep?.symbol || fibo?.symbol || CFG.symbol;
 
   // build actionable zones (edges + score/tags + source)
@@ -112,7 +126,7 @@ async function buildState(db) {
 
   return {
     ts: new Date().toISOString(),
-    symbol, price,
+    symbol, price, price_source: priceSource, price_age_min: priceAgeMin,
     positions, pos,
     sitrep: sitFresh ? sitrep : null,
     fibo: fibFresh ? fibo : null,
@@ -400,7 +414,7 @@ async function callClaude(state, trigger) {
     trigger: { type: trigger.trigger_type, reason: trigger.reason },
     symbol: state.symbol,
     price: state.price,
-    freshness: { mt5_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min },
+    freshness: { price_source: state.price_source, price_age_min: state.price_age_min, mt5_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min },
     structure,
     mt5: state.sitrep ? {
       bias_m15: state.bias_m15, bias_m5: state.bias_m5, vp_position: state.vp_position,
@@ -420,6 +434,9 @@ async function callClaude(state, trigger) {
     notes: [
       state.sitrep ? null : 'ไม่มี SITREP สด (MT5) — ใช้ Fibo อย่างเดียว',
       state.h4_trend ? null : 'ยังไม่มี H4 trend จาก TradingView',
+      (state.price_age_min != null && state.price_age_min > 15)
+        ? `ราคาอ้างอิงเป็น snapshot จาก ${state.price_source} เมื่อ ${state.price_age_min} นาทีก่อน — ราคาจริงตอนนี้อาจต่างไปแล้ว ให้เตือนผู้ใช้และให้ระดับ zone เป็นหลัก`
+        : null,
     ].filter(Boolean),
   };
 
