@@ -36,23 +36,25 @@ Grade on:
 4. Lessons — 1–2 concrete, specific things to do differently tomorrow.
 Be specific with numbers and levels. Thai output, mobile-readable, no filler.
 
-BREVITY IS MANDATORY: do the full analysis internally but OUTPUT only a short digest. Never list every trade one-by-one — aggregate (e.g. "สวน 4 ไม้ → SL 3 / TP 1"). Surface at most 1–2 standout trades by name. The whole message must fit a phone glance (≤ ~12 lines).`;
+FORMAT: review every trade, but each as ONE tight scannable line (emoji + side + entry→exit + P&L + short tags) — like a clean trade plan, never a paragraph per trade. Aggregate the co-pilot follow-vs-diverge stats into short lines. If there are many near-identical ADD legs, you may merge them into one line. Keep it easy to glance on a phone.`;
 
-// DIGEST, not a per-trade dump. Header already shows P&L/W-L, so DON'T re-list
-// every trade. Aggregate. Keep the whole thing short — a phone glance.
-const REPORT_OUTPUT = `ตอบเป็นภาษาไทย สั้นมาก อ่านบนมือถือแบบชำเลืองได้ ห้าม markdown (** ## -).
-ห้ามไล่รีวิวทุกไม้ทีละไม้ — สรุปเป็นภาพรวม. รวมทั้งหมด ≤ 12 บรรทัด. ใช้รูปแบบนี้:
+// Per-trade review is BACK — but ONE tight line per trade, scannable like the
+// plan (emoji + levels + short tags). Not paragraphs, not an ultra-short digest.
+const REPORT_OUTPUT = `ตอบเป็นภาษาไทย อ่านง่ายบนมือถือ ห้าม markdown (** ## -).
+per-trade บรรทัดละไม้ สั้น กระชับ เหมือนหน้าตา "แผน" (emoji + ตัวเลข + แท็กสั้น). ใช้รูปแบบนี้:
 
-<พาดหัวสรุปวัน 1 บรรทัด (อารมณ์วันนี้ + ประเด็นหลัก)>
+<พาดหัวสรุปวัน 1 บรรทัด>
+
+🔍 รายไม้
+<เลข) 🔴/🟢 side entry→exit ±$ · ตาม/สวนโครงสร้าง · จบแบบ SL/TP/มือ · (ตาม/สวน/ไม่มี co-pilot)>
+(ทุกไม้ บรรทัดเดียว ห้ามยืดเป็นย่อหน้า · ถ้าไม้เยอะมากค่อยรวมไม้ ADD ที่เหมือนกัน)
 
 🎯 วินัย: <เกรด A-F> — <1 บรรทัด: SL ครบไหม · ถัว/แก้แค้นไหม · ถือเหมาะไหม>
 
 🤖 ตาม vs สวน
 <สวน co-pilot: กี่ไม้ → โดน SL กี่ / ได้ TP กี่ · รวม$>
 <ตาม co-pilot: กี่ไม้ → ผล · มีอันไหน co-pilot อ่านผิดไหม>
-<สรุปบทเรียน 1 บรรทัด: วันนี้ควร "ตาม" หรือ "อ่านเอง">
-
-⭐ ไม้ที่ต้องจำ: <1-2 ไม้เด่นสั้น ๆ (ดีสุด/แย่สุด/บทเรียนชัด) — ไม่ต้องครบทุกไม้>
+<สรุป 1 บรรทัด: วันนี้ควร "ตาม" หรือ "อ่านเอง">
 
 📌 พรุ่งนี้: <1-2 ข้อ ชัดเจน ทำได้จริง>`;
 
@@ -156,7 +158,7 @@ async function runReport(db, opts = {}) {
   const client = getAnthropic();
   const resp = await client.messages.create({
     model: CFG.reportModel || CFG.model,
-    max_tokens: 1000,
+    max_tokens: 1400,
     output_config: { effort: CFG.reportEffort },
     system: REPORT_SYSTEM,
     messages: [{ role: 'user', content: `${REPORT_OUTPUT}\n\nDAY DATA (JSON):\n${JSON.stringify(payload, null, 2)}` }],
