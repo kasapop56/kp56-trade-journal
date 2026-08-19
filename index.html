@@ -14,6 +14,7 @@
   <a href="#" data-page="stats" class="active">Stats</a>
   <a href="#" data-page="history">History</a>
   <a href="#" data-page="fibo">Fibo 🎯</a>
+  <a href="#" data-page="copilot">โคไพลอต 🤖</a>
   <a href="#" data-page="numerology">ดวงดาว ⭐</a>
 </nav>
 
@@ -507,6 +508,20 @@
   <div id="fiboList" class="fibo-list"></div>
 </div>
 
+<div id="copilot" class="page">
+  <div class="card">
+    <div class="cp-title-row">
+      <h2>โคไพลอต 🤖</h2>
+      <div class="cp-actions">
+        <button type="button" class="btn-secondary" id="cpRefresh">↻</button>
+        <button type="button" class="btn-secondary" id="cpReadNow">🔍 อ่านให้หน่อย</button>
+      </div>
+    </div>
+    <p class="fibo-sub">market state สด — รวม MT5 (bias · POC/VAH/VAL · โซน supply/demand) กับ Fibo (S ขาย / B ซื้อ) แล้วเรียงเป็นบันได · คอมเมนต์เข้าเมื่อถึงจังหวะสำคัญเท่านั้น</p>
+    <div id="copilotBody"><div class="cp-empty">กำลังโหลด…</div></div>
+  </div>
+</div>
+
 <div id="numerology" class="page">
 
   <!-- Pre-trade NOW panel -->
@@ -568,5 +583,6 @@
 <script src="js/import.js"></script>
 <script src="js/numerology.js"></script>
 <script src="js/fibo.js"></script>
+<script src="js/copilot.js"></script>
 </body>
 </html>

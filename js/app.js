@@ -95,6 +95,7 @@ function navigate(pageId) {
   if (pageId === 'stats') { allDashboardData = []; loadDashboard(); loadPortfolio(); }
   if (pageId === 'numerology') initNumerologyPage();
   if (pageId === 'fibo') initFiboPage();
+  if (pageId === 'copilot') initCopilotPage();
 }
 
 navLinks.forEach(a => a.addEventListener('click', e => {
