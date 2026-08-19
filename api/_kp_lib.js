@@ -185,16 +185,26 @@ async function getOpenPositions(db, account) {
     const t = ev.ticket;
     if (t == null) continue;
     let rec = byTicket.get(String(t));
-    if (!rec) { rec = { ticket: t, closed: false, seenOpen: false }; byTicket.set(String(t), rec); }
+    if (!rec) { rec = { ticket: t, closed: false, seenOpen: false, partial: false, orig_lots: null }; byTicket.set(String(t), rec); }
     const p = ev.payload || {};
     if (ev.event === 'OPEN') {
       rec.seenOpen = true; rec.closed = false;
       rec.dir = p.dir || null; rec.lots = num(p.lots); rec.entry = num(p.price);
+      rec.orig_lots = rec.lots; rec.partial = false;
       rec.sl = posN(p.sl); rec.tp = posN(p.tp);
       rec.kind = p.kind || null; rec.origin = p.origin || null; rec.opened_at = ev.created_at;
     } else if (ev.event === 'MODIFY') {
       if ('sl' in p) rec.sl = posN(p.sl);
       if ('tp' in p) rec.tp = posN(p.tp);
+      // partial close: same ticket stays open with reduced volume (EA emits
+      // lots + partial:true). Resize so P&L/risk reflect the remaining lots.
+      if ('lots' in p) {
+        const nl = num(p.lots);
+        if (nl != null && nl > 0) {
+          if (rec.lots != null && nl < rec.lots - 0.005) rec.partial = true;
+          rec.lots = nl;
+        }
+      }
     } else if (ev.event === 'CLOSE') {
       rec.closed = true;
     }
@@ -221,6 +231,8 @@ function positionView(positions, price) {
     return {
       ticket: p.ticket, dir: p.dir, lots: p.lots, entry: p.entry, sl: p.sl, tp: p.tp,
       has_sl: p.sl != null, has_tp: p.tp != null,
+      partial_closed: !!p.partial,                       // true = already scaled out (default 50%)
+      orig_lots: p.partial ? p.orig_lots : undefined,    // size before the partial, for context
       unrealized_usd: usd(unreal),           // real account P&L (lot-scaled)
       sl_dist_price: toSL == null ? null : round(toSL, 2),   // how far price is from SL
       tp_dist_price: toTP == null ? null : round(toTP, 2),   // how far price is from TP
@@ -357,6 +369,7 @@ Do this synthesis INTERNALLY, then express it in the read as ONE short, punchy s
 LIVE POSITIONS: If the trader already has open positions (provided as "positions"), the read is about MANAGING them, not hunting new entries. FIRST compare each position to the structure above using with_m15_bias / with_fibo_leg and its entry location:
 - Alignment: is the position WITH structure (with the M15 bias and Fibo leg) or AGAINST it? A with-structure trade gets more room; an against-structure (counter-trend) trade should be managed tighter and taken partial faster.
 - Entry quality: was it entered at a zone edge (good) or mid-range/at POC (chasing)? Say it plainly.
+- Partial already taken: if partial_closed is true, the trader has already scaled out (typically 50%) — "lots" is the REMAINING size (orig_lots was the original). Do all P&L/risk math on the remaining lots, acknowledge the profit is partly banked, and do NOT tell them to "take partial" again — instead advise on the runner (trail / move to BE / hold to next zone / close the rest).
 Then for each position judge:
 - SL placement — a stop sitting INSIDE an opposing zone is likely to be wicked; suggest moving it just beyond the zone / swept wick. If a position has NO stop (has_sl false), that is the #1 priority — tell them to set one now.
 - TP placement — a target parked in thin air beyond POC/into the next zone is greedy; suggest pulling it to the realistic zone edge. Flag when TP1 is close and a partial is due.
