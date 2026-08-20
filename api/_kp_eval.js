@@ -32,7 +32,7 @@ const SYM   = 'XAUUSD';
 // outcome row so a later re-grade under different thresholds can never be silently
 // mixed with old outcomes (verdicts are recomputed on every run, so without this
 // a threshold tweak would rewrite all of history with no marker).
-const EVAL_REV = '9c';
+const EVAL_REV = '9d';
 const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
   .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
@@ -62,6 +62,18 @@ function bkkDateStr(ms) {
   const t = new Date(ms + dayShiftMs());
   return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
 }
+// A BAR row is stamped at the bar's CLOSE (t_gmt = TimeGMT() when bar1 closed), so
+// a bar with timestamp t covers [t − tf, t]. Without the timeframe we cannot tell
+// which bar contains a read, and the bar containing the read carries up to a full
+// bar of PRE-read movement — including the very wick that triggered the read.
+const DEFAULT_TF_MS = 5 * 60e3;      // RainbowPilot runs on M5
+function tfMs(s) {
+  const m = String(s || '').match(/^([MHD])(\d+)$/i);
+  if (!m) return null;
+  const n = Number(m[2]), u = m[1].toUpperCase();
+  return u === 'M' ? n * 60e3 : u === 'H' ? n * 3600e3 : u === 'D' ? n * 86400e3 : null;
+}
+
 function parseGmt(s) {
   const m = typeof s === 'string' && s.match(/(\d{4})\.(\d{2})\.(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
   return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null;
@@ -83,7 +95,8 @@ async function loadBars(sinceISO) {
       const bar1 = b.payload?.ctx?.bar1;
       const t = parseGmt(b.payload?.t_gmt) ?? Date.parse(b.created_at);
       if (Array.isArray(bar1) && bar1.length === 4 && t != null)
-        out.push({ t, o: +bar1[0], h: +bar1[1], l: +bar1[2], c: +bar1[3] });
+        out.push({ t, o: +bar1[0], h: +bar1[1], l: +bar1[2], c: +bar1[3],
+                   tf: tfMs(b.payload?.tf) || DEFAULT_TF_MS });
     }
     if (data.length < page) break;
     from += page;
@@ -223,6 +236,18 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   const call = normCall(sig.bias_call);
   const dayEntry = dayMap.get(day) || null;
 
+  // ── entry read or management note? ──
+  // A read taken while a position was open is live-order COACHING: its CALL word
+  // echoes exposure the trader already has, it advises no entry, and grading it as
+  // a fresh directional call measures the trader's open trade, not the co-pilot.
+  // (Historically 100% of Buy/Sell reads were of this kind — see doc §13.2b.)
+  const readKind = sig.meta?.read_kind
+    || ((sig.meta?.positions?.count) ? 'manage' : 'entry');
+  // the entry legs the read actually advised (null for older/《manage》reads)
+  const entryLegs = Array.isArray(sig.meta?.plan)
+    ? sig.meta.plan.filter(l => l && l.kind !== 'manage' && num(l.zone_lo) != null)
+    : [];
+
   const base = {
     signal_id: sig.id, read_ts: sig.ts, bkk_date: bkkDateStr(t0),
     symbol: sig.symbol || CFG.symbol, call: sig.bias_call || null, read_price: P0,
@@ -271,7 +296,11 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   }
 
   // ── read-level excursion from P0, in the CALL direction, after the read ──
-  const after = dayEntry.bars.filter(b => b.t > t0);
+  // Strictly bars that OPENED at/after the read: a bar is stamped at its close, so
+  // `b.t > t0` would admit the bar containing the read and count its pre-read wick
+  // as post-read excursion — biased against the sweep-and-reclaim setups the system
+  // is built around.
+  const after = dayEntry.bars.filter(b => (b.t - (b.tf || DEFAULT_TF_MS)) >= t0);
   let maxH = null, minL = null, result = null;
   const dir = call === 'buy' ? 1 : call === 'sell' ? -1 : 0;   // +1 up-favorable
   const winLvl  = atr && dir ? P0 + dir * E.winAtr  * atr : null;
@@ -297,6 +326,23 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   const adv_pts = adv != null ? Math.round(adv / POINT) : null;
   const reached_band = (fav_atr != null) ? Math.round((fav_atr / 0.25)) * 0.25 : null;
 
+  // Direction-free post-read travel — the honest yardstick for a "No trade" read
+  // (the old one used the WHOLE day's travel from the day open, so a correct 20:00
+  // "sit out" after a morning trend was scored MISSED for a move that had already
+  // happened before the read existed).
+  const postUp = (maxH != null) ? maxH - P0 : null;
+  const postDn = (minL != null) ? P0 - minL : null;
+  const postMaxAtr = (atr && postUp != null && postDn != null)
+    ? Math.round((Math.max(postUp, postDn) / atr) * 100) / 100 : null;
+  // Did price ever come to a level the read said to wait for? If a move happened but
+  // never offered the advised entry, sitting it out was CORRECT, not a miss.
+  const legTouched = entryLegs.length ? entryLegs.some(l => {
+    const lo = Math.min(num(l.zone_lo), num(l.zone_hi) ?? num(l.zone_lo));
+    const hi = Math.max(num(l.zone_lo), num(l.zone_hi) ?? num(l.zone_lo));
+    const b = E.zoneBufferPrice;
+    return after.some(x => x.h >= lo - b && x.l <= hi + b);
+  }) : null;
+
   // ── zone the read leaned on (nearest opposing edge from the market state) ──
   const zone = call === 'buy' ? stateRow?.nearest_demand : call === 'sell' ? stateRow?.nearest_supply : null;
   let reached_target = false, zone_behavior = 'NA', target_zone = null;
@@ -320,9 +366,22 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   // ── verdict ──
   let verdict;
   if (!after.length) verdict = day < today ? 'EXPIRED' : 'PENDING';
-  else if (call === 'none') {
-    verdict = (day_type === 'BALANCE' || direction_actual === 'RANGE') ? 'OK_NOTRADE'
-            : (day < today ? 'MISSED' : 'PENDING');
+  else if (readKind === 'manage') {
+    // Not an entry call → excluded from WIN/LOSS and from attribution. Excursions
+    // are still recorded; judging management advice needs its own yardstick (was
+    // the SL/TP guidance good?), which is a separate piece of work.
+    verdict = 'MANAGE';
+  } else if (call == null) {
+    // the CALL line didn't parse — a malformed read must not become a fake STALL
+    verdict = 'UNGRADEABLE';
+  } else if (call === 'none') {
+    if (!atr || postMaxAtr == null) verdict = day < today ? 'EXPIRED' : 'PENDING';
+    else if (postMaxAtr >= E.winAtr) {
+      // a real move happened AFTER the read — but only a miss if the read's own
+      // level was actually offered
+      verdict = (legTouched === false) ? 'NO_ENTRY_OFFERED'
+              : (day < today ? 'MISSED' : 'PENDING');
+    } else verdict = day < today ? 'OK_NOTRADE' : 'PENDING';
   } else if (!atr) {
     verdict = day < today ? 'EXPIRED' : 'PENDING';   // can't grade without an ATR frame
   } else if (result === 'win') verdict = 'WIN';
@@ -335,7 +394,11 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   // ── behavior note (Thai, ATR-ladder language) ──
   const dirWord = direction_actual === 'UP' ? 'ขึ้น' : direction_actual === 'DOWN' ? 'ลง' : 'ออกข้าง';
   const parts = [];
-  if (call === 'none') {
+  if (readKind === 'manage') {
+    parts.push(`อ่านตอนถือไม้อยู่ (คุมไม้ ไม่ใช่สัญญาณเข้าใหม่) · ${DAY_WORD[day_type]}`);
+  } else if (verdict === 'NO_ENTRY_OFFERED') {
+    parts.push(`ราคาไป ${postMaxAtr}ATR แต่ไม่เคยแตะโซนที่รอ — ไม่เข้าถูกแล้ว`);
+  } else if (call === 'none') {
     parts.push(`อ่าน "ไม่เทรด" · ${DAY_WORD[day_type]} ราคา${dirWord}`);
   } else if (fav_atr != null) {
     parts.push(`ไป ${fav_atr}ATR(${fav_pts}pt) สวน ${adv_atr}ATR`);
@@ -356,7 +419,13 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
     verdict, behavior_note, bars_seen: after.length,
     meta: { day_high: dayHigh, day_low: dayLow, fav_ext: favExt, adv_ext: advExt, first_touch: result, ladder_open: ladderOpen, atr_source: atrSource || 'none',
             eval_version: EVAL_VERSION, read_price_age_min: num(sig.meta?.freshness?.price_age_min),
-            prompt_version: sig.meta?.prompt_version ?? null, plan_source: sig.meta?.plan_source ?? null },
+            prompt_version: sig.meta?.prompt_version ?? null, plan_source: sig.meta?.plan_source ?? null,
+            read_kind: readKind, post_max_atr: postMaxAtr, leg_touched: legTouched,
+            entry_legs: entryLegs.length,
+            // hours of runway the read had before its day closed — late reads are
+            // structurally more likely to end STALL/EXPIRED, so any cross-bucket
+            // comparison has to be able to control for it
+            runway_h: Math.round(((bkkDay(t0) + 1) * 86400e3 - dayShiftMs() - t0) / 36e5 * 10) / 10 },
   };
   // Attach the read's ingredients (Mario/Fibo/structure/ATR/session) so the
   // attribution layer can learn which factors drive wins. Stored in meta (no
@@ -398,46 +467,76 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
       if (!stRes.error) for (const r of stRes.data || []) stateById.set(r.id, r);
     }
 
-    // daily ATR frames (indicator-fed); may be empty pre-setup → fallback compute
-    const atrByDate = new Map();
+    // Daily ATR frames (indicator-fed); may be empty pre-setup → fallback compute.
+    // Joined on a day INDEX derived from the alert's OWN timestamp through the same
+    // day function the reads use — never on the date STRING. The ingest stamps
+    // atr_date as a Bangkok civil date while the evaluator runs on the broker's
+    // chart day (UTC−4): those two strings only agree between 11:00 and 24:00
+    // Bangkok, so a string join silently loses the ATR row for a third of the clock
+    // and falls back to the (systematically small) computed ATR.
+    const atrByDay = new Map();
+    const alertHours = [];
     const atrRes = await db().from('kp_atr')
-      .select('atr_date, day_open, atr, atr_len, method')
-      .gte('atr_date', bkkDateStr(Date.now() - days * 86400e3));
-    if (!atrRes.error) for (const r of atrRes.data || []) atrByDate.set(r.atr_date, r);
+      .select('atr_date, day_open, atr, atr_len, method, ts')
+      .gte('atr_date', bkkDateStr(Date.now() - (days + 2) * 86400e3));
+    if (!atrRes.error) for (const r of atrRes.data || []) {
+      const ms = r.ts ? Date.parse(r.ts) : Date.parse(r.atr_date + 'T12:00:00Z');
+      if (!Number.isFinite(ms)) continue;
+      atrByDay.set(bkkDay(ms), r);
+      alertHours.push(new Date(ms).getUTCHours());
+    }
 
     const bars = await loadBars(sinceISO);
     const dayMap = buildDays(bars);
     const daysArr = [...dayMap.values()].sort((a, b) => a.day - b.day);
 
-    if (!write) {
-      return { status: 200, body: {
-        ok: true, mode: 'dry', window_days: days,
-        reads: signals.length, atr_days: atrByDate.size,
-        bar_feed: { usable_gold_bars: bars.length, oldest: bars[0]?.t, newest: bars.at(-1)?.t, days: daysArr.length },
-        verdict: bars.length === 0 ? 'NO_USABLE_BARS' : signals.length === 0 ? 'NO_READS' : 'OK_add_write=1_to_derive',
-      } };
-    }
-
     const rows = signals.map(s =>
-      classify(s, stateById.get(s.market_state_id) || null, atrByDate.get(bkkDateStr(Date.parse(s.ts))) || null, dayMap, daysArr));
+      classify(s, stateById.get(s.market_state_id) || null, atrByDay.get(bkkDay(Date.parse(s.ts))) || null, dayMap, daysArr));
 
-    const up = await db().from('kp_read_outcomes').upsert(rows, { onConflict: 'signal_id' });
-    if (up.error) {
-      const missing = up.error.code === '42P01';
-      return { status: missing ? 424 : 500, body: {
-        ok: false,
-        error: missing ? 'kp_read_outcomes table missing — run supabase_schema_kp_read_outcomes.sql' : up.error.message,
-      } };
+    if (write) {
+      const up = await db().from('kp_read_outcomes').upsert(rows, { onConflict: 'signal_id' });
+      if (up.error) {
+        const missing = up.error.code === '42P01';
+        return { status: missing ? 424 : 500, body: {
+          ok: false,
+          error: missing ? 'kp_read_outcomes table missing — run supabase_schema_kp_read_outcomes.sql' : up.error.message,
+        } };
+      }
     }
 
     const tally = {};
     for (const r of rows) tally[r.verdict] = (tally[r.verdict] || 0) + 1;
+    // Health: every failure mode here fails PLAUSIBLE, not loud (a deactivated Pine
+    // alert, an EA that went down, a day the ATR row never arrived). Surface it in
+    // the response so a red number is visible instead of clean-looking stats.
+    const atrSrc = {};
+    for (const r of rows) atrSrc[r.atr_source] = (atrSrc[r.atr_source] || 0) + 1;
+    const daysWithBars = daysArr.map(d => d.day);
+    const missingAtrDays = daysWithBars.filter(d => !atrByDay.has(d));
     return { status: 200, body: {
-      ok: true, mode: 'write', window_days: days,
-      reads: signals.length, rows_upserted: rows.length, bars_used: bars.length,
-      atr_days: atrByDate.size, tally, eval_version: EVAL_VERSION,
+      ok: true, mode: write ? 'write' : 'dry', window_days: days,
+      reads: signals.length, rows_upserted: write ? rows.length : 0, bars_used: bars.length,
+      bar_feed: { oldest: bars[0]?.t ?? null, newest: bars.at(-1)?.t ?? null, days: daysArr.length },
+      atr_days: atrByDay.size, tally, eval_version: EVAL_VERSION,
       prompt_versions: [...new Set(signals.map(s => s.meta?.prompt_version ?? 'pre-9c'))],
       plans_captured: signals.filter(s => s.meta?.plan).length,
+      health: {
+        atr_source: atrSrc,
+        days_with_bars: daysWithBars.length,
+        days_missing_atr: missingAtrDays.length,
+        // confirms _kp_config.eval.dayCutUtcHour against reality: the indicator's
+        // alert should land just after the broker's daily open
+        atr_alert_utc_hours: [...new Set(alertHours)].sort((a, b) => a - b),
+        day_cut_utc_hour: CFG.eval.dayCutUtcHour,
+        warn: missingAtrDays.length
+          ? `${missingAtrDays.length}/${daysWithBars.length} days have bars but no kp_atr row → computed ATR (understates volatility, inflates day_type)`
+          : null,
+      },
+      preview: write ? undefined : rows.map(r => ({
+        id: r.signal_id, call: r.call, kind: r.meta.read_kind, verdict: r.verdict,
+        fav: r.fav_atr, adv: r.adv_atr, post: r.meta.post_max_atr,
+        touched: r.meta.leg_touched, day: r.day_type, atr_src: r.atr_source,
+      })),
     } };
   }
 }
@@ -461,8 +560,10 @@ function runAttributionRows(rows, minSamples) {
     b[v]++;
   };
 
-  let total = 0, decided = 0;
+  let total = 0, decided = 0, skipped_manage = 0;
   for (const r of rows) {
+    // management notes advised no entry — they can never be a directional "hit"
+    if ((r.meta && r.meta.read_kind) === 'manage') { skipped_manage++; continue; }
     const f = r.meta && r.meta.factors;
     if (!f) continue;
     total++;
@@ -476,7 +577,10 @@ function runAttributionRows(rows, minSamples) {
     bump('zone_source', f.zone_source, r.verdict);
     bump('zone_score', f.zone_score_bucket, r.verdict);
     bump('zone_state', f.zone_state, r.verdict);   // fresh vs retested (Zone Freshness)
-    bump('atr_day_type', f.atr_day_type, r.verdict);
+    // atr_day_type is NOT aggregated: the realized day type is not knowable at read
+    // time and is computed from the same travel that decides the verdict, so
+    // "buy reads win on TREND days" is near-tautological and cannot be acted on
+    // ex-ante. Kept as a descriptive column on the outcome row only.
     bump('session', f.session, r.verdict);
     for (const tag of (f.zone_tags || [])) bump('zone_tag', tag, r.verdict);
   }
@@ -485,16 +589,22 @@ function runAttributionRows(rows, minSamples) {
   const out = {};
   for (const [dim, buckets] of Object.entries(dims)) {
     out[dim] = Object.entries(buckets).map(([value, b]) => {
+      // the percentage is computed over DECIDED reads only, so the small-sample
+      // gate must count decided reads too — flagging on n (which includes PENDING /
+      // STALL / MISSED) let "0% (n=4)" through as if it were trustworthy
       const base = b.win + b.loss;
       return {
-        value, n: b.n,
+        value, n: b.n, decided: base,
         hit_rate_pct: base >= 1 ? Math.round((b.win / base) * 100) : null,
         win: b.win, loss: b.loss, stall: b.stall, ok_notrade: b.ok_notrade, missed: b.missed,
-        small_sample: b.n < minSamples,
+        small_sample: base < minSamples,
       };
-    }).sort((a, z) => (z.hit_rate_pct ?? -1) - (a.hit_rate_pct ?? -1) || z.n - a.n);
+    // buckets that actually have a decided base first — never let a 1-sample 100%
+    // bucket sort to the top, where the report prompt picks it up as an "edge"
+    }).sort((a, z) => (a.small_sample ? 1 : 0) - (z.small_sample ? 1 : 0)
+                   || (z.hit_rate_pct ?? -1) - (a.hit_rate_pct ?? -1) || z.decided - a.decided);
   }
-  return { total_with_factors: total, decided, min_samples: minSamples, dims: out };
+  return { total_with_factors: total, decided, skipped_manage, min_samples: minSamples, dims: out };
 }
 
 async function runAttribution({ days = CFG.eval.lookbackDays, minSamples = 3 } = {}) {

@@ -17,18 +17,24 @@ const { runEval, runAttribution } = require('./_kp_eval');
 // each was read on, and the directional lean — so the coach can grade the co-pilot
 // itself, not only the trader's executed trades.
 function copilotAccuracy(outcomes) {
-  const graded = outcomes.filter(o => ['WIN', 'LOSS', 'STALL', 'PARTIAL', 'OK_NOTRADE', 'MISSED'].includes(o.verdict));
+  // Reads taken while a position was open are live-order coaching: they advise no
+  // entry, so they are neither a hit nor a miss and must be kept out of the rate.
+  const entry = outcomes.filter(o => (o.meta && o.meta.read_kind) !== 'manage');
+  const manage = outcomes.length - entry.length;
+  const graded = entry.filter(o => ['WIN', 'LOSS', 'STALL', 'PARTIAL', 'OK_NOTRADE', 'MISSED', 'NO_ENTRY_OFFERED'].includes(o.verdict));
   const t = {};
   for (const o of outcomes) t[o.verdict] = (t[o.verdict] || 0) + 1;
   const wins = t.WIN || 0, losses = t.LOSS || 0;
   const decided = wins + losses;
   let buy = 0, sell = 0, notrade = 0;
-  for (const o of outcomes) {
+  for (const o of entry) {
     const c = String(o.call || '').toLowerCase();
     if (c === 'buy') buy++; else if (c === 'sell') sell++; else notrade++;
   }
   return {
     reads: outcomes.length,
+    entry_reads: entry.length,
+    manage_reads: manage,
     graded: graded.length,
     tally: t,
     hit_rate_pct: decided ? Math.round((wins / decided) * 100) : null,   // of decided reads only
@@ -64,7 +70,7 @@ Grade on:
 2. Discipline scorecard — was an SL always set? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
 4. Co-pilot accuracy (INDEPENDENT of trades) — you also receive "copilot_accuracy": how each of today's co-pilot READS actually played out on the ATR ladder, whether or not the trader acted on it. Use it to grade the co-pilot ITSELF: hit_rate (of decided reads), how many STALLED (นิ่ง = read a move that never came) vs went AGAINST, what day_type the day turned out to be (BALANCE/NORMAL/TREND/OUTSIZED), and the directional lean (was the co-pilot too bull/bear vs what price did). Call out the pattern honestly, e.g. "co-pilot อ่าน buy 4/5 แต่วันทรงตัว → เอียง bull เกินไป โซนไม่วิ่ง" or "โซน sell ยืน 3/3 แม่น". This is observational — describe the tendency, don't overclaim from one day.
-5. Factor attribution (ROLLING, multi-day) — you also receive "factor_attribution": across the last ~30 days, the hit_rate (WIN/(WIN+LOSS)) grouped by the INGREDIENTS present at each read — call_vs_m15 (with/against the M15 bias), call_vs_fibo_leg, mario_fibo_aligned (aligned/conflict), bias_conflict (M15 vs M5), vp_bucket (premium/discount/balance), zone_source (MT5/Fibo), zone_score (high/mid/low), zone_state (fresh vs retested — a fresh zone should out-perform a re-used one), zone_tag (BOS/CHoCH/confluence tags), atr_day_type, session (asia/london/ny). This is the LEARNING layer: surface the 2–3 STRONGEST edges and worst traps, e.g. "ตามทิศ M15 ชนะ 68% vs สวน 31%", "โซน MT5 score สูงชนะ 70%", "สวน Fibo leg = กับดัก แพ้บ่อย". CRITICAL: honor small_sample — if a bucket's n is tiny (few reads), say "ยังข้อมูลน้อย อย่าเพิ่งเชื่อ" and do NOT present it as a rule. If overall data is still thin (few decided reads), say so plainly in one line and skip the rest. Never fabricate a percentage not in the data.
+5. Factor attribution (ROLLING, multi-day) — you also receive "factor_attribution": across the last ~30 days, verdict counts grouped by the INGREDIENTS present at each read — call_vs_m15 (with/against the M15 bias), call_vs_fibo_leg, mario_fibo_aligned, bias_conflict (M15 vs M5), vp_bucket, zone_source (MT5/Fibo), zone_score, zone_state (fresh vs retested), zone_tag (BOS/CHoCH), session. HARD RULE — the data is far too thin to name an edge, and a confident wrong lesson is worse than no lesson: report this block as COUNTS ONLY (e.g. "ตามทิศ M15: ชนะ 3 แพ้ 1 · สวน: ชนะ 0 แพ้ 2"), never as a percentage, and NEVER call anything an edge, a rule, a trap, or a pattern. Any bucket with small_sample=true is omitted entirely. If "decided" across all reads is under 20, write exactly one line — "ยังเก็บข้อมูลอยู่ ยังสรุปไม่ได้" — plus the raw counts, and nothing more. Never fabricate a number not in the data. Reads with read_kind "manage" are excluded upstream (they advised no entry, so they are neither hit nor miss); if manage_reads is non-zero, mention in one short line how many reads were position-coaching rather than entry calls.
 6. Lessons — 1–2 concrete, specific things to do differently tomorrow, and 1 note on how much to trust the co-pilot given today's accuracy + the strongest proven factor edge.
 Be specific with numbers and levels. Thai output, mobile-readable, no filler.
 
@@ -163,7 +169,7 @@ async function runReport(db, opts = {}) {
       .select('ts, trigger_type, headline, bias_call, price, message')
       .gte('ts', sinceIso).order('ts', { ascending: true }).limit(60),
     db.from('kp_read_outcomes')
-      .select('signal_id, read_ts, call, verdict, day_type, direction_actual, fav_atr, adv_atr, zone_behavior, behavior_note')
+      .select('signal_id, read_ts, call, verdict, day_type, direction_actual, fav_atr, adv_atr, zone_behavior, behavior_note, meta')
       .gte('read_ts', sinceIso).order('read_ts', { ascending: true }).limit(60),
   ]);
   if (trRes.error) return { ok: false, error: 'mt5_trades read: ' + trRes.error.message };

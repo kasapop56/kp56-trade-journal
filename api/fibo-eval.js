@@ -247,6 +247,15 @@ module.exports = async (req, res) => {
       return res.status(status).json(body);
     }
 
+    // An unknown ?target must NOT fall through to the Fibo frame evaluator: a typo
+    // then returns a healthy-looking 200 from a completely different report (this
+    // masked an un-deployed route once already).
+    const tgt = String(req.query.target || '');
+    if (tgt && !['reads', 'attribution', 'backfill_plans'].includes(tgt)) {
+      return res.status(400).json({ ok: false, error: 'unknown target: ' + tgt,
+        valid: ['(none = fibo frames)', 'reads', 'attribution', 'backfill_plans'] });
+    }
+
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
     const write = req.query.write === '1';
     const sinceISO = new Date(Date.now() - days * 86400e3).toISOString();
