@@ -10,7 +10,7 @@
 // the co-pilot's suggestion — each is evaluated on its own merit.
 
 const { getDb, getAnthropic, sendTelegram, num, round, CFG } = require('./_kp_lib');
-const { runEval } = require('./_kp_eval');
+const { runEval, runAttribution } = require('./_kp_eval');
 
 // Roll up today's read outcomes into a compact co-pilot self-accuracy summary:
 // how many reads played out (WIN) vs went against (LOSS) vs stalled, the day type
@@ -64,7 +64,8 @@ Grade on:
 2. Discipline scorecard — was an SL always set? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
 4. Co-pilot accuracy (INDEPENDENT of trades) — you also receive "copilot_accuracy": how each of today's co-pilot READS actually played out on the ATR ladder, whether or not the trader acted on it. Use it to grade the co-pilot ITSELF: hit_rate (of decided reads), how many STALLED (นิ่ง = read a move that never came) vs went AGAINST, what day_type the day turned out to be (BALANCE/NORMAL/TREND/OUTSIZED), and the directional lean (was the co-pilot too bull/bear vs what price did). Call out the pattern honestly, e.g. "co-pilot อ่าน buy 4/5 แต่วันทรงตัว → เอียง bull เกินไป โซนไม่วิ่ง" or "โซน sell ยืน 3/3 แม่น". This is observational — describe the tendency, don't overclaim from one day.
-5. Lessons — 1–2 concrete, specific things to do differently tomorrow, and 1 note on how much to trust the co-pilot given today's accuracy.
+5. Factor attribution (ROLLING, multi-day) — you also receive "factor_attribution": across the last ~30 days, the hit_rate (WIN/(WIN+LOSS)) grouped by the INGREDIENTS present at each read — call_vs_m15 (with/against the M15 bias), call_vs_fibo_leg, mario_fibo_aligned (aligned/conflict), bias_conflict (M15 vs M5), vp_bucket (premium/discount/balance), zone_source (MT5/Fibo), zone_score (high/mid/low), zone_tag (BOS/CHoCH/confluence tags), atr_day_type, session (asia/london/ny). This is the LEARNING layer: surface the 2–3 STRONGEST edges and worst traps, e.g. "ตามทิศ M15 ชนะ 68% vs สวน 31%", "โซน MT5 score สูงชนะ 70%", "สวน Fibo leg = กับดัก แพ้บ่อย". CRITICAL: honor small_sample — if a bucket's n is tiny (few reads), say "ยังข้อมูลน้อย อย่าเพิ่งเชื่อ" and do NOT present it as a rule. If overall data is still thin (few decided reads), say so plainly in one line and skip the rest. Never fabricate a percentage not in the data.
+6. Lessons — 1–2 concrete, specific things to do differently tomorrow, and 1 note on how much to trust the co-pilot given today's accuracy + the strongest proven factor edge.
 Be specific with numbers and levels. Thai output, mobile-readable, no filler.
 
 FORMAT: review every trade, but each as ONE tight scannable line (emoji + side + entry→exit + P&L + short tags) — like a clean trade plan, never a paragraph per trade. Aggregate the co-pilot follow-vs-diverge stats into short lines. If there are many near-identical ADD legs, you may merge them into one line. Keep it easy to glance on a phone.`;
@@ -91,7 +92,11 @@ per-trade บรรทัดละไม้ สั้น กระชับ เ�
 <อ่านกี่ครั้ง · เข้าเป้ากี่ / นิ่งกี่ / สวนกี่ · hit-rate% · วันนี้เป็นวันแบบไหน (ทรงตัว/เทรนด์)>
 <1 บรรทัด: เอียง bull/bear เกินไปไหม · โซนไหนแม่น/พลาด>
 
-📌 พรุ่งนี้: <1-2 ข้อ ชัดเจน ทำได้จริง + เชื่อโคไพลอตแค่ไหนจากวันนี้>`;
+📊 อะไรเวิร์ก (จาก factor_attribution · ~30 วัน)
+<2-3 บรรทัด: ปัจจัยที่ชนะสูงสุด vs กับดัก เช่น "ตาม M15 ชนะ X% · สวน Fibo leg แพ้ Y%" ใส่ n กำกับ>
+<ถ้า small_sample/ข้อมูลน้อย บอกตรงๆ 1 บรรทัดว่ายังเชื่อไม่ได้ แล้วข้ามส่วนที่เหลือ>
+
+📌 พรุ่งนี้: <1-2 ข้อ ชัดเจน ทำได้จริง + เชื่อโคไพลอตแค่ไหนจากวันนี้ + edge ที่พิสูจน์แล้ว>`;
 
 // Merge a closed trade (mt5_trades) with its OPEN/CLOSE study events by ticket.
 function buildTrade(t, evByTicket) {
@@ -134,6 +139,14 @@ async function runReport(db, opts = {}) {
   // including the last ones of the day — not a stale snapshot. Non-fatal.
   try { await runEval({ days: 2, write: true }); }
   catch (e) { console.warn('runEval (report) failed (non-fatal):', e.message); }
+
+  // Rolling factor attribution (which Mario/Fibo/ATR/session ingredients drove
+  // wins) over a wider window — the "what works" learning layer. Non-fatal.
+  let attribution = null;
+  try {
+    const r = await runAttribution({ days: CFG.attributionLookbackDays || 30 });
+    if (r.status === 200 && r.body.ok) attribution = r.body;
+  } catch (e) { console.warn('runAttribution (report) failed (non-fatal):', e.message); }
 
   const [trRes, evRes, sigRes, outRes] = await Promise.all([
     db.from('mt5_trades')
@@ -200,6 +213,7 @@ async function runReport(db, opts = {}) {
     trades: rows,
     copilot_reads: signals.map(s => ({ time: s.ts, trigger: s.trigger_type, call: s.bias_call, headline: s.headline })),
     copilot_accuracy: outcomes.length ? copilotAccuracy(outcomes) : null,
+    factor_attribution: attribution,   // rolling multi-day: which ingredients drove wins
     note: 'trader also trades independently of the co-pilot — grade every trade on merit, mark matched/diverged/no-read. copilot_accuracy grades the READS themselves on the ATR ladder, independent of whether the trader acted.',
   };
 

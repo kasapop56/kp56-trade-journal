@@ -19,7 +19,7 @@
 //   Tie (one bar hits both TP1 and SL) = LOSS (conservative; OHLC can't order them).
 
 const { createClient } = require('@supabase/supabase-js');
-const { runEval: runReadEval } = require('./_kp_eval');   // co-pilot read evaluator (folded in to stay ≤12 fns)
+const { runEval: runReadEval, runAttribution } = require('./_kp_eval');   // co-pilot read evaluator + attribution (folded in to stay ≤12 fns)
 
 const POINT = 0.01;                 // XAUUSD 1 point in price
 const SYM   = 'XAUUSD';             // frame symbol; feed is 'XAUUSDr' (broker suffix)
@@ -231,6 +231,11 @@ module.exports = async (req, res) => {
     if (String(req.query.target || '') === 'reads') {
       const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
       const { status, body } = await runReadEval({ days: rdays, write: req.query.write === '1' });
+      return res.status(status).json(body);
+    }
+    if (String(req.query.target || '') === 'attribution') {
+      const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
+      const { status, body } = await runAttribution({ days: rdays });
       return res.status(status).json(body);
     }
 

@@ -360,6 +360,14 @@ async function recordState(db, state) {
     raw: {
       zones: state.zones, bias_m15: state.bias_m15, bias_m5: state.bias_m5,
       poc: state.poc, vah: state.vah, val: state.val,
+      // full factor set so the read evaluator can attribute wins/losses to WHAT
+      // was present at read time (Mario + Fibo + structure). Captured now so we
+      // never have to backfill — every future read carries its ingredients.
+      vp_position: state.vp_position, fibo_side: state.fibo_side,
+      fibo_leg_dir: state.fibo ? state.fibo.leg_dir : null,
+      htf_conf: state.sitrep ? state.sitrep.htf_conf : null,
+      h1_count: state.sitrep ? state.sitrep.h1_count : null,
+      ob_summary: state.sitrep ? state.sitrep.ob_summary : null,
     },
   };
   const { data, error } = await db.from('kp_market_state').insert(row).select('id').single();

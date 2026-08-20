@@ -98,4 +98,11 @@ module.exports = {
   // score-driven auto-adjust is deferred until the outcome data matures.
   carryForward: true,
   carryLookbackDays: 3,   // how many prior days of outcomes to summarize
+
+  // ── factor attribution (Phase 9b) ────────────────────────────────────────────
+  // Rolling "what works" learning: group read outcomes by the ingredients present
+  // (Mario bias alignment, Fibo side, value-area, zone score/tags, ATR day-type,
+  // session) → directional hit-rate per factor. Surfaced in the nightly report.
+  // Wider window than daily accuracy; needs data to matter (honor small_sample).
+  attributionLookbackDays: 30,
 };

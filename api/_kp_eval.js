@@ -107,6 +107,64 @@ function normCall(s) {
   return null;
 }
 
+// buy/sell direction implied by a bias/leg/side word (Bull/Bear/UP/DOWN/S/B/…)
+function dirOf(s) {
+  const v = String(s || '').toLowerCase();
+  if (v.startsWith('bull') || v === 'up' || v === 'b' || v.startsWith('buy')) return 'buy';
+  if (v.startsWith('bear') || v === 'down' || v === 's' || v.startsWith('sell')) return 'sell';
+  return null;
+}
+// XAUUSD trading session from a read's UTC hour (rough, London/NY overlap→NY).
+function sessionOf(ms) {
+  const h = new Date(ms).getUTCHours();
+  if (h >= 0 && h < 7) return 'asia';
+  if (h >= 7 && h < 13) return 'london';
+  if (h >= 13 && h < 21) return 'ny';
+  return 'off';
+}
+function scoreBucket(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return 'na';
+  return n >= 70 ? 'high' : n >= 40 ? 'mid' : 'low';
+}
+
+// The "ingredients" present at read time, tagged with alignment flags, so the
+// attribution layer can tell WHICH factors (Mario / Fibo / structure / ATR / session)
+// went with wins vs losses. Read from the linked kp_market_state row.
+function buildFactors(sig, stateRow, out) {
+  const call = out.call_dir;                       // 'buy' | 'sell' | null (none)
+  const raw = stateRow?.raw || {};
+  const biasM15 = stateRow?.bias_m15 ?? raw.bias_m15 ?? null;
+  const biasM5  = stateRow?.bias_m5  ?? raw.bias_m5  ?? null;
+  const fiboSide = stateRow?.fibo_side ?? raw.fibo_side ?? null;
+  const legDir   = raw.fibo_leg_dir ?? null;
+  const vp = String(stateRow?.vp_position ?? raw.vp_position ?? '').toUpperCase();
+  const vpBucket = vp.includes('VAH') || vp.includes('PREMIUM') ? 'premium'
+                 : vp.includes('VAL') || vp.includes('DISCOUNT') ? 'discount'
+                 : vp.includes('POC') || vp.includes('BALANCE') ? 'balance' : (vp ? 'mid' : 'na');
+  const d15 = dirOf(biasM15), dSide = dirOf(fiboSide), dLeg = dirOf(legDir);
+  const withOrAgainst = (a) => (!call || !a) ? 'na' : (call === a ? 'with' : 'against');
+  const zone = out.target_zone || null;
+  return {
+    call: sig.bias_call || null,
+    bias_m15: biasM15, bias_m5: biasM5,
+    bias_conflict: (dirOf(biasM15) && dirOf(biasM5)) ? (dirOf(biasM15) !== dirOf(biasM5)) : null,
+    call_vs_m15: withOrAgainst(d15),
+    call_vs_fibo_leg: withOrAgainst(dLeg),
+    mario_fibo_aligned: (d15 && dSide) ? (d15 === dSide) : null,   // M15 bias vs Fibo active side
+    vp_bucket: vpBucket,
+    htf_conf: raw.htf_conf ?? null,
+    ob_summary: raw.ob_summary ?? null,
+    zone_source: zone?.source ?? null,
+    zone_tier: zone?.tier ?? null,
+    zone_score_bucket: scoreBucket(zone?.score),
+    zone_tags: Array.isArray(zone?.tags) ? zone.tags.slice(0, 6) : (zone?.tags ? [zone.tags] : []),
+    atr_day_type: out.day_type,
+    reached_band: out.reached_band,
+    session: sessionOf(Date.parse(sig.ts)),
+  };
+}
+
 const DAY_WORD  = { BALANCE: 'วันทรงตัว', NORMAL: 'วันปกติ', TREND: 'วันเทรนด์', OUTSIZED: 'วันเหวี่ยงแรง', UNKNOWN: '—' };
 const ZONE_WORD = { HELD: 'โซนยืน', BROKE: 'โซนแตก', SWEEP_RECLAIM: 'กวาดแล้วกลับ', UNTESTED: 'ยังไม่แตะ', NA: '' };
 
@@ -233,7 +291,7 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   }
   const behavior_note = parts.filter(Boolean).join(' · ');
 
-  return {
+  const outObj = {
     ...base,
     day_open: dayOpen, atr: atr != null ? Math.round(atr * 100) / 100 : null, atr_source: atrSource || 'none',
     day_type, day_travel_up_atr: upAtr != null ? Math.round(upAtr * 100) / 100 : null,
@@ -243,6 +301,14 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
     verdict, behavior_note, bars_seen: after.length,
     meta: { day_high: dayHigh, day_low: dayLow, fav_ext: favExt, adv_ext: advExt, first_touch: result },
   };
+  // Attach the read's ingredients (Mario/Fibo/structure/ATR/session) so the
+  // attribution layer can learn which factors drive wins. Stored in meta (no
+  // schema change) — aggregated in JS by runAttribution().
+  outObj.meta.factors = buildFactors(sig, stateRow, {
+    call_dir: dir === 1 ? 'buy' : dir === -1 ? 'sell' : null,
+    target_zone, day_type, reached_band,
+  });
+  return outObj;
 }
 
 // Core: (re)evaluate reads over a lookback window. Shared by the HTTP handler and
@@ -263,7 +329,8 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
     const stateById = new Map();
     if (stateIds.length) {
       const stRes = await db().from('kp_market_state')
-        .select('id, nearest_supply, nearest_demand').in('id', stateIds);
+        .select('id, nearest_supply, nearest_demand, bias_m15, bias_m5, vp_position, poc, vah, val, fibo_side, raw')
+        .in('id', stateIds);
       if (!stRes.error) for (const r of stRes.data || []) stateById.set(r.id, r);
     }
 
@@ -309,6 +376,73 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
   }
 }
 
+// ── Factor attribution ───────────────────────────────────────────────────────
+// Reads stored outcomes (kp_read_outcomes.meta.factors) and asks, for each factor
+// dimension: what did price do when THIS ingredient was present? Groups verdicts
+// per bucket and computes a directional hit-rate (WIN / (WIN+LOSS)). Pure JS
+// aggregation — no new table. Meaningful only once enough reads accumulate.
+function runAttributionRows(rows, minSamples) {
+  const dims = {};
+  const bump = (dim, value, verdict) => {
+    if (value == null || value === 'na' || value === '') return;
+    const key = String(value);
+    dims[dim] = dims[dim] || {};
+    const b = dims[dim][key] || (dims[dim][key] = { n: 0, win: 0, loss: 0, stall: 0, partial: 0, ok_notrade: 0, missed: 0, other: 0 });
+    b.n++;
+    const v = verdict === 'WIN' ? 'win' : verdict === 'LOSS' ? 'loss' : verdict === 'STALL' ? 'stall'
+            : verdict === 'PARTIAL' ? 'partial' : verdict === 'OK_NOTRADE' ? 'ok_notrade'
+            : verdict === 'MISSED' ? 'missed' : 'other';
+    b[v]++;
+  };
+
+  let total = 0, decided = 0;
+  for (const r of rows) {
+    const f = r.meta && r.meta.factors;
+    if (!f) continue;
+    total++;
+    if (r.verdict === 'WIN' || r.verdict === 'LOSS') decided++;
+    bump('call', f.call, r.verdict);
+    bump('call_vs_m15', f.call_vs_m15, r.verdict);
+    bump('call_vs_fibo_leg', f.call_vs_fibo_leg, r.verdict);
+    bump('mario_fibo_aligned', f.mario_fibo_aligned == null ? null : (f.mario_fibo_aligned ? 'aligned' : 'conflict'), r.verdict);
+    bump('bias_conflict', f.bias_conflict == null ? null : (f.bias_conflict ? 'm15≠m5' : 'm15=m5'), r.verdict);
+    bump('vp_bucket', f.vp_bucket, r.verdict);
+    bump('zone_source', f.zone_source, r.verdict);
+    bump('zone_score', f.zone_score_bucket, r.verdict);
+    bump('atr_day_type', f.atr_day_type, r.verdict);
+    bump('session', f.session, r.verdict);
+    for (const tag of (f.zone_tags || [])) bump('zone_tag', tag, r.verdict);
+  }
+
+  // finalize: hit_rate + sort each dim by hit_rate (buckets with a decided base first)
+  const out = {};
+  for (const [dim, buckets] of Object.entries(dims)) {
+    out[dim] = Object.entries(buckets).map(([value, b]) => {
+      const base = b.win + b.loss;
+      return {
+        value, n: b.n,
+        hit_rate_pct: base >= 1 ? Math.round((b.win / base) * 100) : null,
+        win: b.win, loss: b.loss, stall: b.stall, ok_notrade: b.ok_notrade, missed: b.missed,
+        small_sample: b.n < minSamples,
+      };
+    }).sort((a, z) => (z.hit_rate_pct ?? -1) - (a.hit_rate_pct ?? -1) || z.n - a.n);
+  }
+  return { total_with_factors: total, decided, min_samples: minSamples, dims: out };
+}
+
+async function runAttribution({ days = CFG.eval.lookbackDays, minSamples = 3 } = {}) {
+  const sinceISO = new Date(Date.now() - days * 86400e3).toISOString();
+  const { data, error } = await db().from('kp_read_outcomes')
+    .select('verdict, call, meta').gte('read_ts', sinceISO)
+    .order('read_ts', { ascending: false }).limit(2000);
+  if (error) {
+    const missing = error.code === '42P01';
+    return { status: missing ? 424 : 500, body: { ok: false, error: missing ? 'kp_read_outcomes table missing' : error.message } };
+  }
+  const agg = runAttributionRows(data || [], minSamples);
+  return { status: 200, body: { ok: true, window_days: days, ...agg } };
+}
+
 module.exports = async (req, res) => {
   try {
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || CFG.eval.lookbackDays, 1), 120);
@@ -320,3 +454,4 @@ module.exports = async (req, res) => {
   }
 };
 module.exports.runEval = runEval;
+module.exports.runAttribution = runAttribution;
