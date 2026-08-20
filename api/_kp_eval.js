@@ -32,7 +32,7 @@ const SYM   = 'XAUUSD';
 // outcome row so a later re-grade under different thresholds can never be silently
 // mixed with old outcomes (verdicts are recomputed on every run, so without this
 // a threshold tweak would rewrite all of history with no marker).
-const EVAL_REV = '9g';
+const EVAL_REV = '9h';
 const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
   .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
@@ -247,7 +247,13 @@ function replayPlan(legs, bars, buf, dayOver) {
   // a leg that filled but carried no usable levels can't be scored — don't let it
   // stand in for the read's plan verdict if another leg can be scored
   const scorable = (r) => !['NO_LEVELS', 'SL_IN_ZONE', 'TP_IN_ZONE'].includes(r.status);
-  const first = filled.find(scorable) || filled[0] || null;
+  // The trade that would have happened is simply the leg that filled FIRST. Falling
+  // through to a later leg when the first one can't be scored makes the read's
+  // verdict depend on parse completeness: reads 1 and 2 were the same setup eight
+  // minutes apart and came out WIN vs LOSS only because one leg's stop failed to
+  // parse and the scorer quietly graded the other side instead. If the leg that
+  // filled first isn't scorable, the read isn't scorable — say so.
+  const first = filled[0] || null;
   return {
     legs: results, filled: filled.length, legs_total: results.length,
     verdict: first ? first.status : (dayOver ? 'NO_FILL' : 'PENDING'),
