@@ -102,6 +102,12 @@ function cpVerdictBadge(o) {
     PARTIAL:    ['◐ บางส่วน', 'cp-vd-partial'],
     OK_NOTRADE: ['✅ ไม่เทรดถูก', 'cp-vd-win'],
     MISSED:     ['· พลาดจังหวะ', 'cp-vd-partial'],
+    // a read taken while a position was open = coaching the trade you already had,
+    // not an entry call → it is neither a hit nor a miss
+    MANAGE:     ['🧾 คุมไม้', 'cp-vd-pending'],
+    // price moved, but never came to the level the read said to wait for
+    NO_ENTRY_OFFERED: ['✅ ไม่มีจังหวะให้เข้า', 'cp-vd-win'],
+    UNGRADEABLE:['— อ่านไม่ออก', 'cp-vd-pending'],
     PENDING:    ['⏳ รอผล', 'cp-vd-pending'],
     EXPIRED:    ['— หมดวัน', 'cp-vd-pending'],
     NO_BARS:    ['— ไม่มีแท่ง', 'cp-vd-pending'],
