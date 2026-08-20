@@ -37,7 +37,14 @@ module.exports = {
   // ── Claude ─────────────────────────────────────────────────────────────────
   // User's prompt asked for a Sonnet-class default; override with COPILOT_MODEL.
   model: process.env.COPILOT_MODEL || 'claude-sonnet-5',
-  maxTokens: 900,
+  // Was 900, which silently truncated reads. Measured over 60 replayed reads
+  // (doc §19.6): output p50 587, p90 818, and 4 of 60 (6.7%) hit the 900 cap dead
+  // on — losing the LAST line, which is the machine-readable `PLAN:`. Those reads
+  // fell back to the prose parser (`plan_source: 'parsed'`), the same lower-fidelity
+  // path §17.2 traced verdict flips to. The cap must sit well clear of p90, because
+  // the one thing it clips is the one thing the evaluator needs.
+  // Cost is unaffected — output is billed on tokens generated, not on the ceiling.
+  maxTokens: 1600,
   effort: process.env.COPILOT_EFFORT || 'low',   // low = fast/cheap; concise read
   // skip the Claude call if the merged state hash matches the last analysis
   // (nothing materially changed) — cost guard on top of debounce

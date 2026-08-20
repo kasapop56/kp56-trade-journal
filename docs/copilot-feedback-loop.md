@@ -286,6 +286,9 @@ These are the areas the author is least certain about — please scrutinise:
 11. **LLM read variance.** The read (Buy/Sell/No trade + levels) is LLM-generated
     at low effort; the same state can yield slightly different calls. How much does
     that noise floor limit what attribution can ever learn?
+    → **MEASURED, see §19** (2026-08-20). The call is 100% stable; the *zone
+    selection* is not, and it decides whether a plan fills at all — so the variance
+    lands on sample membership, not on the calls.
 12. **Zone identity & test-counting.** Zone Freshness (§7.1) counts a "test" as a
     bar range overlapping the zone band after being outside it. Zones are taken from
     the current nearest supply/demand, not tracked as persistent objects across
@@ -574,6 +577,149 @@ history is free today and expensive in three months.
 as a *learning device*. The "too conservative" finding is not actionable — and per
 §13.2b, neither is the hit rate: **both** live headline numbers are artifacts of the
 entry/manage confusion, from opposite directions.
+
+---
+
+## 19. Self-consistency — the noise floor (2026-08-20)
+
+**Question that prompted it:** would a *multi-agent ensemble* (several roles each
+producing a plan, then voting) improve the co-pilot? Before answering, the cheaper
+question had to be settled first: **how often does the single agent agree with
+itself?** That number caps what any ensemble could average and what any attribution
+layer could ever detect — it is the control group for the whole idea. It is also the
+open question §10.11 raised and never measured.
+
+### 19.1 Method
+
+Twelve market states were frozen and replayed **five times each** through the live
+read policy (60 calls, `prompt_version f32d3fdf`, `claude-sonnet-5`, `effort: low`).
+
+- **States** = every position-free (`read_kind: 'entry'`) read in `kp_signals`,
+  reconstructed as-of its own timestamp: the same `market_sitreps` row, the same
+  `fibo_snapshots` row, the same zone list, the same input ages, plus an as-of
+  carry-forward digest (prior days only) and an as-of `zone_usage` block
+  (`zoneFreshness(..., beforeMs)` — bars strictly before the read). No look-ahead.
+- **Calls** go through `callClaude()` itself — same system prompt, same `OUTPUT_HINT`,
+  same parser. Read-only: no `kp_signals` row, no `kp_market_state`, no Telegram.
+  Nothing entered the loop or the attribution window.
+- **Grading** replays each replicate's plan through `replayPlan()` — the production
+  engine, `entryFill: 'mid'` — against the real `BAR` feed.
+- Cost: **$1.06** for 60 calls. Harness in `scratchpad/noise/`
+  (`build-states.js` → `run.js` → `score.js`).
+
+> **There is no determinism knob.** Sonnet 5 rejects `temperature`, `top_p` and
+> `top_k` with a 400. This is a property of the policy, not a setting left wrong.
+
+### 19.2 Result
+
+| Layer | Agreement across 5 runs of one state |
+|---|---|
+| **Call** (Buy / Sell / No trade) | **12/12 unanimous — 100%** |
+| **Stance** (wait / entry_now / stand_aside) | 11/12 — 92% |
+| **Sides offered** (buy, sell, both) | 9/12 — 75% |
+| **Levels**, given the same zone | median entry spread **$0.38 = 0.11R** |
+| **Graded verdict** (`replayPlan`) | **7/12 — 58%** |
+
+The co-pilot never once contradicted itself on direction. Its *graded record* moved
+anyway. Five independent runs over the identical twelve states:
+
+| run | record | decided | win rate |
+|---|---|---|---|
+| 1 | 4W 5L | 9/12 | **44%** |
+| 2 | 1W 6L | 7/12 | 14% |
+| 3 | 1W 6L | 7/12 | 14% |
+| 4 | 2W 6L | 8/12 | 25% |
+| 5 | 1W 6L | 7/12 | 14% |
+
+**§17.4's "LOSS 4 · WIN 2" is one draw from this.** It sits inside the spread.
+
+### 19.3 The noise is zone SELECTION, not arithmetic
+
+The levels are not fuzzy. When two runs pick the same zone they copy it to the cent,
+straight off the Mario list. What varies is **which zone off the discrete menu the
+read decides to wait at**:
+
+```
+read 16  price 4496.15   supply menu: 4494.88-4497.27  and  4507.75-4510.29
+  rep 1, 4, 5 → sell 4494.88-4497.27   → filled → WIN
+  rep 2, 3    → sell 4507.75-4510.29   → never reached → PENDING
+```
+
+Four of the five split states are this, and it matters more than a flipped verdict:
+a `LOSS` is a data point, a `PENDING` is **absence**, and absence is invisible to
+attribution. **The sampler is quietly choosing which reads enter the sample.** That is
+a censoring mechanism nobody specified, sitting upstream of every number the loop
+produces — and it is worse than finding #10's bucket-dependent censoring, because it
+is not a property of the state at all.
+
+The single true WIN/LOSS flip is the same disease. On read 5 four runs offered only a
+sell; run 1 added a buy at 4335–4338 while price stood at **4335.81** — inside its own
+entry zone. That leg filled instantly and won. **The one WIN in that state came from
+the replicate that broke the system prompt's own "never enter mid-range" rule.**
+
+Conversely, where the structure is unambiguous the policy is very stable: reads 17 and
+18 put 5/5 replicates on the same sell zone with stops within $0.50.
+
+### 19.4 What this says about the ensemble
+
+1. **A vote is worth nothing here.** It decides *direction*, and direction has **zero
+   measured variance** — five agents return 5/5 unanimous on 12/12 states. That is a
+   machine which is 100% confident and 0% informative: the correlated-vote trap, now
+   demonstrated rather than argued.
+2. **The disagreement is the signal — but an ensemble is the most expensive possible
+   way to buy it.** Replicates diverge exactly where the menu holds two plausible
+   adjacent zones (13, 15, 16) and converge where it holds one (17, 18). "Two candidate
+   zones within $13" is computable from `state.zones` directly, for $0 and no extra
+   call. Setup ambiguity is already in the input.
+3. **Zone-selection noise wants a rule, not a vote.** A majority vote across five runs
+   just returns the modal zone. The same determinism is available in code or prompt for
+   nothing — and unlike a vote, it *removes* the variance instead of averaging it.
+4. **If it is ever built, it belongs inside** as a new `prompt_version`: the hash splits
+   attribution automatically, plan replay grades it free, and the grading
+   infrastructure is the expensive asset already owned. Latency fits Hobby (~10 s per
+   call measured; five in parallel lands inside `maxDuration: 60`).
+
+**Decision (trader, 2026-08-20): no build.** Revisit once there is more data.
+
+### 19.5 Limits of this measurement
+
+- The **existence** of selection noise is established. The **magnitude is not.** Reads
+  14/15/16 are near-duplicates of one setup and 17/18 were still unresolved, so the
+  14–44% spread rests on roughly two or three independent situations — the same
+  clustering finding #3 warned about. Do not quote the range as a measurement.
+- Twelve states, two days, one bull regime, 12/12 `wait` reads. It may not hold in
+  choppy gold.
+- The result is **asymmetrically informative**: the prompt pushes hard toward "wait at
+  the zone edge", so *high* agreement could have been the attractor talking. A messy
+  result is the strong direction — which is what came back.
+- Measured on `f32d3fdf` only. Nothing on the remaining roadmap (step 4 phantom
+  baseline, step 5 Wilson CIs) touches `SYSTEM_PROMPT`, `OUTPUT_HINT`, model, effort or
+  the two feature flags, so the number survives those steps; any prompt edit voids it.
+
+### 19.6 Incidental finding — reads are being truncated
+
+**4 of 60 calls (6.7%) hit `max_tokens: 900`**, were cut off, lost the `PLAN:` line and
+silently fell back to the text parser (`plan_source: 'parsed'`). That is the exact
+lower-fidelity path §17.2 traced verdict flips to, running on ~7% of production reads.
+The cap clipped the *last* line, which is precisely the line the evaluator needs.
+
+**FIXED 2026-08-20.** `CFG.maxTokens` 900 → **1600** (≈2× the measured p90 of 818;
+output is billed on tokens generated, so the ceiling costs nothing). `api/analyze.js`
+`maxDuration` 30 → **60** at the same time: a 900-token read already took ~17 s, so
+raising the token cap without raising the time budget would have swapped a truncated
+read for a *timed-out* one — which loses the whole read instead of one line. Verified
+by replaying the three affected states (5, 8, 18): 5/5 clean, all `plan_source: json`,
+9.7–12.2 s. Note the truncation event is stochastic (~7%/call), so that check confirms
+the configuration and the absence of regression, not the tail event itself; the
+argument for the fix is that the cap now sits far above any observed need.
+
+### 19.7 Consequence for the standing conclusion
+
+§13.4 concluded the loop is trustworthy as *instrumentation*, not as a *learning
+device*. This sharpens it: **the instrument has a measurable jitter, and the jitter
+acts on sample membership rather than on the readings.** Before any factor is called an
+edge, it must clear not only a decided-N gate and a CI (step 5) but this floor — a
+bucket difference smaller than the policy's own run-to-run variation is not evidence.
 
 ---
 
