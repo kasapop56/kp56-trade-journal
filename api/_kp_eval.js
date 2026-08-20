@@ -38,9 +38,18 @@ function db() {
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 const isGold = (s) => typeof s === 'string' && s.toUpperCase().replace(/[^A-Z]/g, '').startsWith(SYM);
-const bkkDay = (ms) => Math.floor((ms + 7 * 3600e3) / 86400e3);       // Bangkok civil-day index
+// Trading-day boundary — selectable (see _kp_config.eval.dayWindow):
+//   'chart'   → day starts at dayCutUtcHour UTC (align to the broker's daily bar)
+//   'session' → Bangkok civil day (00:00 +07)
+// The whole evaluator (day grouping, read-capping, ATR-date lookup) runs through
+// these two helpers, so switching mode is one config change.
+function dayShiftMs() {
+  const e = CFG.eval || {};
+  return (e.dayWindow === 'session' ? 7 : -(e.dayCutUtcHour || 0)) * 3600e3;
+}
+const bkkDay = (ms) => Math.floor((ms + dayShiftMs()) / 86400e3);     // trading-day index
 function bkkDateStr(ms) {
-  const t = new Date(ms + 7 * 3600 * 1000);
+  const t = new Date(ms + dayShiftMs());
   return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
 }
 function parseGmt(s) {
@@ -194,7 +203,11 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   let atr = num(atrRow?.atr), atrSource = atr != null ? 'indicator' : null;
   if (atr == null) { atr = computeAtr(daysArr, day, atrRow?.atr_len || 10); atrSource = atr != null ? 'computed' : 'none'; }
   const ladderOpen = num(atrRow?.day_open);
-  const dayOpen = dayEntry ? dayEntry.open : ladderOpen;   // session open = day_type anchor
+  // Anchor for day_type/travel: in 'chart' mode use the broker's exact daily open
+  // (matches the indicator); otherwise the trading-day window's own first-bar open.
+  const chartMode = (CFG.eval.dayWindow === 'chart');
+  const dayOpen = (chartMode && ladderOpen != null) ? ladderOpen
+                : (dayEntry ? dayEntry.open : ladderOpen);
 
   const dayHigh = dayEntry ? dayEntry.high : null;
   const dayLow  = dayEntry ? dayEntry.low  : null;

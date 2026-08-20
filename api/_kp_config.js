@@ -82,6 +82,21 @@ module.exports = {
   // tune from data after ~2 weeks (see project note), don't overfit early.
   eval: {
     lookbackDays: 30,     // how many days of reads to (re)evaluate per run
+
+    // Trading-day boundary — decides how day_type / read-capping / ATR lookup cut
+    // the day. SELECTABLE so it ports to other brokers:
+    //   'chart'   = align to the ATR indicator's broker daily bar (day starts at
+    //               dayCutUtcHour UTC) → day_type & the ladder MATCH what you see
+    //               on the Daily ATR Zones indicator. Use when the ATR source and
+    //               the chart you read are the same broker.
+    //   'session' = Bangkok civil day (00:00 +07) → internally consistent with the
+    //               report + Fibo cut; ATR used only as a magnitude. Broker-agnostic.
+    dayWindow: 'chart',
+    // For 'chart' mode: the UTC hour the broker's DAILY bar opens. GBE gold ≈ 04:00
+    // UTC (from the D-bar countdown). Change this per broker if you move the ATR
+    // source. Ignored in 'session' mode.
+    dayCutUtcHour: 4,
+
     winAtr:      0.5,     // favorable move ≥ this × ATR (reached before adverse) = played out
     lossAtr:     0.5,     // adverse move ≥ this × ATR first = went against the read
     stallAtr:    0.25,    // both excursions < this × ATR = STALL ("นิ่ง")
