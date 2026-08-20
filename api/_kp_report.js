@@ -76,6 +76,8 @@ Grade on:
 2. Discipline scorecard — was an SL always set? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
 4. Co-pilot accuracy (INDEPENDENT of trades) — you also receive "copilot_accuracy": how each of today's co-pilot READS actually played out on the ATR ladder, whether or not the trader acted on it. Use it to grade the co-pilot ITSELF: hit_rate (of decided reads), how many STALLED (นิ่ง = read a move that never came) vs went AGAINST, what day_type the day turned out to be (BALANCE/NORMAL/TREND/OUTSIZED), and the directional lean (was the co-pilot too bull/bear vs what price did). Call out the pattern honestly, e.g. "co-pilot อ่าน buy 4/5 แต่วันทรงตัว → เอียง bull เกินไป โซนไม่วิ่ง" or "โซน sell ยืน 3/3 แม่น". This is observational — describe the tendency, don't overclaim from one day.
+4a. Data health — "data_health" says whether today's numbers rest on complete data: atr_source (indicator vs computed), days_missing_atr, and a warn line. If warn is non-null or atr_source.computed outnumbers indicator, open the co-pilot section with ONE short Thai line saying the data is incomplete and the day-type/ATR numbers should not be trusted today (e.g. "⚠️ วันนี้ยังไม่มี ATR จริงจาก indicator — ตัวเลข day type ยังเชื่อไม่ได้"). Do not elaborate; one line, then continue.
+
 4b. Plan replay — "copilot_accuracy.plan" grades what each read actually ADVISED: a pending order at the zone edge with SL and TP1 (entry = price reached the zone, then TP1 vs SL, first touch wins). This is the honest score for a "wait" read; the older verdict field is only a directional lean and is NOT the plan's result. Report it as plain counts in one or two lines (e.g. "แผนที่ราคามาถึงโซน 3 ไม้ · ถึง TP1 ก่อน 2 · โดน SL ก่อน 1 · ไม่ได้เข้า 4"). NO_FILL means price never came to the level — that is neither a win nor a loss, say so plainly. TP1 is scored as a FULL exit here (the "ปิด 50%" in a read is advice, not the measuring rule). For any WIN, "beyond_tp1_pts" is how far price kept running past TP1 before coming back to the entry price, and returned_to_entry false means it never came back that day — report it in one plain line when it is large (e.g. "ชนะ 2 ไม้ แต่ราคาไปต่ออีก ~530pt หลัง TP1 ทั้งคู่ ไม่ย้อนกลับมาที่ entry เลย") because it is the signal that targets are set too close. Do NOT call it a rule or an edge; it is a description of what happened. If plan.decided is 0, write one line: "ยังไม่มีแผนไหนที่ราคามาถึงโซนแล้วจบผล" and move on.
 
 5. Factor attribution (ROLLING, multi-day) — you also receive "factor_attribution": across the last ~30 days, verdict counts grouped by the INGREDIENTS present at each read — call_vs_m15 (with/against the M15 bias), call_vs_fibo_leg, mario_fibo_aligned, bias_conflict (M15 vs M5), vp_bucket, zone_source (MT5/Fibo), zone_score, zone_state (fresh vs retested), zone_tag (BOS/CHoCH), session. HARD RULE — the data is far too thin to name an edge, and a confident wrong lesson is worse than no lesson: report this block as COUNTS ONLY (e.g. "ตามทิศ M15: ชนะ 3 แพ้ 1 · สวน: ชนะ 0 แพ้ 2"), never as a percentage, and NEVER call anything an edge, a rule, a trap, or a pattern. Any bucket with small_sample=true is omitted entirely. If "decided" across all reads is under 20, write exactly one line — "ยังเก็บข้อมูลอยู่ ยังสรุปไม่ได้" — plus the raw counts, and nothing more. Never fabricate a number not in the data. Reads with read_kind "manage" are excluded upstream (they advised no entry, so they are neither hit nor miss); if manage_reads is non-zero, mention in one short line how many reads were position-coaching rather than entry calls.
@@ -151,14 +153,24 @@ async function runReport(db, opts = {}) {
 
   // Refresh the read outcomes first so the accuracy block grades today's reads —
   // including the last ones of the day — not a stale snapshot. Non-fatal.
-  try { await runEval({ days: 2, write: true }); }
-  catch (e) { console.warn('runEval (report) failed (non-fatal):', e.message); }
+  // …and keep the evaluator's health block: every failure mode in this pipeline
+  // fails PLAUSIBLE rather than loud (a deactivated Pine alert, an EA that went
+  // down, a day with no ATR row), so the report has to say when the numbers it is
+  // about to quote are standing on thin data.
+  let evalHealth = null;
+  try {
+    const ev = await runEval({ days: 2, write: true });
+    evalHealth = ev && ev.body ? ev.body.health : null;
+  } catch (e) { console.warn('runEval (report) failed (non-fatal):', e.message); }
 
   // Rolling factor attribution (which Mario/Fibo/ATR/session ingredients drove
   // wins) over a wider window — the "what works" learning layer. Non-fatal.
   let attribution = null;
   try {
-    const r = await runAttribution({ days: CFG.attributionLookbackDays || 30 });
+    // Plan basis: the replayed pending order is what the read actually advised. The
+    // lean basis grades a market order the prompt forbids, so it is not what the
+    // trader should be shown.
+    const r = await runAttribution({ days: CFG.attributionLookbackDays || 30, basis: 'plan' });
     if (r.status === 200 && r.body.ok) attribution = r.body;
   } catch (e) { console.warn('runAttribution (report) failed (non-fatal):', e.message); }
 
@@ -227,6 +239,7 @@ async function runReport(db, opts = {}) {
     trades: rows,
     copilot_reads: signals.map(s => ({ time: s.ts, trigger: s.trigger_type, call: s.bias_call, headline: s.headline })),
     copilot_accuracy: outcomes.length ? copilotAccuracy(outcomes) : null,
+    data_health: evalHealth,
     factor_attribution: attribution,   // rolling multi-day: which ingredients drove wins
     note: 'trader also trades independently of the co-pilot — grade every trade on merit, mark matched/diverged/no-read. copilot_accuracy grades the READS themselves on the ATR ladder, independent of whether the trader acted.',
   };

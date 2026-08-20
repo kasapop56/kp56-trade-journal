@@ -231,7 +231,25 @@ module.exports = async (req, res) => {
     if (String(req.query.target || '') === 'reads') {
       const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
       const fill = ['near', 'mid', 'far'].includes(req.query.fill) ? req.query.fill : null;
-      const { status, body } = await runReadEval({ days: rdays, write: req.query.write === '1', fill });
+      const wantWrite = req.query.write === '1';
+      // The dashboard calls this unauthenticated on every tab render, so it cannot
+      // require a key — but that also means anyone with the URL can make it recompute.
+      // Throttle the WRITE path on how recently outcomes were refreshed: cheap, and
+      // it protects the free-tier quota without breaking the browser caller.
+      if (wantWrite) {
+        const { createClient } = require('@supabase/supabase-js');
+        const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY,
+                                { auth: { persistSession: false } });
+        const { data } = await db.from('kp_read_outcomes')
+          .select('updated_at').order('updated_at', { ascending: false }).limit(1);
+        const last = data && data[0] && Date.parse(data[0].updated_at);
+        const waitSec = 30;
+        if (last && Date.now() - last < waitSec * 1000) {
+          return res.status(200).json({ ok: true, mode: 'throttled',
+            retry_in_sec: Math.ceil((waitSec * 1000 - (Date.now() - last)) / 1000) });
+        }
+      }
+      const { status, body } = await runReadEval({ days: rdays, write: wantWrite, fill });
       return res.status(status).json(body);
     }
     // one-off maintenance: recover structured plans from past reads' message text

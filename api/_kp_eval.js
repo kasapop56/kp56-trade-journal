@@ -32,7 +32,7 @@ const SYM   = 'XAUUSD';
 // outcome row so a later re-grade under different thresholds can never be silently
 // mixed with old outcomes (verdicts are recomputed on every run, so without this
 // a threshold tweak would rewrite all of history with no marker).
-const EVAL_REV = '9j';
+const EVAL_REV = '9k';
 const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
   .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
@@ -315,12 +315,27 @@ function dirOf(s) {
   return null;
 }
 // XAUUSD trading session from a read's UTC hour (rough, London/NY overlap→NY).
+// Sessions follow the exchanges' LOCAL clocks, so fixed UTC hours smear every
+// bucket by an hour for part of the year (London and New York change on different
+// dates, so there are weeks where both are off). Ask the timezones instead.
+function hourIn(ms, tz) {
+  const h = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: 'numeric', hour12: false })
+    .format(new Date(ms));
+  return parseInt(h, 10);
+}
 function sessionOf(ms) {
-  const h = new Date(ms).getUTCHours();
-  if (h >= 0 && h < 7) return 'asia';
-  if (h >= 7 && h < 13) return 'london';
-  if (h >= 13 && h < 21) return 'ny';
-  return 'off';
+  try {
+    const ny = hourIn(ms, 'America/New_York');
+    if (ny >= 8 && ny < 17) return 'ny';                 // NY cash session
+    const ldn = hourIn(ms, 'Europe/London');
+    if (ldn >= 8 && ldn < 16) return 'london';
+    const tky = hourIn(ms, 'Asia/Tokyo');
+    if (tky >= 9 && tky < 18) return 'asia';
+    return 'off';
+  } catch (e) {
+    const h = new Date(ms).getUTCHours();               // Intl unavailable → old rule
+    return h < 7 ? 'asia' : h < 13 ? 'london' : h < 21 ? 'ny' : 'off';
+  }
 }
 function scoreBucket(score) {
   const n = Number(score);
@@ -388,6 +403,7 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   // echoes exposure the trader already has, it advises no entry, and grading it as
   // a fresh directional call measures the trader's open trade, not the co-pilot.
   // (Historically 100% of Buy/Sell reads were of this kind — see doc §13.2b.)
+  const readPriceAgeMin = num(sig.meta?.freshness?.price_age_min);
   const readKind = sig.meta?.read_kind
     || ((sig.meta?.positions?.count) ? 'manage' : 'entry');
   // the entry legs the read actually advised (null for older/《manage》reads)
@@ -518,6 +534,12 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
     // are still recorded; judging management advice needs its own yardstick (was
     // the SL/TP guidance good?), which is a separate piece of work.
     verdict = 'MANAGE';
+  } else if (readPriceAgeMin != null && readPriceAgeMin > (E.maxReadPriceAgeMin || 5)) {
+    // Excursions are measured FROM the read price. If that price was a stale
+    // snapshot, the starting point is wrong and every distance derived from it is
+    // wrong with it — better to refuse than to average the error in. (null age =
+    // pre-9c read, unknown rather than stale, so it is still graded.)
+    verdict = 'STALE_PRICE';
   } else if (call == null) {
     // the CALL line didn't parse — a malformed read must not become a fake STALL
     verdict = 'UNGRADEABLE';
@@ -729,10 +751,11 @@ function runAttributionRows(rows, minSamples, basis) {
     b[v]++;
   };
 
-  let total = 0, decided = 0, skipped_manage = 0;
+  let total = 0, decided = 0, skipped_manage = 0, skipped_bad = 0;
   for (const r of rows) {
     // management notes advised no entry — they can never be a directional "hit"
     if ((r.meta && r.meta.read_kind) === 'manage') { skipped_manage++; continue; }
+    if (r.verdict === 'STALE_PRICE' || r.verdict === 'UNGRADEABLE') { skipped_bad++; continue; }
     const f = r.meta && r.meta.factors;
     if (!f) continue;
     const verdict = basis === 'plan' ? (r.meta.plan_verdict || 'NONE') : r.verdict;
@@ -775,7 +798,7 @@ function runAttributionRows(rows, minSamples, basis) {
     }).sort((a, z) => (a.small_sample ? 1 : 0) - (z.small_sample ? 1 : 0)
                    || (z.hit_rate_pct ?? -1) - (a.hit_rate_pct ?? -1) || z.decided - a.decided);
   }
-  return { basis: basis || 'lean', total_with_factors: total, decided, skipped_manage, min_samples: minSamples, dims: out };
+  return { basis: basis || 'lean', total_with_factors: total, decided, skipped_manage, skipped_bad, min_samples: minSamples, dims: out };
 }
 
 async function runAttribution({ days = CFG.eval.lookbackDays, minSamples = 3, basis = 'lean' } = {}) {

@@ -670,3 +670,12 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 .cp-vd-partial { background: var(--surface2); color: var(--text); }
 .cp-vd-pending { background: var(--surface2); color: var(--text-dim); }
 .cp-sig-outcome { margin-top: 6px; font-size: 12px; color: var(--text-dim); border-left: 2px solid var(--border); padding-left: 8px; }
+
+
+/* Evaluator health warning on the co-pilot tab — shown only when the day's numbers
+   rest on incomplete data (missing ATR rows, bar-feed gaps). */
+.cp-health {
+  margin: 0 0 10px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(224, 160, 40, .12); border: 1px solid rgba(224, 160, 40, .35);
+  color: #b8801f; font-size: 12px; line-height: 1.45;
+}

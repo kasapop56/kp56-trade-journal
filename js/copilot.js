@@ -299,7 +299,28 @@ let _cpEvalAt = 0;
 function cpKickEval() {
   if (Date.now() - _cpEvalAt < 60000) return;   // at most once per minute
   _cpEvalAt = Date.now();
-  fetch('/api/fibo-eval?target=reads&write=1&days=7').catch(() => { /* offline / cold start */ });
+  fetch('/api/fibo-eval?target=reads&write=1&days=7')
+    .then(r => r.json())
+    .then(d => cpShowHealth(d && d.health))
+    .catch(() => { /* offline / cold start */ });
+}
+
+// Surface the evaluator's health where it is actually seen. Every failure here is
+// silent by nature — a Pine alert that stopped firing, an EA that went down — so
+// clean-looking verdict badges can sit on top of missing data indefinitely.
+function cpShowHealth(h) {
+  const root = document.getElementById('copilotBody');
+  if (!root) return;
+  const old = document.getElementById('cpHealth');
+  if (old) old.remove();
+  if (!h || !h.warn) return;
+  const src = h.atr_source || {};
+  const el = document.createElement('div');
+  el.id = 'cpHealth';
+  el.className = 'cp-health';
+  el.textContent = `⚠️ ข้อมูลยังไม่ครบ · ${h.warn}` +
+    (src.computed ? ` · ATR จริง ${src.indicator || 0} / ประมาณเอง ${src.computed}` : '');
+  root.prepend(el);
 }
 
 // Debounced repaint for the outcomes realtime feed. A batch upsert emits many row

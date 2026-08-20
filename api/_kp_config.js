@@ -110,6 +110,9 @@ module.exports = {
     // flips outcomes. Measure with ?fill= before settling on a default.
     // 'mid' — the trader's own answer for where a zone entry actually fills.
     entryFill: 'mid',
+    // A read whose price snapshot was older than this (minutes) is not graded: the
+    // excursion baseline would be a price that no longer existed at read time.
+    maxReadPriceAgeMin: 5,
   },
 
   // ── carry-forward digest (Phase 9, descriptive) ──────────────────────────────
