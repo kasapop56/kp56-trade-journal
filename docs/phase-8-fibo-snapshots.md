@@ -207,6 +207,18 @@ The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
   moving one anchor and not the other. A rejected pivot is discarded for good; the
   frame waits for one far enough from the opposite anchor. Verified on a replay:
   3-bar pivots rejected with the frame frozen, 6+ bar legs accepted.
+- **Minimum frame RANGE** (`fbMinRng`, default `-1` = track `slPts`). `fbMinSep`
+  constrains the time axis only, and six bars of tight sideways still yields a
+  degenerate frame. Caught live in a webhook payload at 21:30: `fh 4484.56 /
+  fl 4481.74` = a 282-point frame while the SL setting is 550 and TP1 500 — the stop
+  is twice the width of the entire structure the levels were derived from, and the B
+  zone (±200) spans 4476.92–4480.92, overlapping its own `fl`. The floor is anchored
+  to `slPts` rather than a hand-picked number: if the frame is narrower than its own
+  stop, the structure says nothing the stop does not already swamp. Real M5 legs that
+  day measured 1523–3337 points, so the floor discards junk without touching anything
+  tradeable. `-1` tracks the SL setting automatically, `0` disables, any positive
+  value sets it explicitly. Fallback lane only — the main lane passes 0 so its
+  measured frame history is unaffected.
 - **M5 is a recovery lane, not a co-owner** — M15 takes back control the moment it
   has a real leg again, and draws fresh levels. But "a new M15 frame exists" is NOT
   the test: after an impulse the new frame usually drags the stale `FH` along (no
