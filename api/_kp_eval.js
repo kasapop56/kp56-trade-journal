@@ -353,8 +353,9 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   const zoneFresh = target_zone
     ? zoneFreshness(dayEntry.bars, { side: target_zone.side, lo: target_zone.lo, hi: target_zone.hi }, day, t0)
     : null;
-  outObj.zone_retest_count = zoneFresh ? zoneFresh.tests : null;
-  outObj.zone_fresh = zoneFresh ? zoneFresh.fresh : null;
+  // NOTE: zone_fresh / zone_retest_count live INSIDE meta.factors only — the
+  // kp_read_outcomes table has no such columns, so putting them at top level made
+  // the whole upsert fail ("column not found"). Keep them in the jsonb.
   outObj.meta.factors = buildFactors(sig, stateRow, {
     call_dir: dir === 1 ? 'buy' : dir === -1 ? 'sell' : null,
     target_zone, day_type, reached_band, zone_freshness: zoneFresh,
