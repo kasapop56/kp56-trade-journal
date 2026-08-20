@@ -177,8 +177,15 @@ The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
   if that frame was *created after* the death (`qFrId >= mDeadT`), which stops the
   M5 frame that died alongside the main one from being recycled. Its anchors may
   predate the death — the low that broke the SL is itself the new anchor.
-- **WAIT** when both degrees are out. No zones drawn, no signals, badge says so.
-  Honest > invented.
+- **WAIT** when both degrees are out — including when the M5 frame trips its OWN
+  SL, which invalidates it by exactly the same rule. It does not fall further (no
+  M1 rung); it waits for the next confirmed M5 frame, which resets that lane and
+  returns to FALLBACK, or for M15 to recover. No zones, no signals, badge says so.
+  Honest > invented. Note the split between *displayable* and *tradeable*: in WAIT
+  the grey High/Low structure still comes from the M5 frame if there is one, because
+  that is the more recent real structure — only the action levels are withheld. The
+  alternative made the structure lines jump backwards to the older dead M15 frame on
+  entering WAIT.
 - **The fallback lane runs its own pivot strength** (`fbPiv`, default 2, separate
   from the main `pivLen` of 3). Dropping the TF alone was not enough: `f_box` takes
   the latest pivot high and the latest pivot low *independently*, so a 3-bar pivot
