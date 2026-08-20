@@ -563,8 +563,8 @@ history is free today and expensive in three months.
 |---|---|---|---|
 | **1** | **Capture what cannot be backfilled** — structured plan (side/zone/SL/TP1/TP2) into `kp_signals.meta`, plus `price_age_min`, `prompt_version`, `eval_version` | 1, 5, 8, 9, 14 | ✅ **DONE 2026-08-20** (§14) |
 | **1b** | **Partition reads by `read_kind`** — stop grading management notes as directional calls; management reads get their own yardstick | §13.2b | ✅ captured 2026-08-20 · grading split still ⬜ |
-| 2 | Cheap correctness cluster — one shared day fn + key `kp_atr` off the alert `ts`; exclude the boundary bar (`b.t − tfMs ≥ t0`); fix the `small_sample` denominator; drop `atr_day_type` from the attribution dims; add `UNGRADEABLE`; grade No-trade on post-read travel only | 2b, 4, 6, 7, 14 | ⬜ next |
-| 3 | Seed `kp_atr` from the 3-year Dukascopy M1 archive (`rainbow-research/data/`) → deletes the "13/15 OUTSIZED" artifact, makes verdicts deterministic | 2, 5 | ⬜ |
+| 2 | Cheap correctness cluster — one shared day fn + key `kp_atr` off the alert `ts`; exclude the boundary bar (`b.t − tfMs ≥ t0`); fix the `small_sample` denominator; drop `atr_day_type` from the attribution dims; add `UNGRADEABLE`; grade No-trade on post-read travel only | 2b, 4, 6, 7, 14 | ✅ **DONE 2026-08-20** (§15) |
+| 3 | Seed `kp_atr` from the 3-year Dukascopy M1 archive (`rainbow-research/data/`) → determinism + precision. **Downgraded in urgency** — measured, the fallback is 83% of the real ATR, not the order-of-magnitude error assumed (§15.2) | 2, 5 | ⬜ |
 | 4 | Phantom-read baseline at every SITREP + the health header | 8, 13 | ⬜ |
 | 5 | Wilson CIs + decided-N gates + day clustering; degrade the 📊 block until they land | 3 | ⬜ |
 | 6 | Plan-replay grading (as a second track), R-multiples, persistent zone registry, censoring controls | 1, 10, 11, 12 | ⬜ deferred — revisit at ~3 months of data |
@@ -573,6 +573,82 @@ history is free today and expensive in three months.
 as a *learning device*. The "too conservative" finding is not actionable — and per
 §13.2b, neither is the hit rate: **both** live headline numbers are artifacts of the
 entry/manage confusion, from opposite directions.
+
+---
+
+## 15. Step 2 — grade the right reads, on the right day, from the right bar (2026-08-20)
+
+`EVAL_REV` 9c → 9d (`eval_version: 9d-59aa51`). All 16 reads re-graded under the new
+rule; the stamp keeps the two scoring regimes distinguishable.
+
+### 15.1 What changed
+
+**`classify()`**
+- **`read_kind` partition** — reads taken with a position open get verdict `MANAGE`:
+  out of WIN/LOSS, out of the hit rate, out of attribution.
+- **Boundary bar excluded** — bars are stamped at their close, so `b.t > t0` admitted
+  the bar containing the read. Now the bar must have *opened* at/after the read, using
+  `payload.tf` (previously ignored entirely).
+- **"No trade" graded on post-read travel**, not the whole day's travel from the day
+  open. New verdict **`NO_ENTRY_OFFERED`**: a move happened, but price never came to
+  the level the read said to wait for — using the plan legs captured in §14.
+- **`UNGRADEABLE`** for an unparseable `CALL:` line (previously became a fake `STALL`).
+- Records `read_kind`, `post_max_atr`, `leg_touched`, `entry_legs`, `runway_h`.
+
+**`runEval()`**
+- `kp_atr` joined on a **day index derived from the alert's own timestamp**, not on a
+  date string (finding #4). Effect was immediate: `atr_source` went from ~all
+  `computed` to `indicator` wherever a row exists.
+- **health block** — `atr_source` split, days with bars but no ATR row, the alert's
+  observed UTC hours, and a `warn` line. Currently: *"8/9 days have bars but no
+  `kp_atr` row"*.
+- **dry mode now runs the classifier** and returns a per-read preview instead of
+  skipping it, so a change is inspectable before anything is written.
+
+**Attribution** — `small_sample` counts **decided** reads (the base the percentage
+uses, not `n`); `atr_day_type` dropped from the aggregated dimensions (outcome
+leakage); buckets with a decided base sort first.
+
+**Report** — accuracy excludes manage reads and counts them separately; the 📊 block
+is degraded to counts-only, with an explicit ban on the words edge/rule/trap and a
+one-line "still collecting" mode under 20 decided.
+
+**Other** — unknown `?target` now 400s instead of falling through to the Fibo frame
+evaluator; dashboard badges for the three new verdicts.
+
+### 15.2 What the re-grade actually showed
+
+```
+tally:  MISSED 6 · MANAGE 6 · OK_NOTRADE 1 · PENDING 3
+attribution: total_with_factors 10 · decided 0 · skipped_manage 6 · buckets passing the gate 0
+```
+
+**The hit rate is gone — there is none.** Every previously "decided" read (the 1W/4L)
+was a management note; with those correctly excluded, **zero** reads have a
+directional outcome, and **zero** attribution buckets pass the decided-gate. That is
+the honest state of the evidence, and it is the strongest possible confirmation of
+§13.2b.
+
+**One review assumption did not survive measurement.** Finding #2 argued the computed
+ATR was badly understated ("gold does not have 13 outsized days in 15"). Measured
+against the real indicator value on the same instrument: **computed 73.31 vs indicator
+88.81 — the fallback is 83% of the truth, a 17% understatement, not an
+order-of-magnitude error.** Gold genuinely did travel ~$110–160/day this week, so the
+`OUTSIZED` labels are largely *real*. Consequences:
+
+- Seeding ATR history (step 3) is still worth doing for determinism, but it is a
+  precision fix, not the artifact-killer it was billed as — **urgency downgraded**.
+- The "too conservative" observation is therefore *not* mainly an ATR artifact either.
+  It is a real pattern with a **structural** cause: with no position open the co-pilot
+  has nothing to coach, so it says "wait" — 10 times out of 10. The 6 `MISSED` reads
+  are honest. The wrong lesson would still be "be more aggressive"; the right question
+  is why the co-pilot never proposes an entry when flat.
+
+**The day-cut is still unconfirmed.** The new diagnostic reports
+`atr_alert_utc_hours: [6]` against `day_cut_utc_hour: 4` — but the only `kp_atr` rows
+so far came from a **manual** `curl`, so that 06:00 reflects when the POST was sent,
+not when the indicator fires. The diagnostic is in place; it needs one real alert to
+mean anything.
 
 ---
 
