@@ -564,15 +564,63 @@ history is free today and expensive in three months.
 | **1** | **Capture what cannot be backfilled** — structured plan (side/zone/SL/TP1/TP2) into `kp_signals.meta`, plus `price_age_min`, `prompt_version`, `eval_version` | 1, 5, 8, 9, 14 | ✅ **DONE 2026-08-20** (§14) |
 | **1b** | **Partition reads by `read_kind`** — stop grading management notes as directional calls; management reads get their own yardstick | §13.2b | ✅ captured 2026-08-20 · grading split still ⬜ |
 | 2 | Cheap correctness cluster — one shared day fn + key `kp_atr` off the alert `ts`; exclude the boundary bar (`b.t − tfMs ≥ t0`); fix the `small_sample` denominator; drop `atr_day_type` from the attribution dims; add `UNGRADEABLE`; grade No-trade on post-read travel only | 2b, 4, 6, 7, 14 | ✅ **DONE 2026-08-20** (§15) |
-| 3 | Seed `kp_atr` from the 3-year Dukascopy M1 archive (`rainbow-research/data/`) → determinism + precision. **Downgraded in urgency** — measured, the fallback is 83% of the real ATR, not the order-of-magnitude error assumed (§15.2) | 2, 5 | ⬜ |
+| 3 | ~~Seed `kp_atr` from the 3-year Dukascopy archive~~ — **DROPPED (trader's call, 2026-08-20).** Gold's 2026 regime differs enough from 2023–25 that a 3-year ATR would import the wrong volatility scale: "more pain than gain". It also contradicts the project's own out-of-sample lesson (see the CISD work: no edge in choppy gold, profit only in the bull regime). Replaced by: keep the **recent-window** fallback (already regime-local, measured at 83% of truth) with a minimum-sample floor, and make the indicator alert the primary source | 2, 5 | ✅ resolved by decision |
 | 4 | Phantom-read baseline at every SITREP + the health header | 8, 13 | ⬜ |
 | 5 | Wilson CIs + decided-N gates + day clustering; degrade the 📊 block until they land | 3 | ⬜ |
-| 6 | Plan-replay grading (as a second track), R-multiples, persistent zone registry, censoring controls | 1, 10, 11, 12 | ⬜ deferred — revisit at ~3 months of data |
+| **6** | **Plan-replay grading — PROMOTED to next.** No longer a "second track": per §16, 10 of 16 reads are pending limit plans, so replay (zone touch → TP1-vs-SL) is the *only* way to grade the majority of what the co-pilot produces. Everything else it has ever said is position coaching | 1, §16 | ⬜ **next** |
+| 7 | R-multiples, persistent zone registry, censoring controls | 10, 11, 12 | ⬜ deferred — revisit at ~3 months of data |
 
 **Standing conclusion (agreed):** the loop is trustworthy as *instrumentation*, not yet
 as a *learning device*. The "too conservative" finding is not actionable — and per
 §13.2b, neither is the hit rate: **both** live headline numbers are artifacts of the
 entry/manage confusion, from opposite directions.
+
+---
+
+## 16. "No trade" was never no trade (2026-08-20)
+
+The trader asked whether the co-pilot's caution is simply what an edge-based method
+(Fibo + order blocks) produces — you wait for price to come to the level. Checking it
+against the reads gave a sharper answer than expected.
+
+**Yes, waiting is by design.** The system prompt forbids mid-range entries outright
+("Never suggest entering at mid-range / POC. Only at zone edges with confirmation")
+and names the wait explicitly ("the correct call is often 'no trade — wait for the
+edge'").
+
+**But the co-pilot was never silent.** Reading the three flat reads that had captured
+no plan showed they all had one, written in an older bullet format the parser missed:
+
+> **Read 1** (`CALL: No trade`) — *รอ Sell ที่ supply 4363–4366.75 · Entry ~4364.8-4366
+> | SL 4368 | TP1 4358 | TP2 4354* · *รอ Buy ที่ demand 4343.22–4347.28 แบบ
+> sweep-and-reclaim*
+
+Across all 16 stored reads: **`wait` 10 · `manage` 6 · `stand_aside` 0 · `entry_now` 0.**
+Every position-free read issued a complete conditional plan with zone, SL and TP. Not
+one was genuinely "no opinion".
+
+So **"No trade" is a labelling failure, not caution.** The word collapses two opposite
+answers — *stand aside, I have no view* and *wait at this level, here is the entry, the
+stop and the target* — and the loop recorded the second as the first. "The co-pilot had
+no opinion 10 times" was really "the co-pilot issued 10 pending limit plans".
+
+Consequences:
+
+1. `read_stance` (`manage` | `entry_now` | `wait` | `stand_aside`) is now captured per
+   read and backfilled. `MISSED` on a `wait` read means only "a move happened" — it is
+   **not** a verdict on the plan.
+2. **Plan-replay is promoted from deferred to next** (step 6). It is not a refinement
+   any more: 10 of 16 reads are pending limit plans, and replay is the only way to
+   grade them at all. The remaining 6 are position coaching. There is nothing else.
+3. The open design question stands, but narrowed: not *"why is it so cautious"* — it
+   isn't — but **"are its waiting levels good, and does it wait for the right ones?"**
+   That is a question plan-replay can actually answer.
+
+**Also resolved by the trader (same session):** the 3-year ATR seed is **dropped**.
+Gold's 2026 regime differs enough from 2023–25 that importing that volatility scale
+would be "more pain than gain" — consistent with this account's own out-of-sample
+history. The recent-window fallback is regime-local by construction and measured at 83%
+of truth; the fix is a minimum-sample floor, not more history.
 
 ---
 
