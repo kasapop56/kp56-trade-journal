@@ -75,7 +75,11 @@ Two fields carry the trader's own diagnosis of his worst habit, and they are ALR
 - kind: "single" | "scaled" (legs within 500 pts = intended, split for partial exits, FINE) | "averaged" (legs more than 500 pts apart = adding at distance, HIS STATED BAD HABIT).
 - adverse_adds: legs opened at a WORSE price than the running average (buy lower / sell higher) = averaging into a loser rather than pyramiding a winner.
 summary.netting compares averaged positions against everything else in dollars. LEAD WITH THAT NUMBER whenever averaged_positions > 0: it is the single most actionable line in the report. Say plainly whether the habit cost or made money today, in dollars. Do not moralise and do not repeat the lesson more than once.
-summary.adherence pre-splits followed / diverged / advised_no_trade / no_read with net USD for each — quote it rather than counting. "advised_no_trade" means the co-pilot said stand aside and the trade was taken anyway; that is NOT the same as trading against a directional call, and if those trades made money say so plainly — the co-pilot being too cautious is a finding about the CO-PILOT, not a discipline failure by the trader.
+UNITS, and be strict about them: "ไม้" = an ORDER (summary.orders), "จังหวะ" = a POSITION (summary.positions). They are different numbers and swapping them makes the report wrong. Quote summary.sl_coverage_text verbatim for SL coverage — do not build it yourself.
+
+WHEN YOU CITE A POSITION, COPY ITS "cite" FIELD VERBATIM. It already contains side, average entry, whether it was เดี่ยว / ซอย / ถัวห่าง, the P&L with its sign, and how it ended. Do not rebuild that string from the other fields and do not re-word it: on the first live run doing so produced three wrong labels in one report — a 79pt scaled entry called "ถัวห่าง", a +19.85$ winner written as "-19.85$ ชนะ", and orders counted as positions. Only "ถัวห่าง" positions are the bad habit; "ซอย" is the intended split and must never be described as ถัว.
+
+summary.adherence pre-splits followed / diverged / advised_no_trade / no_read with net USD for each — quote it rather than counting. "advised_no_trade" means the co-pilot said stand aside and the trade was taken anyway. NEVER call these "สวนคำแนะนำ" — สวน is reserved for the "diverged" bucket, i.e. the co-pilot called a direction and the trader took the other one. Word it as "โคไพลอตบอกไม่เทรด แต่เข้าเอง N จังหวะ". If diverged is 0, say plainly that there were no directional calls to follow or fight today. That is NOT the same as trading against a directional call, and if those trades made money say so plainly — the co-pilot being too cautious is a finding about the CO-PILOT, not a discipline failure by the trader.
 
 CRITICAL: the trader ALSO opens trades independently of the co-pilot's suggestions. Evaluate EVERY trade on its own merit. For each, note whether it MATCHED, DIVERGED FROM, or had NO co-pilot read at that time — and grade divergent trades fairly (an independent call can be right or wrong; say which).
 
@@ -219,7 +223,21 @@ function groupPositions(rows, signals) {
     const alignment = !read ? 'no_read'
                     : !isDir ? 'advised_no_trade'
                     : call === g.side ? 'followed' : 'diverged';
+    // Ready-to-quote citation. The model gets every field it would need to build
+    // this itself, and on the first live run it built it WRONG three separate
+    // ways: it called a 79pt scaled entry "ถัวห่าง", it flipped the sign on a
+    // +19.85$ winner, and it mixed up orders with positions. So the string is
+    // assembled here and the prompt tells it to copy this verbatim.
+    const kindTh = g.legs.length === 1 ? 'เดี่ยว'
+                 : (spread <= ADD_NEAR_PTS ? `ซอย ${g.legs.length} ไม้ ห่าง ${spread}pt`
+                                           : `ถัวห่าง ${spread}pt`);
+    const plUsd = round(g.legs.reduce((n, l) => n + l.pl_usd, 0), 2);
+    const endTh = exits.sl ? (exits.sl === g.legs.length ? 'โดน SL' : `โดน SL ${exits.sl}/${g.legs.length} ไม้`)
+                : exits.tp ? 'ได้ TP' : 'ปิดมือ';
+    const cite = `${g.side} ${round(avgEntry, 2)} ${kindTh} ${plUsd >= 0 ? '+' : ''}${plUsd}$ · ${endTh}`;
+
     return {
+      cite,
       n: i + 1, side: g.side, legs: g.legs.length, lots: round(lots, 2),
       avg_entry: round(avgEntry, 2), exit: g.legs[g.legs.length - 1].exit,
       spread_pts: spread,
@@ -333,6 +351,8 @@ async function runReport(db, opts = {}) {
     position_wins: posWins, position_losses: positions.length - posWins,
     gross_win_usd: round(grossWin, 2), gross_loss_usd: round(grossLoss, 2),
     no_sl_count: rows.filter(r => !r.had_sl_at_open).length,
+    // pre-rendered so the model cannot mix up orders and positions here
+    sl_coverage_text: `${rows.length - rows.filter(r => !r.had_sl_at_open).length}/${rows.length} ไม้`,
     // the netting scorecard — "averaged" = entries more than 500 pts apart
     netting: {
       threshold_pts: ADD_NEAR_PTS,
