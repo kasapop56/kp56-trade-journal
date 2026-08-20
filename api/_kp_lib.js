@@ -11,6 +11,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
+const crypto = require('crypto');
 const CFG = require('./_kp_config');
 
 // ── clients ──────────────────────────────────────────────────────────────────
@@ -540,7 +541,93 @@ CALL: Buy | Sell | No trade
 🛑 เสียเมื่อ
 <invalidation สั้น>
 
-⚠️ <เตือนวินัย 1 บรรทัด>`;
+⚠️ <เตือนวินัย 1 บรรทัด>
+
+บรรทัดสุดท้ายเสมอ (บรรทัดนี้มีไว้ให้ระบบอ่าน ไม่ต้องสวย ผู้ใช้จะไม่เห็น):
+PLAN: [{"side":"sell","zone":[4340,4344],"sl":4348,"tp1":4325,"tp2":4310}]
+กติกา PLAN: JSON array บรรทัดเดียว · 1 object ต่อ 1 ฝั่งที่ actionable · ต้องตรงกับ 🎯 แผน ข้างบนเป๊ะ ๆ · side ใช้ "buy"/"sell" · zone=[ล่าง,บน] (ราคาเดียวใส่ตัวเดียว) · ไม่มีแผน/ไม่เทรด = PLAN: []`;
+
+// ── plan capture (Phase 9c) ──────────────────────────────────────────────────
+// The read's LEVEL PLAN — zone edge + SL + TP — is what the trader is actually
+// advised to do. Until now only the CALL word (Buy/Sell/No trade) was stored, so
+// the evaluator could grade nothing but a from-P0 directional lean, i.e. a trade
+// the read explicitly tells the trader NOT to take (no mid-range entries). The
+// plan cannot be reconstructed after the fact, so capture it structurally now.
+// Two parsers, in order:
+//   1. the model's own machine line — PLAN: [{side,zone,sl,tp1,tp2}, …]
+//   2. fallback: the 🔴/🟢 level block in the visible message. This also parses
+//      reads written BEFORE this change (the text lives in kp_signals.message),
+//      so existing history can be backfilled.
+const gold = (n) => Number.isFinite(n) && n > 100 && n < 100000;
+const NUMRE = /\d{3,6}(?:\.\d+)?/g;
+
+function planFromJson(line) {
+  const i = String(line).indexOf(':');
+  if (i < 0) return null;
+  const body = line.slice(i + 1).trim().replace(/^```(?:json)?/, '').replace(/```$/, '').trim();
+  const a = body.indexOf('['), z = body.lastIndexOf(']');
+  if (a < 0 || z < a) return null;
+  let arr;
+  try { arr = JSON.parse(body.slice(a, z + 1)); } catch (e) { return null; }
+  if (!Array.isArray(arr)) return null;
+  const legs = [];
+  for (const o of arr) {
+    if (!o || typeof o !== 'object') continue;
+    const side = String(o.side || '').toLowerCase();
+    if (side !== 'buy' && side !== 'sell') continue;
+    const zs = (Array.isArray(o.zone) ? o.zone : [o.zone]).map(Number).filter(gold);
+    if (!zs.length) continue;
+    const lvl = (v) => (gold(Number(v)) ? Number(v) : null);
+    legs.push({ side, zone_lo: Math.min.apply(null, zs), zone_hi: Math.max.apply(null, zs),
+                sl: lvl(o.sl), tp1: lvl(o.tp1), tp2: lvl(o.tp2) });
+  }
+  // an explicitly empty array is a valid "no plan" answer, not a parse failure
+  return legs.length ? legs : (arr.length === 0 ? [] : null);
+}
+
+function planFromText(text) {
+  const legs = [];
+  let cur = null;
+  const flush = () => { if (cur) legs.push(cur); cur = null; };
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const l = raw.trim();
+    if (/^(🔴|🟢)/.test(l) || /^(sell|buy)\b/i.test(l)) {
+      flush();
+      const side = (/🔴/.test(l) || /\bsell\b|ขาย/i.test(l)) ? 'sell'
+                 : (/🟢/.test(l) || /\bbuy\b|ซื้อ/i.test(l)) ? 'buy' : null;
+      const zs = (l.match(NUMRE) || []).map(Number).filter(gold);
+      cur = (side && zs.length)
+        ? { side, zone_lo: Math.min.apply(null, zs), zone_hi: Math.max.apply(null, zs), sl: null, tp1: null, tp2: null }
+        : null;
+      continue;
+    }
+    if (!cur) continue;
+    if (/^(🛑|⚠️|📍|🎯)/.test(l)) { flush(); continue; }   // next section → leg done
+    const g = (re) => { const m = l.match(re); const n = m ? Number(m[1]) : NaN; return gold(n) ? n : null; };
+    if (cur.sl  == null) cur.sl  = g(/SL\s*:?\s*([\d.]+)/i);
+    if (cur.tp1 == null) cur.tp1 = g(/TP1\s*:?\s*([\d.]+)/i);
+    if (cur.tp2 == null) cur.tp2 = g(/TP2\s*:?\s*([\d.]+)/i);
+  }
+  flush();
+  return legs;
+}
+
+// planLine = the model's PLAN: line (may be ''), message = the visible body.
+function parsePlan(planLine, message) {
+  const j = planLine ? planFromJson(planLine) : null;
+  if (j) return { legs: j, source: j.length ? 'json' : 'json_empty' };
+  const t = planFromText(message);
+  return { legs: t, source: t.length ? 'parsed' : 'none' };
+}
+
+// Identity of the read-GENERATING policy. Any edit to the prompts, the model, the
+// effort, or the context blocks changes this hash — so attribution can be split
+// per version instead of pooling reads produced by different policies (the
+// nonstationary-policy trap: the loop's own carry-forward feeds back into calls).
+const PROMPT_VERSION = crypto.createHash('sha1')
+  .update([SYSTEM_PROMPT, OUTPUT_HINT, CFG.model, CFG.effort,
+           CFG.carryForward ? 'cf1' : 'cf0', CFG.zoneFreshness ? 'zf1' : 'zf0'].join('\u0000'))
+  .digest('hex').slice(0, 8);
 
 // buy/sell direction implied by a bias/trend/leg word (Bull/Bear/UP/DOWN/…)
 function dirOf(s) {
@@ -658,13 +745,21 @@ async function callClaude(state, trigger) {
   else if (/\bsell\b|ขาย/i.test(callLine)) bias_call = 'Sell';
   lines = lines.filter(l => !/^\s*CALL:/i.test(l));
 
+  // PLAN: <json> line → structured plan; stripped from the body so the user-facing
+  // read (dashboard + Telegram) looks exactly as before.
+  const planLine = lines.find(l => /^\s*PLAN\s*:/i.test(l)) || '';
+  lines = lines.filter(l => !/^\s*PLAN\s*:/i.test(l));
+
   // first non-empty line = headline; the rest = body (no duplication anywhere)
   while (lines.length && !lines[0].trim()) lines.shift();
   const headline = demark(lines.shift() || 'อัปเดตตลาด').trim() || 'อัปเดตตลาด';
   const message = demark(lines.join('\n')).trim() || headline;
 
+  const plan = parsePlan(planLine, message);
+
   return {
     headline, message, bias_call,
+    plan: plan.legs, plan_source: plan.source, prompt_version: PROMPT_VERSION,
     usage: resp.usage ? { in: resp.usage.input_tokens, out: resp.usage.output_tokens } : null,
     model: CFG.model,
   };
@@ -765,6 +860,18 @@ async function runAnalysis(db, opts = {}) {
     delivered_to: delivered,
     meta: {
       reason: trigger.reason, model: commentary.model, usage: commentary.usage,
+      // ── capture-now block (Phase 9c): none of this can be backfilled later ──
+      // policy identity, the structured level plan the read actually gave, and how
+      // stale the inputs were at read time (a read priced off a 40-min-old snapshot
+      // must be excluded from excursion grading, not silently averaged in).
+      prompt_version: commentary.prompt_version || null,
+      plan: (commentary.plan && commentary.plan.length) ? commentary.plan : null,
+      plan_source: commentary.plan_source || null,
+      freshness: {
+        price_source: state.price_source, price_age_min: state.price_age_min,
+        sitrep_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min,
+        positions_source: state.positions_source, positions_age_min: state.positions_age_min,
+      },
       source: opts.source || (opts.force ? 'manual' : 'auto'),
       telegram: tgResult ? (tgResult.ok ? tgResult.message_id : tgResult.error) : null,
       positions: (state.pos && state.pos.count) ? { count: state.pos.count, net_side: state.pos.net_side, net_lots: state.pos.net_lots } : null,
@@ -775,4 +882,41 @@ async function runAnalysis(db, opts = {}) {
   return { ok: true, fired: true, trigger_type: trigger.trigger_type, signal_id: sig.id, delivered, commentary, positions: state.pos, state_id: stateId };
 }
 
-module.exports = { getDb, getAnthropic, buildState, evaluateTriggers, runAnalysis, callClaude, buildCarryForward, sendTelegram, num, round, CFG };
+// ── one-off: backfill plans for reads written before Phase 9c ────────────────
+// The 🔴/🟢 level block of every past read is still sitting in kp_signals.message,
+// so the structured plan CAN be recovered for existing history (only the input
+// freshness and the prompt identity are truly lost — those are marked 'pre-9c').
+// Exposed at /api/fibo-eval?target=backfill_plans[&write=1]; safe to re-run.
+async function runPlanBackfill({ days = 120, write = false } = {}) {
+  const db = getDb();
+  const sinceISO = new Date(Date.now() - days * 86400e3).toISOString();
+  const { data, error } = await db.from('kp_signals')
+    .select('id, ts, bias_call, message, meta').gte('ts', sinceISO)
+    .order('ts', { ascending: true }).limit(2000);
+  if (error) return { status: 500, body: { ok: false, error: error.message } };
+
+  const todo = [], skipped = [];
+  for (const s of data || []) {
+    if (s.meta && s.meta.plan_source) { skipped.push(s.id); continue; }   // already captured
+    const p = parsePlan('', s.message || '');
+    todo.push({ id: s.id, ts: s.ts, call: s.bias_call, legs: p.legs,
+                meta: { ...(s.meta || {}),
+                        plan: p.legs.length ? p.legs : null,
+                        plan_source: p.legs.length ? 'parsed_backfill' : 'none_backfill',
+                        prompt_version: (s.meta && s.meta.prompt_version) || 'pre-9c' } });
+  }
+  if (write) {
+    for (const t of todo) {
+      const { error: e } = await db.from('kp_signals').update({ meta: t.meta }).eq('id', t.id);
+      if (e) return { status: 500, body: { ok: false, error: 'update ' + t.id + ': ' + e.message } };
+    }
+  }
+  return { status: 200, body: {
+    ok: true, mode: write ? 'write' : 'dry', window_days: days,
+    scanned: (data || []).length, already_captured: skipped.length, updated: todo.length,
+    with_plan: todo.filter(t => t.legs.length).length,
+    sample: todo.slice(0, 5).map(t => ({ id: t.id, ts: t.ts, call: t.call, legs: t.legs })),
+  } };
+}
+
+module.exports = { getDb, getAnthropic, buildState, evaluateTriggers, runAnalysis, callClaude, buildCarryForward, sendTelegram, num, round, CFG, parsePlan, PROMPT_VERSION, runPlanBackfill };

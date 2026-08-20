@@ -21,10 +21,20 @@
 // No Pine/EA change. Writes via service-role. Mirrors api/fibo-eval.js.
 
 const { createClient } = require('@supabase/supabase-js');
+const crypto = require('crypto');
 const CFG = require('./_kp_config');
 
 const POINT = 0.01;                 // XAUUSD 1 point in price
 const SYM   = 'XAUUSD';
+
+// Identity of the SCORING RULE. Bump EVAL_REV whenever classify() itself changes;
+// the hash covers every eval threshold + the day-window mode. Stamped on each
+// outcome row so a later re-grade under different thresholds can never be silently
+// mixed with old outcomes (verdicts are recomputed on every run, so without this
+// a threshold tweak would rewrite all of history with no marker).
+const EVAL_REV = '9c';
+const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
+  .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
 let _db;
 function db() {
@@ -344,7 +354,9 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
     fav_atr, adv_atr, fav_pts, adv_pts, reached_band,
     target_zone, reached_target, zone_behavior,
     verdict, behavior_note, bars_seen: after.length,
-    meta: { day_high: dayHigh, day_low: dayLow, fav_ext: favExt, adv_ext: advExt, first_touch: result, ladder_open: ladderOpen, atr_source: atrSource || 'none' },
+    meta: { day_high: dayHigh, day_low: dayLow, fav_ext: favExt, adv_ext: advExt, first_touch: result, ladder_open: ladderOpen, atr_source: atrSource || 'none',
+            eval_version: EVAL_VERSION, read_price_age_min: num(sig.meta?.freshness?.price_age_min),
+            prompt_version: sig.meta?.prompt_version ?? null, plan_source: sig.meta?.plan_source ?? null },
   };
   // Attach the read's ingredients (Mario/Fibo/structure/ATR/session) so the
   // attribution layer can learn which factors drive wins. Stored in meta (no
@@ -371,7 +383,7 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
 
     // reads to grade
     const sigRes = await db().from('kp_signals')
-      .select('id, ts, price, bias_call, market_state_id')   // no symbol col on kp_signals → default in classify
+      .select('id, ts, price, bias_call, market_state_id, meta')   // no symbol col on kp_signals → default in classify; meta carries plan + prompt_version + freshness
       .gte('ts', sinceISO).order('ts', { ascending: true }).limit(2000);
     if (sigRes.error) throw new Error('kp_signals: ' + sigRes.error.message);
     const signals = sigRes.data || [];
@@ -423,7 +435,9 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
     return { status: 200, body: {
       ok: true, mode: 'write', window_days: days,
       reads: signals.length, rows_upserted: rows.length, bars_used: bars.length,
-      atr_days: atrByDate.size, tally,
+      atr_days: atrByDate.size, tally, eval_version: EVAL_VERSION,
+      prompt_versions: [...new Set(signals.map(s => s.meta?.prompt_version ?? 'pre-9c'))],
+      plans_captured: signals.filter(s => s.meta?.plan).length,
     } };
   }
 }

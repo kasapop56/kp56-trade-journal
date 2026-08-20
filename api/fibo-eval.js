@@ -233,6 +233,14 @@ module.exports = async (req, res) => {
       const { status, body } = await runReadEval({ days: rdays, write: req.query.write === '1' });
       return res.status(status).json(body);
     }
+    // one-off maintenance: recover structured plans from past reads' message text
+    // (lazy require — keeps the Anthropic SDK off the hot path of the Fibo eval)
+    if (String(req.query.target || '') === 'backfill_plans') {
+      const { runPlanBackfill } = require('./_kp_lib');
+      const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 120, 1), 400);
+      const { status, body } = await runPlanBackfill({ days: rdays, write: req.query.write === '1' });
+      return res.status(status).json(body);
+    }
     if (String(req.query.target || '') === 'attribution') {
       const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
       const { status, body } = await runAttribution({ days: rdays });

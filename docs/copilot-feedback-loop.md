@@ -56,7 +56,9 @@ sources, minimal EA/indicator changes.
   ingredients going forward. Linked from each read via `market_state_id`.
 - **`kp_signals`** — the read log: `ts, trigger_type, headline, message, price,
   bias_call (Buy|Sell|No trade), zones_referenced, market_state_id, delivered_to,
-  meta`. (Note: no `symbol` column — symbol defaults to config.)
+  meta`. (Note: no `symbol` column — symbol defaults to config.) Since Phase 9c
+  (§14) `meta` also carries `plan` (structured level plan), `plan_source`,
+  `prompt_version` and `freshness` (input ages at read time).
 - **`kp_atr`** — daily ATR "ladder" frame, one row per (symbol, trading-day):
   `day_open, atr, atr_len, method, day_high/low, bands (jsonb ±0.25…±1.25 ATR)`.
   Fed by the "Daily ATR Zones" TradingView indicator's once-a-day alert →
@@ -307,5 +309,275 @@ These are the areas the author is least certain about — please scrutinise:
 
 ---
 
-*End of document. For the live diagnostics a reviewer can hit (read-only GET, no
+*Live diagnostics (read-only GET, no auth). For the live diagnostics a reviewer can hit (read-only GET, no
 auth):* `…/api/fibo-eval?target=reads` (dry) and `…/api/fibo-eval?target=attribution`.
+---
+
+## 12. Peer review round 1 — Fable 5 (2026-08-20)
+
+This doc was sent to Claude Fable 5 for an independent second opinion. The reviewer
+read the doc, then verified it against `_kp_eval.js`, `_kp_lib.js`, `_kp_report.js`,
+`_kp_config.js`, `fibo-eval.js`, `fibo-snapshot.js` and the BAR emitter in
+`RainbowPilot.mq5`, and pulled both live diagnostics endpoints.
+
+**Live state at review time:** 15 reads · 5 decided (1W/4L) · **1** real `kp_atr`
+row · 9 days of bars · **13/15 reads on days labelled `OUTSIZED`**.
+
+> **Headline verdict.** "The plumbing is genuinely good, but the grader is measuring
+> a different trade than the one the co-pilot recommends, the regime labels are
+> currently corrupted by the fallback ATR, and the attribution layer as configured is
+> mathematically incapable of ever reaching statistical significance. The one
+> behavioural insight the loop has produced so far ('too timid — 8/10 No-trades were
+> MISSED') is substantially a measurement artifact."
+
+### 12.1 Findings
+
+**[CRITICAL] 1 — The verdict grades a trade nobody was advised to take.**
+`classify()` measures first touch of ±0.5×ATR from `P0` (the snapshot price at read
+time), but the reads are *level plans*: the system prompt forbids mid-range entries
+and demands zone-edge entries with SL/TP. A read "Sell 4340, SL 4348, TP1 4325"
+issued at 4325 is graded as *sell-at-market-4325* — the entry the read told the
+trader not to take. A plan-replay engine already exists for Fibo frames
+(`replaySide()`); the co-pilot was given a cruder yardstick that contradicts its own
+philosophy. Every attribution number inherits the mislabelling.
+*Fix:* emit a machine-readable plan, grade with the `fibo-eval` state machine
+(entry = first zone touch → TP1-vs-SL first touch, no fill → `NO_FILL`), and keep the
+±0.5 ATR measure as a separately-named "directional lean accuracy".
+
+**[CRITICAL] 2 — The first "insight" is manufactured by the fallback ATR + the
+whole-day MISSED window.** (a) `computeAtr()` accepts as few as **one** sample,
+includes runt days (Sunday stub, EA-offline gaps), and the feed is 9 days old →
+understated ATR → inflated travel÷ATR → everything classifies TREND/OUTSIZED (13/15
+live). (b) Buy/Sell reads are graded on *post-read* excursion, but "No trade" reads
+are graded against the whole day's `day_type`/`direction_actual`, computed open→high/low
+**including price action before the read** — so a correct 20:00 "No trade" after the
+morning already trended is graded `MISSED`. Compounded: almost no day is BALANCE, so
+almost every past-day "No trade" auto-grades MISSED → "8/10 MISSED → too
+conservative". Acting on that would change real trading behaviour on an artifact.
+*Fix:* seed `kp_atr` from the 3-year Dukascopy M1 archive; refuse `day_type` when
+`atr_source='computed'` from <10 complete days; grade "No trade" on post-read travel
+only, and distinguish "a move happened but never offered a zone entry".
+
+**[CRITICAL] 3 — Attribution cannot reach evidence by construction, not by patience.**
+Read rate ≈1.7/day, decided fraction ≈33% → a rolling 30-day window caps decided
+reads at ~17 **forever**; the window discards data as fast as it accrues. That sample
+is split across ~12 dimensions × 2–6 buckets ≈ 30+ simultaneous hit-rates.
+Wilson 95% CI on the live 1W/4L (20%) is ≈[4%, 62%]; detecting a 65%-vs-50% edge at
+80% power needs ~100–130 decided reads *per bucket*. With ~30 buckets of n≈8 coin
+flips, P(at least one bucket ≥75%) ≈ 99% — and the report prompt is told to "surface
+the 2–3 STRONGEST edges" from buckets sorted by hit-rate descending: a machine built
+to harvest the winner's curse and phrase it in confident Thai.
+Two concrete bugs: `small_sample: b.n < minSamples` flags on **n** (all verdicts) not
+on the decided base `win+loss` the percentage uses (live: "Sell 0% (n=4)" unflagged);
+and samples aren't independent (reads cluster within days).
+*Fix:* Wilson CI per bucket, suppress percentages below ~10 decided, no "edge" below
+~30–50 decided with a CI excluding 50%, sort by CI lower bound, cluster by day,
+preregister ≤5 hypotheses, widen the window — and until then **remove the 📊 block
+from the nightly report**.
+
+**[HIGH] 4 — Three different "trading days" coexist, joined by string equality.**
+Evaluator = chart-mode UTC−04:00; `kp_atr` ingest stamps the **Bangkok** civil date;
+Fibo eval / report / carry-forward = Bangkok. The ATR join is
+`atrByDate.get(bkkDateStr(read_ts))` — one date string computed one way, matched
+against a date string computed another. They coincide **only 11:00–24:00 Bangkok**.
+Bonus: the column named `bkk_date` holds chart dates; broker DST silently shifts every
+boundary by an hour with no error.
+*Fix:* one shared day module for all five call sites, key `kp_atr` off the alert's own
+`ts` through it, rename `bkk_date` → `trade_date`, warn loudly when a day with bars
+has no `kp_atr` row.
+
+**[HIGH] 5 — Verdicts are non-deterministic and history is silently rewritable.**
+`runEval` recomputes and upserts everything each run; the tab calls `days=7`, the
+report `days=2`, and the fallback ATR is computed from *that run's* window — so the
+same read can be graded differently at 23:30 and next morning. No `eval_version` or
+`prompt_version` is recorded, so tuning `winAtr` later silently re-grades all history.
+
+**[HIGH] 6 — `atr_day_type` in the factor set is outcome leakage.** Day type is not
+knowable at read time and is computed from the same travel that decides the verdict;
+"buy reads win on TREND days" is near-tautological and not actionable ex-ante.
+`reached_band` is worse (captured, not yet aggregated — a loaded footgun).
+
+**[HIGH] 7 — The bar containing the read leaks pre-read price into the post-read
+window.** `t_gmt` is stamped at emission and `bar1` is the just-closed bar, so a bar's
+timestamp is its **close**; `filter(b.t > t0)` admits a full bar of pre-read movement.
+Not uniform noise: reads fire *precisely* when price spikes into a zone, so the
+triggering wick is counted as post-read adverse excursion — biased against exactly the
+sweep-and-reclaim setups the system was designed around.
+
+**[HIGH] 8 — The policy drifts while the statistics assume it's fixed.** Carry-forward
+injects the co-pilot's own graded history into the prompt; prompt edits and LLM
+sampling noise make the read-generating policy nonstationary, yet attribution pools all
+reads as one policy. *Fix:* stamp `prompt_version`; report per version. And add
+**phantom pseudo-reads** — grade a phantom "M15 bias" call and a phantom "No trade" at
+every hourly SITREP with the identical yardstick — to get the base rate at unselected
+moments. The co-pilot only deserves belief where it beats its own phantom baseline.
+
+**[MEDIUM] 9 — Stale ingredients and stale `P0`, with staleness not persisted.**
+`maxStateAgeMin: 180` treats a 3-hour-old M15 bias as fresh; `price_age_min` is
+computed but never written to `kp_signals`, so stale-`P0` reads cannot even be filtered
+at eval time — and cannot be recovered later.
+
+**[MEDIUM] 10 — Same-day cap creates bucket-dependent censoring.** An Asia read has
+~20h of runway, a late-NY read ~2h → decided-fraction varies by bucket, biasing every
+cross-bucket comparison. Report each bucket's decided-fraction next to its hit-rate.
+
+**[MEDIUM] 11 — Zone Freshness: right instinct, mismeasured.** Test counts reset at the
+day boundary (liquidity doesn't respawn at broker rollover); zones aren't persistent
+objects (a zone drifting $3 becomes "fresh"); counts come from a gappy single feed;
+freshness is computed for the *nearest* zone, not the zone the plan used; Fibo "zones"
+have `lo==hi` (knife-edge tests) yet feed the same factor. Treat `zone_state` as
+unusable for now.
+
+**[MEDIUM] 12 — Hit-rate is the wrong objective even when measured correctly.** Plans
+are asymmetric (SL≠TP1, partial at TP1, runner to TP2); a 40% plan can be excellent.
+Score in **R multiples** once plan-replay exists; keep hit-rate as descriptive.
+
+**[MEDIUM] 13 — Everything degrades silently.** Alert deactivated on a Pine re-paste →
+fallback ATR forever; EA down → bars vanish; eval only runs when a human opens the tab;
+a Vercel timeout on the write path is swallowed by `fetch().catch(()=>{})`. *Fix:* a
+health line in the report/dashboard (bar coverage % of 288 expected M5, `atr_source`
+split, age of last `kp_atr` row, age of last eval write, verdicts changed since last
+run) that visibly poisons the day's stats when red.
+
+**[MEDIUM] 14 — LLM parse failures pollute the data silently.** An unparseable `CALL:`
+line yields `bias_call=null`, which skips both the direction branch and the no-trade
+branch → the read becomes a fake `STALL` ("market went nowhere"). Add `UNGRADEABLE`;
+move the call+plan to structured output; measure the self-agreement noise floor by
+replaying ~10 identical states.
+
+**[LOW] 15 — `write=1` is an unauthenticated write endpoint** (quota risk, not
+corruption — it's a recompute). **[LOW] 16 — Assorted:** `sessionOf` uses fixed UTC
+hours (DST smears session buckets); `loadBars` ignores `payload.tf`; `kp_signals` has
+no symbol column; `zone_tier` is built but never aggregated.
+
+### 12.2 Reviewer's answers to §10
+
+- **Q2 (tie→LOSS):** immaterial at M5 with a 1.0×ATR total span — the boundary-bar leak
+  (#7) matters 100× more. Count ties separately for honesty.
+- **Q7 (single feed):** prefix matching is fine; the real holes are the ignored `tf`,
+  no gap detection, no backfill. The Dukascopy M1 pipeline can both seed ATR and
+  cross-check the live feed's daily H/L (>$2 disagreement = flag the day).
+- **Q9 (stale P0):** the killer detail is that staleness isn't *persisted* → unfixable
+  retroactively. Start persisting today even if nothing else changes.
+
+### 12.3 Reviewer's top 3
+
+1. **Grade the plan, not the snapshot** (#1, #12, half of #14).
+2. **Fix the yardstick's ground truth** — seed ATR, unify the day definition, exclude
+   the boundary bar, re-grade No-trade (#2, #4, #5, #7).
+3. **Statistical guardrails on attribution, and mute it until they exist** (#3, #8).
+
+> "Do not trust the loop as a learning device yet — trust it as instrumentation. […]
+> The honest answer to 'what has the co-pilot learned?' is: how to measure — not yet
+> what works."
+
+---
+
+## 13. Author-side verification & response (Claude Opus 5, 2026-08-20)
+
+Every finding that carries the argument was re-checked against the source before
+being accepted. **They hold.**
+
+### 13.1 Verified in code
+
+| # | Claim | Evidence |
+|---|---|---|
+| 1 | Grader measures a trade the read didn't recommend | `callClaude` parsed **only** the `CALL:` line → `bias_call`; no zone/SL/TP was ever stored. `classify()` grades ±0.5 ATR from `P0` while the prompt forbids mid-range entry |
+| 2 | Fallback ATR systematically small | `computeAtr` accepts **1** sample, averages whatever days the feed has, runt days included |
+| 2b | MISSED uses a different window | `call==='none'` → verdict from `day_type`/`direction_actual`, both open→high/low |
+| 3a | `small_sample` wrong denominator | `small_sample: b.n < minSamples` vs `hit_rate_pct = win/(win+loss)` |
+| 3b | Sorted by raw hit-rate, then "strongest edges" | `.sort((a,z) => (z.hit_rate_pct ?? -1) - …)` + the report prompt |
+| 4 | ATR join mixes two day definitions | `kp_atr.atr_date` = Bangkok +7 (`fibo-snapshot.js`); eval looks up with UTC−4 (`_kp_eval.js`). Agree **only 11:00–24:00 Bangkok** — the arithmetic checks out |
+| 6 | `atr_day_type` leakage | stored as a factor **and** aggregated by `runAttribution` |
+| 7 | Boundary-bar leak | `t_gmt = TimeGMT()` at emission, `bar1` = just-closed bar → the stamp is the bar's **close**; `payload.tf` exists at top level but `loadBars` drops it |
+| 9 | `price_age_min` not persisted | present in `buildState`, absent from the `kp_signals` insert |
+| 14 | Unparsed CALL → fake STALL | `call=null` → `dir=0` → `result` null → falls through to STALL/PARTIAL |
+
+### 13.2 One thing the review missed
+
+The comment above the ATR frame in `classify()` claims the ATR broker's cut "can no
+longer skew `day_type`" because the day is measured on our own window. That is true
+only in `session` mode. The live config is **`chart`** mode, where `dayOpen` **is**
+`kp_atr.day_open`. So when the date join in #4 misses, `dayOpen` silently falls back to
+the first bar the EA happened to emit — an inflated ATR *and* a wrong anchor, from the
+same failure. #2 and #4 are one bug, not two.
+
+### 13.3 Where the review is softened
+
+1. **Plan-replay is not a drop-in replacement for the current yardstick.** The construct
+   is wrong, but plan-replay introduces `NO_FILL`, which will swallow a large share of
+   reads — it makes the sample starvation of #3 *worse*. Keep **both** tracks: rename the
+   current metric to what it actually is (directional lean — symmetric, clean 50% null,
+   dense coverage) and add plan-replay as the slow-accumulating truth metric. Do not
+   delete the dense one.
+2. **The phantom-read baseline (#8) is the best idea in the review and it is buried.**
+   It reuses `classify()` verbatim, costs almost nothing, and is the only thing that turns
+   the loop from self-description into a comparison against a null. It ranks *above* the
+   plan-replay build on value-per-effort.
+3. **Degrade the 📊 block, don't delete it.** Show raw W/L tallies with no percentages and
+   no "strongest edge" phrasing until a bucket clears ~10 decided. Counts are honest at any
+   n; deleting the block kills the habit, keeping percentages teaches noise.
+
+### 13.4 Action plan
+
+The decisive argument for acting now: there are **15 reads over 9 days**. Re-grading
+history is free today and expensive in three months.
+
+| Step | Work | Findings | Status |
+|---|---|---|---|
+| **1** | **Capture what cannot be backfilled** — structured plan (side/zone/SL/TP1/TP2) into `kp_signals.meta`, plus `price_age_min`, `prompt_version`, `eval_version` | 1, 5, 8, 9, 14 | ✅ **DONE 2026-08-20** (§14) |
+| 2 | Cheap correctness cluster — one shared day fn + key `kp_atr` off the alert `ts`; exclude the boundary bar (`b.t − tfMs ≥ t0`); fix the `small_sample` denominator; drop `atr_day_type` from the attribution dims; add `UNGRADEABLE`; grade No-trade on post-read travel only | 2b, 4, 6, 7, 14 | ⬜ next |
+| 3 | Seed `kp_atr` from the 3-year Dukascopy M1 archive (`rainbow-research/data/`) → deletes the "13/15 OUTSIZED" artifact, makes verdicts deterministic | 2, 5 | ⬜ |
+| 4 | Phantom-read baseline at every SITREP + the health header | 8, 13 | ⬜ |
+| 5 | Wilson CIs + decided-N gates + day clustering; degrade the 📊 block until they land | 3 | ⬜ |
+| 6 | Plan-replay grading (as a second track), R-multiples, persistent zone registry, censoring controls | 1, 10, 11, 12 | ⬜ deferred — revisit at ~3 months of data |
+
+**Standing conclusion (agreed):** the loop is trustworthy as *instrumentation*, not yet
+as a *learning device*. The "too conservative" finding is not actionable.
+
+---
+
+## 14. Changelog — Phase 9c: capture-now (2026-08-20)
+
+Step 1 of §13.4. No grading logic changed; this only records at read time what could
+never be reconstructed afterwards.
+
+**`_kp_lib.js`**
+- `OUTPUT_HINT` now ends with a machine-readable line the user never sees:
+  `PLAN: [{"side":"sell","zone":[4340,4344],"sl":4348,"tp1":4325,"tp2":4310}]`
+  (one object per actionable side, `[]` for no trade).
+- `parsePlan()` — two parsers: the model's `PLAN:` JSON line, else a fallback that reads
+  the visible 🔴/🟢 level block. The fallback also works on **already-stored** reads.
+- `callClaude()` strips the `PLAN:` line from the body (dashboard/Telegram output is
+  byte-for-byte unchanged) and returns `plan`, `plan_source`, `prompt_version`.
+- `PROMPT_VERSION` = 8-char SHA-1 of `SYSTEM_PROMPT + OUTPUT_HINT + model + effort +
+  carryForward + zoneFreshness` → the policy's identity, so attribution can be split by
+  version instead of pooling reads from different policies.
+- `runAnalysis()` writes a capture-now block into `kp_signals.meta`: `prompt_version`,
+  `plan`, `plan_source`, and `freshness {price_source, price_age_min, sitrep_age_min,
+  fibo_age_min, positions_source, positions_age_min}`.
+- `runPlanBackfill()` — one-off recovery of plans from past reads' `message` text.
+
+**`_kp_eval.js`**
+- `EVAL_VERSION` = `EVAL_REV` + hash of `CFG.eval` → stamped on every outcome row
+  (`meta.eval_version`), so a later threshold change can never silently re-grade history
+  into the same bucket. Bump `EVAL_REV` whenever `classify()` itself changes.
+- Outcome `meta` also carries `read_price_age_min`, `prompt_version`, `plan_source`
+  (copied from the read), so stale-`P0` reads become filterable at eval time.
+- The `kp_signals` select now includes `meta`; the run summary reports `eval_version`,
+  the distinct `prompt_versions` in the window (`pre-9c` for older reads), and
+  `plans_captured`.
+
+**`fibo-eval.js`** — new maintenance route `?target=backfill_plans[&write=1]`
+(no new serverless function; still 12/12).
+
+**No SQL, no EA, no Pine change** — `kp_signals.meta` and `kp_read_outcomes.meta` are
+already `jsonb`.
+
+**Deploy + one-off:**
+```
+git push                                  # Vercel auto-deploy
+/api/fibo-eval?target=backfill_plans      # dry run — check `with_plan` and `sample`
+/api/fibo-eval?target=backfill_plans&write=1
+```
+
