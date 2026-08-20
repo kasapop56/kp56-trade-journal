@@ -617,12 +617,57 @@ finding #11 called `zone_state` unusable — not only zone drift. It also made
 graded from `0` rather than skipped. **Every other `api/*.js` `num()` already had the
 guard; `_kp_eval.js` was the only one without it.**
 
-### 17.3 Result
+### 17.3 Where the fill sits inside the zone (trader's call, `9i`→`9j`)
+
+The reward-to-risk looked implausibly small (0.30–0.37 on the winners), which turned
+out to be two measurement faults, not bad plans:
+
+1. **TP1 was being scored as the reward** when the read's own format is
+   `TP1 … ปิด50% · TP2`. **Trader's ruling: score TP1 as a FULL exit** — the 50% close
+   is advice inside the read, not the measuring rule — so `rr1` is simply the plan's
+   reward-to-risk.
+2. **The fill point was assuming the worst entry in every zone.** The co-pilot places
+   its stop *just beyond the far edge* (read 1: zone ends 4366.75, SL 4368 — $1.25),
+   so the plan is only coherent if the fill is deep in the zone. Filling at first
+   touch quadrupled the risk.
+
+Measured across all three conventions (`?fill=near|mid|far`):
+
+| fill | WIN | LOSS | NO_FILL | median RR1 |
+|---|---|---|---|---|
+| near | 2 | 4 | 1 | 0.86 |
+| mid | 2 | 4 | 1 | 1.06 |
+| far | 2 | 4 | 1 | 1.73 |
+
+**The verdicts are identical across all three** — a prediction that the convention
+would flip wins and losses was wrong; four of the six decided plans have real zone
+width and still resolved the same way. Only the R-multiples move. **Trader's ruling:
+`entryFill: 'mid'`**, which fixes the RR reading without touching a single verdict.
+
+### 17.4 Result
 
 ```
-plan:  LOSS 4 · WIN 2 · NO_LEVELS 2 · NO_FILL 1 · PENDING 1
-lean:  MISSED 6 · MANAGE 6 · OK_NOTRADE 1 · PENDING 3
+plan (fill=mid):  LOSS 4 · WIN 2 · NO_LEVELS 2 · NO_FILL 1 · PENDING 1
+lean:             MISSED 6 · MANAGE 6 · OK_NOTRADE 1 · PENDING 3
 ```
+
+**The run beyond TP1** (added at the trader's request): for every win, how far price
+kept going past the target before returning to the entry price — what leaving at TP1
+cost. Bounded at the return to entry, because past that a runner is at breakeven.
+
+| read | RR to TP1 | ran beyond TP1 | came back to entry? |
+|---|---|---|---|
+| 14 | 0.71 | **+1.10 R** (533 pt) | no — still running at day end |
+| 15 | 0.54 | **+0.83 R** (533 pt) | no — still running at day end |
+
+Both winners took roughly **a third of the move that was there** and the market never
+came back to offer the entry again. That is the first concrete, actionable signal the
+loop has produced about read *quality* rather than about its own plumbing — targets
+look set too close. It is also **one observation, not two**: reads 14 and 15 are
+near-duplicates of the same setup, which is why both show the identical 533 pt.
+
+Nothing here is a rate or an edge. Six decided plans across roughly four independent
+situations remains a description, not a result.
 
 Six decided plans, 2 wins. **This is not a win rate.** Reads 1 and 2 are the same
 setup eight minutes apart; 14, 15 and 16 are near-duplicates of one another. Six
