@@ -598,6 +598,11 @@ const SECTION = /^(🛑|⚠️|📍|🎯|🧾|🔎|📊)/;
 function planFromText(text, managed) {
   const legs = [];
   let cur = null;
+  // Once the invalidation / discipline section starts, no new legs: those lines say
+  // things like "ถ้าปิดเหนือ 4366.75 หรือหลุด 4337.4 ยกเลิกทั้งสองฝั่ง" — two sides and
+  // two prices, which the loose rule would otherwise read as an entry spanning both
+  // zones (and a zone that wide is "touched" by everything).
+  let inPlan = true;   // starts open: the oldest reads have no 🎯 header at all
   const flush = () => { if (cur) legs.push(cur); cur = null; };
   const g = (l, re) => { const m = l.match(re); const n = m ? Number(m[1]) : NaN; return gold(n) ? n : null; };
   const levels = (l, o) => {
@@ -607,9 +612,22 @@ function planFromText(text, managed) {
   };
   for (const raw of String(text || '').split(/\r?\n/)) {
     const l = raw.trim();
-    if (/^(🔴|🟢)/.test(l)) {
+    // A line is a leg when it carries a 🔴/🟢 marker, or — only in reads where NO
+    // position was open — when it names a side together with a price. That second
+    // rule recovers the older bullet format ("- Sell zone: 4363-4366.75 … SL … TP1 …")
+    // and any future drift, and it is safe precisely because the 🧾 live-position
+    // block that fooled the first version can only appear when a position is open.
+    // section switches — emoji in the current format, plain words in the oldest reads
+    if (/^\**\s*(🎯|แผน|plan\b)/i.test(l)) inPlan = true;
+    else if (/^(🛑|⚠️|🧾|📍)/.test(l) || /^\**\s*(invalidation|invalid\b|เสียเมื่อ|ยกเลิกเมื่อ|อ่านสถานการณ์|เตือน)/i.test(l)) inPlan = false;
+    const marked = /^(🔴|🟢)/.test(l);
+    const loose = inPlan && !managed && !SECTION.test(l)
+      && /sell|buy|ขาย|ซื้อ/i.test(l)
+      && (l.split(/\bSL\b|\bTP\d?\b/i)[0].match(NUMRE) || []).some(v => gold(Number(v)));
+    if (marked || loose) {
       flush();
-      const side = /🔴/.test(l) ? 'sell' : 'buy';
+      const side = /🔴/.test(l) ? 'sell' : /🟢/.test(l) ? 'buy'
+                 : (/sell|ขาย/i.test(l) ? 'sell' : 'buy');
       // the entry zone is what's on the marker line BEFORE any SL/TP label
       const head = l.split(/\bSL\b|\bTP\d?\b/i)[0];
       const zs = (head.match(NUMRE) || []).map(Number).filter(gold);
@@ -626,6 +644,17 @@ function planFromText(text, managed) {
   }
   flush();
   return legs;
+}
+
+// "No trade" collapses two different answers into one word: STAND ASIDE (no level,
+// no opinion) and WAIT (a complete pending plan at a zone edge, which is what an
+// edge-based Fibo/OB method produces most of the time). Grading them the same way
+// records "the co-pilot had no opinion" for reads that in fact issued a limit plan.
+function readStance(bias_call, legs, managed) {
+  if (managed) return 'manage';
+  const c = String(bias_call || '').toLowerCase();
+  if (c === 'buy' || c === 'sell') return 'entry_now';
+  return (legs && legs.length) ? 'wait' : 'stand_aside';
 }
 
 // planLine = the model's PLAN: line (may be ''), message = the visible body.
@@ -785,6 +814,7 @@ async function callClaude(state, trigger) {
   return {
     headline, message, bias_call,
     plan: plan.legs, plan_source: plan.source, read_kind: managed ? 'manage' : 'entry',
+    read_stance: readStance(bias_call, plan.legs, managed),
     prompt_version: PROMPT_VERSION,
     usage: resp.usage ? { in: resp.usage.input_tokens, out: resp.usage.output_tokens } : null,
     model: CFG.model,
@@ -894,6 +924,7 @@ async function runAnalysis(db, opts = {}) {
       plan: (commentary.plan && commentary.plan.length) ? commentary.plan : null,
       plan_source: commentary.plan_source || null,
       read_kind: commentary.read_kind || null,
+      read_stance: commentary.read_stance || null,
       freshness: {
         price_source: state.price_source, price_age_min: state.price_age_min,
         sitrep_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min,
@@ -924,14 +955,18 @@ async function runPlanBackfill({ days = 120, write = false } = {}) {
 
   const todo = [], skipped = [];
   for (const s of data || []) {
-    if (s.meta && s.meta.plan_source) { skipped.push(s.id); continue; }   // already captured
+    // re-parse rows captured before read_stance existed (the parser's recall changed)
+    if (s.meta && s.meta.plan_source && s.meta.read_stance) { skipped.push(s.id); continue; }
     const managed = !!(s.meta && s.meta.positions && s.meta.positions.count);
     const p = parsePlan('', s.message || '', managed);
-    todo.push({ id: s.id, ts: s.ts, call: s.bias_call, read_kind: managed ? 'manage' : 'entry', legs: p.legs,
+    const stance = readStance(s.bias_call, p.legs, managed);
+    todo.push({ id: s.id, ts: s.ts, call: s.bias_call, read_kind: managed ? 'manage' : 'entry',
+                stance, legs: p.legs,
                 meta: { ...(s.meta || {}),
                         plan: p.legs.length ? p.legs : null,
                         plan_source: p.legs.length ? 'parsed_backfill' : 'none_backfill',
                         read_kind: managed ? 'manage' : 'entry',
+                        read_stance: stance,
                         prompt_version: (s.meta && s.meta.prompt_version) || 'pre-9c' } });
   }
   if (write) {
@@ -946,9 +981,10 @@ async function runPlanBackfill({ days = 120, write = false } = {}) {
     with_plan: todo.filter(t => t.legs.length).length,
     read_kind: { entry: todo.filter(t => t.read_kind === 'entry').length,
                  manage: todo.filter(t => t.read_kind === 'manage').length },
+    stance: todo.reduce((a, t) => { a[t.stance] = (a[t.stance] || 0) + 1; return a; }, {}),
     entry_legs: todo.reduce((n, t) => n + t.legs.filter(l => l.kind === 'entry').length, 0),
     sample: todo.slice(0, 5).map(t => ({ id: t.id, ts: t.ts, call: t.call, legs: t.legs })),
   } };
 }
 
-module.exports = { getDb, getAnthropic, buildState, evaluateTriggers, runAnalysis, callClaude, buildCarryForward, sendTelegram, num, round, CFG, parsePlan, PROMPT_VERSION, runPlanBackfill };
+module.exports = { getDb, getAnthropic, buildState, evaluateTriggers, runAnalysis, callClaude, buildCarryForward, sendTelegram, num, round, CFG, parsePlan, readStance, PROMPT_VERSION, runPlanBackfill };
