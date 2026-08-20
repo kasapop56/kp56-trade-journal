@@ -67,7 +67,15 @@ function bkkDateLabel(tzHours) {
 
 const REPORT_SYSTEM = `You are the nightly performance coach for a disciplined XAUUSD discretionary trader. You review the day's CLOSED trades and grade them HONESTLY — the trader wants to improve, not to be flattered. Never invent trades or numbers not in the data.
 
-You receive: each closed trade (side, entry/exit, SL/TP, P&L in account USD, MFE/MAE in points, hold time, whether an SL was set at open, entry origin, and the Mario bias/session captured at trade time), the day's co-pilot reads (what the co-pilot advised and when), and day totals.
+YOUR JOB IS ANALYSIS, NOT A LIST. A bare enumeration of the day's trades is worthless to this trader — he can see his own orders in the terminal. Every section must say what it MEANS and what to DO. If you only have room for one thing, keep the verdict and the recommendation and shorten the listing.
+
+You receive POSITIONS, not raw orders. The trader deliberately opens several orders on one idea so he can close in parts, so the legs have been grouped into one decision each. Per position: side, legs, lots, avg_entry, exit, P&L, exits{sl/tp/manual}, MFE/MAE points, hold time, the Mario bias/session at entry, and the nearest co-pilot read before it opened.
+
+Two fields carry the trader's own diagnosis of his worst habit, and they are ALREADY COMPUTED — quote them, never re-derive them:
+- kind: "single" | "scaled" (legs within 500 pts = intended, split for partial exits, FINE) | "averaged" (legs more than 500 pts apart = adding at distance, HIS STATED BAD HABIT).
+- adverse_adds: legs opened at a WORSE price than the running average (buy lower / sell higher) = averaging into a loser rather than pyramiding a winner.
+summary.netting compares averaged positions against everything else in dollars. LEAD WITH THAT NUMBER whenever averaged_positions > 0: it is the single most actionable line in the report. Say plainly whether the habit cost or made money today, in dollars. Do not moralise and do not repeat the lesson more than once.
+summary.adherence pre-splits followed / diverged / no_read with net USD for each — quote it rather than counting.
 
 CRITICAL: the trader ALSO opens trades independently of the co-pilot's suggestions. Evaluate EVERY trade on its own merit. For each, note whether it MATCHED, DIVERGED FROM, or had NO co-pilot read at that time — and grade divergent trades fairly (an independent call can be right or wrong; say which).
 
@@ -84,20 +92,22 @@ Grade on:
 6. Lessons — 1–2 concrete, specific things to do differently tomorrow, and 1 note on how much to trust the co-pilot given today's accuracy + the strongest proven factor edge.
 Be specific with numbers and levels. Thai output, mobile-readable, no filler.
 
-FORMAT: review every trade, but each as ONE tight scannable line (emoji + side + entry→exit + P&L + short tags) — like a clean trade plan, never a paragraph per trade. Aggregate the co-pilot follow-vs-diverge stats into short lines. If there are many near-identical ADD legs, you may merge them into one line. Keep it easy to glance on a phone.`;
+FORMAT: the VERDICT comes first, the listing last — the trader reads the top of a Telegram message and scrolls the rest. One tight scannable line per POSITION (never per order, never a paragraph). Keep it easy to glance at on a phone.`;
 
 // Per-trade review is BACK — but ONE tight line per trade, scannable like the
 // plan (emoji + levels + short tags). Not paragraphs, not an ultra-short digest.
 const REPORT_OUTPUT = `ตอบเป็นภาษาไทย อ่านง่ายบนมือถือ ห้าม markdown (** ## -).
 per-trade บรรทัดละไม้ สั้น กระชับ เหมือนหน้าตา "แผน" (emoji + ตัวเลข + แท็กสั้น). ใช้รูปแบบนี้:
 
-<พาดหัวสรุปวัน 1 บรรทัด>
+⚡️ <2-3 บรรทัด: วันนี้ "อะไร" ตัดสินผล ไม่ใช่เล่าว่าเทรดอะไรบ้าง — เช่น จังหวะไหนทำเงิน/เสียเงินจริง, ถัวห่างทำให้เสียเท่าไร, ถ้าไม่มีจังหวะแย่ 1-2 อันนั้นวันนี้จะเป็นยังไง>
 
-🔍 รายไม้
-<เลข) 🔴/🟢 side entry→exit ±$ · ตาม/สวนโครงสร้าง · จบแบบ SL/TP/มือ · (ตาม/สวน/ไม่มี co-pilot)>
-(ทุกไม้ บรรทัดเดียว ห้ามยืดเป็นย่อหน้า · ถ้าไม้เยอะมากค่อยรวมไม้ ADD ที่เหมือนกัน)
+🎯 วินัย: <เกรด A-F> — <SL ครบกี่/กี่ไม้>
+ถัวห่าง >500pt: <กี่จังหวะ> <รวม$> · ที่เหลือ: <กี่จังหวะ> <รวม$>
+<1 บรรทัด: นิสัยถัวห่างวันนี้ได้หรือเสีย บอกเป็นเงิน ไม่ต้องสั่งสอนซ้ำ>
 
-🎯 วินัย: <เกรด A-F> — <1 บรรทัด: SL ครบไหม · ถัว/แก้แค้นไหม · ถือเหมาะไหม>
+🔍 รายโพซิชัน (<n> ไม้ = <m> จังหวะ)
+<เลข) 🔴/🟢 side avg_entry→exit ±$ · <ซอย N ไม้ / ถัวห่าง Xpt / เดี่ยว> · จบแบบ SL/TP/มือ · (ตาม/สวน/ไม่มี co-pilot)>
+(บรรทัดเดียวต่อจังหวะ ห้ามยืดเป็นย่อหน้า)
 
 🤖 ตาม vs สวน
 <สวน co-pilot: กี่ไม้ → โดน SL กี่ / ได้ TP กี่ · รวม$>
@@ -112,7 +122,10 @@ per-trade บรรทัดละไม้ สั้น กระชับ เ�
 <2-3 บรรทัด: ปัจจัยที่ชนะสูงสุด vs กับดัก เช่น "ตาม M15 ชนะ X% · สวน Fibo leg แพ้ Y%" ใส่ n กำกับ>
 <ถ้า small_sample/ข้อมูลน้อย บอกตรงๆ 1 บรรทัดว่ายังเชื่อไม่ได้ แล้วข้ามส่วนที่เหลือ>
 
-📌 พรุ่งนี้: <1-2 ข้อ ชัดเจน ทำได้จริง + เชื่อโคไพลอตแค่ไหนจากวันนี้ + edge ที่พิสูจน์แล้ว>`;
+📌 พรุ่งนี้
+<ข้อ 1: สิ่งที่ต้องทำต่างจากวันนี้ ชัดเจนพอที่จะทำตามได้จริง อ้างตัวเลขของวันนี้>
+<ข้อ 2: อีกข้อ (ถ้ามีของจริง — ถ้าไม่มีอย่ายัด)>
+<เชื่อโคไพลอตแค่ไหนจากวันนี้>`;
 
 // Merge a closed trade (mt5_trades) with its OPEN/CLOSE study events by ticket.
 function buildTrade(t, evByTicket) {
@@ -145,6 +158,80 @@ function buildTrade(t, evByTicket) {
     ctx_at_trade: { bias_m15: t.bias_m15, bias_m5: t.bias_m5, ob_status: t.ob_status, session: t.mario_session, mario_decision: t.mario_decision },
     open_time: t.open_time, close_time: t.close_time,
   };
+}
+
+// ── position grouping ────────────────────────────────────────────────────────
+// The trader deliberately opens SEVERAL orders on one idea so partial closes are
+// easy. Those legs are ONE decision, and reporting them as N separate trades is
+// what made the old report an unreadable 40-line dump with no insight in it.
+//
+// A position = consecutive same-side orders whose lifetimes overlap (a leg opened
+// before the previous one closed). Within a position the ENTRY SPREAD tells the
+// two apart, per the trader's own rule:
+//   spread <= ADD_NEAR_PTS  -> "scaled"   : intended, split for partial exits
+//   spread >  ADD_NEAR_PTS  -> "averaged" : adding at distance, the bad habit
+// "adverse_adds" counts legs opened at a WORSE price than the running average
+// (buy lower / sell higher) — averaging into a loser rather than pyramiding a
+// winner. Both are computed here, not by the model: it is arithmetic, and making
+// the model derive it is what blew the thinking budget.
+const ADD_NEAR_PTS = 500;
+const PT = 0.01;
+
+function groupPositions(rows, signals) {
+  const sorted = rows.slice().sort((a, b) => new Date(a.open_time) - new Date(b.open_time));
+  const groups = [];
+  for (const r of sorted) {
+    const g = groups.find(g => g.side === r.side && new Date(r.open_time) < new Date(g.last_close));
+    if (g) {
+      g.legs.push(r);
+      if (new Date(r.close_time) > new Date(g.last_close)) g.last_close = r.close_time;
+    } else groups.push({ side: r.side, legs: [r], last_close: r.close_time });
+  }
+  return groups.map((g, i) => {
+    const es = g.legs.map(l => l.entry).filter(v => v != null);
+    const lots = g.legs.reduce((n, l) => n + (l.lots || 0), 0) || 1;
+    const avgEntry = g.legs.reduce((n, l) => n + l.entry * (l.lots || 0), 0) / lots;
+    const spread = es.length > 1 ? Math.round((Math.max(...es) - Math.min(...es)) / PT) : 0;
+    let adverse = 0, run = g.legs[0].entry, runLots = g.legs[0].lots || 1;
+    for (const l of g.legs.slice(1)) {
+      if (g.side === 'buy' ? l.entry < run : l.entry > run) adverse++;
+      run = (run * runLots + l.entry * (l.lots || 0)) / (runLots + (l.lots || 0));
+      runLots += l.lots || 0;
+    }
+    const exits = { sl: 0, tp: 0, manual: 0 };
+    for (const l of g.legs) {
+      if (l.outcome === 'SL_hit') exits.sl++;
+      else if (l.outcome === 'TP_hit') exits.tp++;
+      else exits.manual++;
+    }
+    // nearest co-pilot read BEFORE the position opened → followed / diverged
+    const openMs = new Date(g.legs[0].open_time).getTime();
+    let read = null;
+    for (const sg of signals) {
+      const t = new Date(sg.ts).getTime();
+      if (t <= openMs && (!read || t > new Date(read.ts).getTime())) read = sg;
+    }
+    const call = read ? String(read.bias_call || '').toLowerCase() : null;
+    const alignment = !read || !call || call === 'none' ? 'no_read'
+                    : call === g.side ? 'followed' : 'diverged';
+    return {
+      n: i + 1, side: g.side, legs: g.legs.length, lots: round(lots, 2),
+      avg_entry: round(avgEntry, 2), exit: g.legs[g.legs.length - 1].exit,
+      spread_pts: spread,
+      kind: g.legs.length === 1 ? 'single' : (spread <= ADD_NEAR_PTS ? 'scaled' : 'averaged'),
+      adverse_adds: adverse,
+      pl_usd: round(g.legs.reduce((n, l) => n + l.pl_usd, 0), 2),
+      exits,
+      had_sl_at_open: g.legs.every(l => l.had_sl_at_open),
+      mfe_pts: Math.max(...g.legs.map(l => l.mfe_pts || 0)) || null,
+      mae_pts: Math.max(...g.legs.map(l => l.mae_pts || 0)) || null,
+      open: g.legs[0].open_time, close: g.last_close,
+      held_min: Math.round((new Date(g.last_close) - new Date(g.legs[0].open_time)) / 60000),
+      ctx: g.legs[0].ctx_at_trade,
+      copilot: read ? { call, headline: read.headline, min_before: Math.round((openMs - new Date(read.ts).getTime()) / 60000) } : null,
+      alignment,
+    };
+  });
 }
 
 async function runReport(db, opts = {}) {
@@ -225,18 +312,48 @@ async function runReport(db, opts = {}) {
     if (r.pl_usd >= 0) { wins++; grossWin += r.pl_usd; } else { losses++; grossLoss += r.pl_usd; }
   }
   const winrate = rows.length ? Math.round((wins / rows.length) * 100) : 0;
+
+  // group the orders into decisions, and score the trader's own netting rule:
+  // does adding at distance actually cost money? Computed, never asserted.
+  const positions = groupPositions(rows, signals);
+  const avgPos = positions.filter(p => p.kind === 'averaged');
+  const restPos = positions.filter(p => p.kind !== 'averaged');
+  const sum = (a) => round(a.reduce((n, p) => n + p.pl_usd, 0), 2);
+  const posWins = positions.filter(p => p.pl_usd >= 0).length;
+
   const summary = {
-    trades: rows.length, net_usd: round(net, 2), wins, losses, winrate_pct: winrate,
+    orders: rows.length,
+    positions: positions.length,
+    net_usd: round(net, 2), wins, losses, winrate_pct: winrate,
+    position_wins: posWins, position_losses: positions.length - posWins,
     gross_win_usd: round(grossWin, 2), gross_loss_usd: round(grossLoss, 2),
     no_sl_count: rows.filter(r => !r.had_sl_at_open).length,
-    averaged_count: rows.filter(r => r.add_kind === 'ADD').length,
+    // the netting scorecard — "averaged" = entries more than 500 pts apart
+    netting: {
+      threshold_pts: ADD_NEAR_PTS,
+      averaged_positions: avgPos.length, averaged_net_usd: sum(avgPos),
+      other_positions: restPos.length, other_net_usd: sum(restPos),
+      worst_averaged_usd: avgPos.length ? Math.min(...avgPos.map(p => p.pl_usd)) : null,
+      scaled_positions: positions.filter(p => p.kind === 'scaled').length,
+    },
+    adherence: {
+      followed: positions.filter(p => p.alignment === 'followed').length,
+      followed_net_usd: sum(positions.filter(p => p.alignment === 'followed')),
+      diverged: positions.filter(p => p.alignment === 'diverged').length,
+      diverged_net_usd: sum(positions.filter(p => p.alignment === 'diverged')),
+      no_read: positions.filter(p => p.alignment === 'no_read').length,
+      no_read_net_usd: sum(positions.filter(p => p.alignment === 'no_read')),
+    },
   };
 
   const payload = {
     date: bkkDateLabel(CFG.reportTzOffsetHours), account, symbol: 'XAUUSD',
     day_window_start: sinceIso,
     summary,
-    trades: rows,
+    // positions, NOT raw orders: one decision per line. Raw legs are deliberately
+    // NOT sent — 40 order objects cost ~8k tokens and taught the model nothing the
+    // grouped view does not already say.
+    positions,
     copilot_reads: signals.map(s => ({ time: s.ts, trigger: s.trigger_type, call: s.bias_call, headline: s.headline })),
     copilot_accuracy: outcomes.length ? copilotAccuracy(outcomes) : null,
     data_health: evalHealth,
@@ -247,10 +364,16 @@ async function runReport(db, opts = {}) {
   const client = getAnthropic();
   const resp = await client.messages.create({
     model: CFG.reportModel || CFG.model,
-    max_tokens: 2400,   // ample room for text even if the model thinks a little
+    // Thinking is billed out of this same budget. On 2026-08-20 a 40-order day
+    // produced output_tokens 2400 of which thinking_tokens 2400 — the model
+    // reasoned right up to the ceiling and emitted NO text, so the report fell
+    // back to a raw list. Grouping cut the input, and this ceiling gives the text
+    // room even when a busy day needs real thinking.
+    max_tokens: 6000,
     output_config: { effort: CFG.reportEffort },
     system: REPORT_SYSTEM,
-    messages: [{ role: 'user', content: `${REPORT_OUTPUT}\n\nDAY DATA (JSON):\n${JSON.stringify(payload, null, 2)}` }],
+    // compact JSON: pretty-printing this payload wasted ~25% of the input budget
+    messages: [{ role: 'user', content: `${REPORT_OUTPUT}\n\nDAY DATA (JSON):\n${JSON.stringify(payload)}` }],
   });
   let body = '';
   for (const b of resp.content) if (b.type === 'text') body += b.text;
@@ -262,13 +385,15 @@ async function runReport(db, opts = {}) {
   if (!body) {
     console.warn('report: empty model text, stop_reason=', resp.stop_reason, 'usage=', JSON.stringify(resp.usage));
     const em = { buy: '🟢', sell: '🔴' };
-    const lines = rows.map((r, i) => {
-      const s = r.pl_usd >= 0 ? '+' : '';
-      const end = r.outcome === 'SL_hit' ? 'โดน SL' : r.outcome === 'TP_hit' ? 'ได้ TP' : 'ปิดมือ';
-      return `${i + 1}) ${em[r.side] || ''} ${r.side} ${r.entry}→${r.exit} ${s}${r.pl_usd}$ · ${end}`;
+    const lines = positions.map((p) => {
+      const s = p.pl_usd >= 0 ? '+' : '';
+      const tag = p.kind === 'averaged' ? ` · ถัวห่าง ${p.spread_pts}pt` : p.kind === 'scaled' ? ` · ซอย ${p.legs} ไม้` : '';
+      return `${p.n}) ${em[p.side] || ''} ${p.side} ${p.avg_entry}→${p.exit} ${s}${p.pl_usd}$${tag}`;
     });
-    body = `สรุปอัตโนมัติ (โมเดลไม่ส่งข้อความ)\n\n🔍 รายไม้\n${lines.join('\n')}\n\n` +
-           `🎯 SL ครบ ${summary.trades - summary.no_sl_count}/${summary.trades} · ถัว(ADD) ${summary.averaged_count} ครั้ง`;
+    const nt = summary.netting;
+    body = `สรุปอัตโนมัติ (โมเดลไม่ส่งข้อความ)\n\n🔍 รายโพซิชัน (${rows.length} ไม้ = ${positions.length} จังหวะ)\n${lines.join('\n')}\n\n` +
+           `🎯 SL ครบ ${rows.length - summary.no_sl_count}/${rows.length}\n` +
+           `ถัวห่าง >${nt.threshold_pts}pt: ${nt.averaged_positions} จังหวะ ${nt.averaged_net_usd}$ · ที่เหลือ ${nt.other_positions} จังหวะ ${nt.other_net_usd}$`;
   }
 
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -283,7 +408,7 @@ async function runReport(db, opts = {}) {
   let reportId = null;
   const { data: rec, error: insErr } = await db.from('kp_reports').insert({
     report_date: payload.date, window_start: sinceIso,
-    trades_count: summary.trades, net_usd: summary.net_usd, win_count: wins, loss_count: losses,
+    trades_count: summary.orders, net_usd: summary.net_usd, win_count: wins, loss_count: losses,
     summary, message: body, delivered_to: tg.ok ? ['telegram'] : [],
     meta: { model: CFG.reportModel || CFG.model, usage: resp.usage || null, telegram: tg.ok ? tg.message_id : tg.error, source: opts.source || 'cron' },
   }).select('id').single();
