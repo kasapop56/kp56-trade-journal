@@ -544,8 +544,9 @@ CALL: Buy | Sell | No trade
 ⚠️ <เตือนวินัย 1 บรรทัด>
 
 บรรทัดสุดท้ายเสมอ (บรรทัดนี้มีไว้ให้ระบบอ่าน ไม่ต้องสวย ผู้ใช้จะไม่เห็น):
-PLAN: [{"side":"sell","zone":[4340,4344],"sl":4348,"tp1":4325,"tp2":4310}]
-กติกา PLAN: JSON array บรรทัดเดียว · 1 object ต่อ 1 ฝั่งที่ actionable · ต้องตรงกับ 🎯 แผน ข้างบนเป๊ะ ๆ · side ใช้ "buy"/"sell" · zone=[ล่าง,บน] (ราคาเดียวใส่ตัวเดียว) · ไม่มีแผน/ไม่เทรด = PLAN: []`;
+PLAN: [{"kind":"entry","side":"sell","zone":[4340,4344],"sl":4348,"tp1":4325,"tp2":4310}]
+กติกา PLAN: JSON array บรรทัดเดียว · 1 object ต่อ 1 ฝั่งที่ actionable · ต้องตรงกับ 🎯 แผน ข้างบนเป๊ะ ๆ · side ใช้ "buy"/"sell" · zone=[ล่าง,บน] (ราคาเดียวใส่ตัวเดียว) · ไม่มีแผน/ไม่เทรด = PLAN: []
+kind สำคัญมาก: "entry" = ไม้ใหม่ที่แนะนำให้เข้า · "manage" = คำแนะนำจัดการไม้ที่เปิดอยู่แล้ว (ห้ามนับเป็นไม้ใหม่)`;
 
 // ── plan capture (Phase 9c) ──────────────────────────────────────────────────
 // The read's LEVEL PLAN — zone edge + SL + TP — is what the trader is actually
@@ -561,7 +562,7 @@ PLAN: [{"side":"sell","zone":[4340,4344],"sl":4348,"tp1":4325,"tp2":4310}]
 const gold = (n) => Number.isFinite(n) && n > 100 && n < 100000;
 const NUMRE = /\d{3,6}(?:\.\d+)?/g;
 
-function planFromJson(line) {
+function planFromJson(line, managed) {
   const i = String(line).indexOf(':');
   if (i < 0) return null;
   const body = line.slice(i + 1).trim().replace(/^```(?:json)?/, '').replace(/```$/, '').trim();
@@ -578,45 +579,65 @@ function planFromJson(line) {
     const zs = (Array.isArray(o.zone) ? o.zone : [o.zone]).map(Number).filter(gold);
     if (!zs.length) continue;
     const lvl = (v) => (gold(Number(v)) ? Number(v) : null);
-    legs.push({ side, zone_lo: Math.min.apply(null, zs), zone_hi: Math.max.apply(null, zs),
+    const k = String(o.kind || '').toLowerCase();
+    legs.push({ kind: (k === 'entry' || k === 'manage') ? k : (managed ? 'manage' : 'entry'),
+                side, zone_lo: Math.min.apply(null, zs), zone_hi: Math.max.apply(null, zs),
                 sl: lvl(o.sl), tp1: lvl(o.tp1), tp2: lvl(o.tp2) });
   }
   // an explicitly empty array is a valid "no plan" answer, not a parse failure
   return legs.length ? legs : (arr.length === 0 ? [] : null);
 }
 
-function planFromText(text) {
+// A leg starts ONLY on a 🔴/🟢 marker line. A bare "Sell …" line is NOT a plan:
+// the read may open with the 🧾 live-position block ("Sell 0.01 @ 4340.36 · SL … ·
+// TP …"), and treating that as advice invents an entry the read never gave — a
+// false plan is worse than no plan. Section markers additionally close a leg, so
+// SL/TP can never be picked up from a later block.
+const SECTION = /^(🛑|⚠️|📍|🎯|🧾|🔎|📊)/;
+
+function planFromText(text, managed) {
   const legs = [];
   let cur = null;
   const flush = () => { if (cur) legs.push(cur); cur = null; };
+  const g = (l, re) => { const m = l.match(re); const n = m ? Number(m[1]) : NaN; return gold(n) ? n : null; };
+  const levels = (l, o) => {
+    if (o.sl  == null) o.sl  = g(l, /SL\s*:?\s*([\d.]+)/i);
+    if (o.tp1 == null) o.tp1 = g(l, /TP1\s*:?\s*([\d.]+)/i);
+    if (o.tp2 == null) o.tp2 = g(l, /TP2\s*:?\s*([\d.]+)/i);
+  };
   for (const raw of String(text || '').split(/\r?\n/)) {
     const l = raw.trim();
-    if (/^(🔴|🟢)/.test(l) || /^(sell|buy)\b/i.test(l)) {
+    if (/^(🔴|🟢)/.test(l)) {
       flush();
-      const side = (/🔴/.test(l) || /\bsell\b|ขาย/i.test(l)) ? 'sell'
-                 : (/🟢/.test(l) || /\bbuy\b|ซื้อ/i.test(l)) ? 'buy' : null;
-      const zs = (l.match(NUMRE) || []).map(Number).filter(gold);
-      cur = (side && zs.length)
-        ? { side, zone_lo: Math.min.apply(null, zs), zone_hi: Math.max.apply(null, zs), sl: null, tp1: null, tp2: null }
+      const side = /🔴/.test(l) ? 'sell' : 'buy';
+      // the entry zone is what's on the marker line BEFORE any SL/TP label
+      const head = l.split(/\bSL\b|\bTP\d?\b/i)[0];
+      const zs = (head.match(NUMRE) || []).map(Number).filter(gold);
+      cur = zs.length
+        ? { kind: managed ? 'manage' : 'entry', side,
+            zone_lo: Math.min.apply(null, zs), zone_hi: Math.max.apply(null, zs), sl: null, tp1: null, tp2: null }
         : null;
+      if (cur) levels(l, cur);            // model may inline SL/TP on the same line
       continue;
     }
     if (!cur) continue;
-    if (/^(🛑|⚠️|📍|🎯)/.test(l)) { flush(); continue; }   // next section → leg done
-    const g = (re) => { const m = l.match(re); const n = m ? Number(m[1]) : NaN; return gold(n) ? n : null; };
-    if (cur.sl  == null) cur.sl  = g(/SL\s*:?\s*([\d.]+)/i);
-    if (cur.tp1 == null) cur.tp1 = g(/TP1\s*:?\s*([\d.]+)/i);
-    if (cur.tp2 == null) cur.tp2 = g(/TP2\s*:?\s*([\d.]+)/i);
+    if (SECTION.test(l)) { flush(); continue; }   // next section → leg done
+    levels(l, cur);
   }
   flush();
   return legs;
 }
 
 // planLine = the model's PLAN: line (may be ''), message = the visible body.
-function parsePlan(planLine, message) {
-  const j = planLine ? planFromJson(planLine) : null;
+// `managed` = a position was already open at read time. It decides the DEFAULT leg
+// kind, because with a position open the 🔴/🟢 markers are reused for existing
+// trade groups ("🔴 ไม้เก่าทั้งหมด (entry 4386-4430)") — describing exposure the
+// trader already has, not an entry being advised. Defaulting those to 'manage' is
+// the conservative read; the model's explicit `kind` always wins.
+function parsePlan(planLine, message, managed) {
+  const j = planLine ? planFromJson(planLine, managed) : null;
   if (j) return { legs: j, source: j.length ? 'json' : 'json_empty' };
-  const t = planFromText(message);
+  const t = planFromText(message, managed);
   return { legs: t, source: t.length ? 'parsed' : 'none' };
 }
 
@@ -755,11 +776,16 @@ async function callClaude(state, trigger) {
   const headline = demark(lines.shift() || 'อัปเดตตลาด').trim() || 'อัปเดตตลาด';
   const message = demark(lines.join('\n')).trim() || headline;
 
-  const plan = parsePlan(planLine, message);
+  // A read taken while a position is open is MANAGEMENT advice, not an entry call:
+  // its CALL word echoes the exposure the trader already has. Recorded so the
+  // evaluator can stop grading those as fresh directional calls.
+  const managed = !!(state.pos && state.pos.count);
+  const plan = parsePlan(planLine, message, managed);
 
   return {
     headline, message, bias_call,
-    plan: plan.legs, plan_source: plan.source, prompt_version: PROMPT_VERSION,
+    plan: plan.legs, plan_source: plan.source, read_kind: managed ? 'manage' : 'entry',
+    prompt_version: PROMPT_VERSION,
     usage: resp.usage ? { in: resp.usage.input_tokens, out: resp.usage.output_tokens } : null,
     model: CFG.model,
   };
@@ -867,6 +893,7 @@ async function runAnalysis(db, opts = {}) {
       prompt_version: commentary.prompt_version || null,
       plan: (commentary.plan && commentary.plan.length) ? commentary.plan : null,
       plan_source: commentary.plan_source || null,
+      read_kind: commentary.read_kind || null,
       freshness: {
         price_source: state.price_source, price_age_min: state.price_age_min,
         sitrep_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min,
@@ -898,11 +925,13 @@ async function runPlanBackfill({ days = 120, write = false } = {}) {
   const todo = [], skipped = [];
   for (const s of data || []) {
     if (s.meta && s.meta.plan_source) { skipped.push(s.id); continue; }   // already captured
-    const p = parsePlan('', s.message || '');
-    todo.push({ id: s.id, ts: s.ts, call: s.bias_call, legs: p.legs,
+    const managed = !!(s.meta && s.meta.positions && s.meta.positions.count);
+    const p = parsePlan('', s.message || '', managed);
+    todo.push({ id: s.id, ts: s.ts, call: s.bias_call, read_kind: managed ? 'manage' : 'entry', legs: p.legs,
                 meta: { ...(s.meta || {}),
                         plan: p.legs.length ? p.legs : null,
                         plan_source: p.legs.length ? 'parsed_backfill' : 'none_backfill',
+                        read_kind: managed ? 'manage' : 'entry',
                         prompt_version: (s.meta && s.meta.prompt_version) || 'pre-9c' } });
   }
   if (write) {
@@ -915,6 +944,9 @@ async function runPlanBackfill({ days = 120, write = false } = {}) {
     ok: true, mode: write ? 'write' : 'dry', window_days: days,
     scanned: (data || []).length, already_captured: skipped.length, updated: todo.length,
     with_plan: todo.filter(t => t.legs.length).length,
+    read_kind: { entry: todo.filter(t => t.read_kind === 'entry').length,
+                 manage: todo.filter(t => t.read_kind === 'manage').length },
+    entry_legs: todo.reduce((n, t) => n + t.legs.filter(l => l.kind === 'entry').length, 0),
     sample: todo.slice(0, 5).map(t => ({ id: t.id, ts: t.ts, call: t.call, legs: t.legs })),
   } };
 }
