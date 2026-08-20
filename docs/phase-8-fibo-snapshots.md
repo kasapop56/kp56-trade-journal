@@ -197,6 +197,16 @@ The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
   completely — the independent-anchor design always permits some pairing gap — so
   `fbPiv` is an input: go to 1 if it still lags. `piv_len` in the payload and the
   table now report the ACTIVE lane's strength, not always the main one.
+- **Minimum leg width** (`fbMinSep`, default 6 fallback bars = exactly 2 M15 bars).
+  A finer pivot fixes the stale anchor but opens the opposite fault: an H and an L
+  only 2–3 bars apart is a wiggle, not a leg, and it redraws the frame constantly.
+  Separate lever from `fbPiv` — that one decides how readily a pivot is accepted,
+  this one decides whether the resulting leg is long enough to be structure. The
+  check runs BEFORE anything is written (`nFHbi`/`nFLbi` = where the anchors *would*
+  land), so a rejected pivot leaves the frame completely untouched rather than
+  moving one anchor and not the other. A rejected pivot is discarded for good; the
+  frame waits for one far enough from the opposite anchor. Verified on a replay:
+  3-bar pivots rejected with the frame frozen, 6+ bar legs accepted.
 - **M5 is a recovery lane, not a co-owner** — M15 takes back control the moment it
   has a real leg again, and draws fresh levels. But "a new M15 frame exists" is NOT
   the test: after an impulse the new frame usually drags the stale `FH` along (no
