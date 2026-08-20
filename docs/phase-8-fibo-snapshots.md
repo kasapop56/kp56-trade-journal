@@ -154,6 +154,75 @@ Focus (solid) and Test (dashed) always; **line labels show PRICE** (e.g. `S Focu
 `tp1_pts`/`sl_pts` instead of `entry_mode`; `api/fibo-snapshot.js` stores the whole
 payload in `raw`, so no webhook change was needed. Frame still redraws off Focus 2.0.
 
+## Phase 8g — SL invalidation + fallback swing degree (2026-08-20)
+
+**Problem.** A frame whose SL had been traded through kept being drawn, alerted and
+sent as if it were live. Worse, in a one-way move the main frame cannot repair
+itself: `ta.pivothigh(3,3)` needs the bar's high to beat 3 bars either side, so
+during a sustained decline **no new pivot high can ever form** — `FH` stays pinned to
+the pre-impulse top while `FL` ratchets down, and the frame drifts further from price
+with every leg. Live example (2026-08-20 ~19:30, XAUUSD): FFS was holding
+`FH 4494.87 · LH` / `FL 4480.72 · LL` with `B Focus 4466.57` and `B SL 4461.07` while
+price traded 4454 — both anchors above price, SL long gone, zone still on the chart.
+The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
+
+**Rules.**
+
+- **SL touched = frame dead** — the whole frame, not just that side. SL is the
+  outermost layer (Focus 2.0 ± `slPts`), so reaching it means price left the entire
+  structure; the untouched side is a target off a broken swing. **TP does not
+  invalidate** — a level that was reached can still act as S/R afterwards.
+- **Fallback degree.** On death, re-anchor to the same pivot rule on a finer TF
+  (`fbTF`, default M5) — confirmed pivots only, so still no repaint. Accepted only
+  if that frame was *created after* the death (`qFrId >= mDeadT`), which stops the
+  M5 frame that died alongside the main one from being recycled. Its anchors may
+  predate the death — the low that broke the SL is itself the new anchor.
+- **WAIT** when both degrees are out. No zones drawn, no signals, badge says so.
+  Honest > invented.
+- **M5 is a recovery lane, not a co-owner** — M15 takes back control the moment it
+  has a real leg again, and draws fresh levels. But "a new M15 frame exists" is NOT
+  the test: after an impulse the new frame usually drags the stale `FH` along (no
+  pivot high formed during the fall), giving a distorted, too-wide frame whose
+  levels price never reaches — so it never trips its SL, never "dies", and would
+  otherwise steal the job from the M5 leg that is actually correct. The real test
+  is **a new pivot on BOTH sides after the death** (`mFhTm >= deathT and mFlTm >=
+  deathT`) = M15 genuinely built a new swing. `deathT` therefore persists ACROSS
+  redraws (`f_dead` resets per frame; `deathT` does not) until that is satisfied.
+- **Self-repair.** A newly drawn frame born already beyond its own SL dies on the
+  same bar and falls straight back to M5 — which is what keeps the stale-`FH`
+  garbage frames out without any extra range-sanity rule.
+
+**Where the state shows up.** On-chart label beside price (🟢 TF15 / 🟡 TF5 ↩ /
+⛔ รอขาใหม่) + a "สถานะ" row in the table (dead levels print `✖`, and the TF row now
+names `src_tf`, not the configured TF) · `state` / `src_tf` / `dead_side` on every
+SNAPSHOT, ZONE and SIGNAL payload · Telegram (WAIT posts "กรอบตาย" with no levels;
+FALLBACK signals carry "↩ ขาสำรอง TF5") · a chip on the Fibo tab card.
+
+**Co-pilot.** `_kp_lib.js` withholds fibo levels entirely in WAIT and tells Claude to
+build the read from MT5 structure alone and say there is no valid frame — dead zones
+used to enter the ladder unchallenged. FALLBACK levels are tagged `·TF5` in the ladder
+and flagged in the prompt as a lower-conviction (finer) degree. `fibo_state` /
+`fibo_src_tf` are captured as attribution factors, so the open question — *do
+FALLBACK-degree reads score like MAIN ones?* — gets answered from data rather than
+assumed.
+
+**Evaluator guard.** The snapshot now also fires on validity changes, so `fibo-eval`
+and `fibo-sim` filter WAIT rows out and keep one row per source frame (`raw.frame_id`)
+— otherwise a dead frame would be graded as a second trade, and a fallback frame
+handed back and forth would be counted once per hand-off. Replay still starts at
+`bar_time`, not `frame_id` (frame_id is the source-TF bar open and would re-open the
+look-ahead window Phase 8f closed).
+
+**Verified before deploy:** the M5 fallback frame reproduces the hand-drawn fib
+exactly — `0.382 4461.26 · mid 4459.27 · Test 4446.20 · Focus 4433.87` — and a replay
+of the real 19:00–19:40 sequence transitions MAIN → WAIT (at 4450.67, ~10 min) →
+FALLBACK. A second replay covers the handover: an M15 redraw carrying a stale `FH`
+does NOT reclaim control (stays FALLBACK), while a frame with both pivots formed
+after the death does, and draws its own levels. Pine itself is **not compiled yet**
+— needs a TradingView re-paste.
+
+**Ships with:** `supabase_schema_fibo_state.sql` (3 nullable columns; NULL = MAIN).
+
 ## Parked — Buffer / behavior study (build when ~2 weeks of frames exist)
 
 Requested 2026-08-10; deferred until enough frames accumulate (was 5). All of it is

@@ -367,6 +367,12 @@ function buildFactors(sig, stateRow, out) {
     call_vs_m15: withOrAgainst(d15),
     call_vs_fibo_leg: withOrAgainst(dLeg),
     mario_fibo_aligned: (d15 && dSide) ? (d15 === dSide) : null,   // M15 bias vs Fibo active side
+    // which swing degree the fibo levels came from at read time (Phase 8g):
+    // MAIN = main-TF frame · FALLBACK = finer degree after the main frame's SL
+    // broke · WAIT = no valid frame (read was built without fibo levels).
+    // The question this answers: are FALLBACK-degree reads as good as MAIN ones?
+    fibo_state: raw.fibo_state ?? 'MAIN',
+    fibo_src_tf: raw.fibo_src_tf ?? null,
     vp_bucket: vpBucket,
     htf_conf: raw.htf_conf ?? null,
     ob_summary: raw.ob_summary ?? null,
@@ -766,6 +772,7 @@ function runAttributionRows(rows, minSamples, basis) {
     bump('call_vs_m15', f.call_vs_m15, verdict);
     bump('call_vs_fibo_leg', f.call_vs_fibo_leg, verdict);
     bump('mario_fibo_aligned', f.mario_fibo_aligned == null ? null : (f.mario_fibo_aligned ? 'aligned' : 'conflict'), verdict);
+    bump('fibo_state', f.fibo_state, verdict);   // MAIN vs FALLBACK degree vs WAIT (no frame)
     bump('bias_conflict', f.bias_conflict == null ? null : (f.bias_conflict ? 'm15≠m5' : 'm15=m5'), verdict);
     bump('vp_bucket', f.vp_bucket, verdict);
     bump('zone_source', f.zone_source, verdict);
@@ -830,3 +837,4 @@ module.exports.runAttribution = runAttribution;
 module.exports.loadBars = loadBars;
 module.exports.bkkDay = bkkDay;
 module.exports.zoneFreshness = zoneFreshness;
+module.exports.replayPlan = replayPlan;

@@ -183,7 +183,13 @@ module.exports = async (req, res) => {
     const snapRes = await db().from('fibo_snapshots').select('*')
       .gte('created_at', sinceISO).order('created_at', { ascending: false });
     if (snapRes.error) throw new Error('snap: ' + snapRes.error.message);
-    const frames = snapRes.data || [];
+    // Same Phase 8g filter as fibo-eval: drop dead (WAIT) frames and keep one
+    // row per source frame, so a comparison never sees phantom setups.
+    const live = (snapRes.data || []).filter(f => String(f.state || 'MAIN').toUpperCase() !== 'WAIT');
+    const dedup = new Map();
+    for (const f of [...live].sort((a, b) => Number(a.bar_time) - Number(b.bar_time)))
+      if (!dedup.has(String(f.raw?.frame_id ?? f.bar_time))) dedup.set(String(f.raw?.frame_id ?? f.bar_time), f);
+    const frames = [...dedup.values()];
     const bars = await loadBars(sinceISO);
     if (!bars.length) return res.status(200).json({ ok: false, verdict: 'NO_USABLE_BARS' });
 

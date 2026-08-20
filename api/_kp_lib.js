@@ -141,7 +141,7 @@ async function buildState(db) {
       .select('id, created_at, symbol, price, bias_m15, bias_m5, vp_position, poc, vah, val, ppoc, pvah, pval, htf_conf, h1_count, ob_summary, supply_zones, demand_zones')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     db.from('fibo_snapshots')
-      .select('id, created_at, symbol, price, active_side, entry_mode, frame_mode, leg_dir, s_focus, s_test, s_tp1, s_sl, b_focus, b_test, b_tp1, b_sl, fh, fl, mid')
+      .select('id, created_at, symbol, price, active_side, entry_mode, frame_mode, leg_dir, state, src_tf, dead_side, s_focus, s_test, s_tp1, s_sl, b_focus, b_test, b_tp1, b_sl, fh, fl, mid')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     // live price heartbeat (JournalSync → api/price); table may not exist yet
     db.from('kp_price').select('symbol, price, ts').order('ts', { ascending: false }).limit(1).maybeSingle(),
@@ -161,6 +161,16 @@ async function buildState(db) {
   // stale → treat as absent for decision-making (still noted in raw)
   const sitFresh = sitrep && sitAge <= CFG.maxStateAgeMin;
   const fibFresh = fibo && fibAge <= CFG.maxStateAgeMin;
+  // Frame validity (Phase 8g). A frame whose SL was traded through is dead —
+  // the swing it was drawn from is broken — so its levels must not enter the
+  // zone ladder even while the row is fresh. WAIT = dead with no replacement
+  // leg (the row still carries the dead levels so the payload shape is stable).
+  // FALLBACK = re-anchored to a finer degree (src_tf); usable, but flagged so
+  // the read and the attribution can tell the two degrees apart.
+  // NULL state = pre-8g row → treat as MAIN.
+  const fibState = fibo ? String(fibo.state || 'MAIN').toUpperCase() : null;
+  const fibDead  = fibState === 'WAIT';
+  const fibUsable = fibFresh && !fibDead;
 
   // Reference price = the snapshot from whichever source fired MOST RECENTLY
   // (not always the SITREP — the Fibo webhook often fires later and is closer to
@@ -195,11 +205,15 @@ async function buildState(db) {
     push(sitrep.supply_zones, 'supply');
     push(sitrep.demand_zones, 'demand');
   }
-  if (fibFresh) {
+  if (fibUsable) {
+    // FALLBACK levels come off a finer swing degree — say so in the ladder so
+    // the read never treats an M5-degree line as an M15-degree one.
+    const degTag = fibState === 'FALLBACK' ? `·TF${fibo.src_tf || '?'}` : '';
     const line = (px, side, name) => {
       const n = num(px);
       if (n == null) return;
-      zones.push({ side, source: 'Fibo', lo: n, hi: n, mid: n, score: null, tier: name, tags: [name], label: String(n) });
+      const tier = name + degTag;
+      zones.push({ side, source: 'Fibo', lo: n, hi: n, mid: n, score: null, tier, tags: [tier], label: String(n) });
     };
     line(fibo.s_focus, 'supply', 'S·Focus');
     line(fibo.s_test,  'supply', 'S·Test');
@@ -249,7 +263,11 @@ async function buildState(db) {
     h4_trend: null,          // not in live Fibo feed yet (see schema note)
     day_high: null,
     day_low: null,
-    fibo_side: fibFresh ? (fibo.active_side || null) : null,
+    fibo_side: fibUsable ? (fibo.active_side || null) : null,
+    fibo_state: fibState,
+    fibo_src_tf: fibo ? (fibo.src_tf || null) : null,
+    fibo_dead_side: fibo ? (fibo.dead_side || null) : null,
+    fibo_usable: !!fibUsable,
     zones, nearestSupply, nearestDemand,
   };
 }
@@ -389,6 +407,9 @@ async function recordState(db, state) {
       // never have to backfill — every future read carries its ingredients.
       vp_position: state.vp_position, fibo_side: state.fibo_side,
       fibo_leg_dir: state.fibo ? state.fibo.leg_dir : null,
+      // frame validity + anchor degree — so attribution can ask whether reads
+      // taken off a FALLBACK (finer-degree) frame score like MAIN ones
+      fibo_state: state.fibo_state, fibo_src_tf: state.fibo_src_tf,
       htf_conf: state.sitrep ? state.sitrep.htf_conf : null,
       h1_count: state.sitrep ? state.sitrep.h1_count : null,
       ob_summary: state.sitrep ? state.sitrep.ob_summary : null,
@@ -479,6 +500,7 @@ const SYSTEM_PROMPT = `You are a disciplined XAUUSD trading co-pilot sitting bes
 Your job: give a short, direct read and a concrete plan. You advise; the trader executes.
 Rules:
 - Never suggest entering at mid-range / POC. Only at zone edges (supply above, demand below) with confirmation.
+- Fibo frame validity (tradingview.frame_state): MAIN = frame from the main TF, use normally. FALLBACK = the main frame's SL was traded through and the levels were re-anchored to a finer swing degree (anchor_tf) — still usable, but it is a smaller swing, so treat it as a lower-conviction structure and say which degree you are reading. WAIT = the frame is dead and no replacement leg exists yet; levels are withheld. In WAIT, say plainly that there is no valid fibo frame right now and build the read from MT5 structure alone — never invent or recall fibo levels.
 - Respect timeframe conflicts. If lower TFs are sideways and H4 is UP, lean toward buying demand over selling supply, and keep any counter-H4 sell targets short (partial fast).
 - Prefer sweep-and-reclaim at demand: wait for price to wick below the zone / day-low and close back inside before buying, SL below the swept wick.
 - Always structure entries with SL and TP. In range conditions, always recommend taking partial profit at the first target.
@@ -706,6 +728,7 @@ async function callClaude(state, trigger) {
     prev_day_value: state.sitrep ? { ppoc: num(state.sitrep.ppoc), pvah: num(state.sitrep.pvah), pval: num(state.sitrep.pval) } : null,
     fibo_leg_dir: legDir, fibo_active_side: state.fibo_side,
     fibo_frame: state.fibo ? { high: state.fibo.fh, low: state.fibo.fl, mid: state.fibo.mid, mode: state.fibo.frame_mode } : null,
+    fibo_frame_state: state.fibo_state, fibo_anchor_tf: state.fibo_src_tf,
   } : null;
 
   // per-position alignment vs structure (with/against M15 bias + Fibo swing leg)
@@ -731,13 +754,22 @@ async function callClaude(state, trigger) {
       poc: state.poc, vah: state.vah, val: state.val,
       supply_zones: state.sitrep.supply_zones, demand_zones: state.sitrep.demand_zones,
     } : null,
-    tradingview: state.fibo ? {
+    // Fibo levels are withheld entirely when the frame is dead (state WAIT) —
+    // handing Claude stale zones is what produced confident reads off a broken
+    // swing. It gets the state instead and must say "no fibo frame" out loud.
+    tradingview: state.fibo ? (state.fibo_usable ? {
+      frame_state: state.fibo_state, anchor_tf: state.fibo_src_tf,
       active_side: state.fibo_side, entry_mode: state.fibo.entry_mode, leg_dir: legDir,
       s: { focus: state.fibo.s_focus, test: state.fibo.s_test, tp1: state.fibo.s_tp1, sl: state.fibo.s_sl },
       b: { focus: state.fibo.b_focus, test: state.fibo.b_test, tp1: state.fibo.b_tp1, sl: state.fibo.b_sl },
       frame: { high: state.fibo.fh, low: state.fibo.fl, mid: state.fibo.mid },
       h4_trend: state.h4_trend,   // null until Pine feeds it
-    } : null,
+    } : {
+      frame_state: state.fibo_state,          // "WAIT"
+      dead_side: state.fibo_dead_side,        // which SL broke it
+      levels_withheld: true,
+      note: 'Fibo frame invalidated (SL traded through) and no fresh leg yet — no fibo levels available.',
+    }) : null,
     nearest_supply: state.nearestSupply,
     nearest_demand: state.nearestDemand,
     positions: posList ? { summary: { count: state.pos.count, net_side: state.pos.net_side, net_lots: state.pos.net_lots, buy_lots: state.pos.buy_lots, sell_lots: state.pos.sell_lots }, list: posList } : null,

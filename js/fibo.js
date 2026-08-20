@@ -328,12 +328,25 @@ function modeLine(r, side, mode, outcomes) {
   return `<div class="fibo-mode-line"><span class="fibo-mode-tag">${label}</span>${badge(st)}${ext}</div>`;
 }
 
+// Frame validity (Phase 8g). A frame whose SL was traded through is dead: the
+// swing it was drawn from is broken. MAIN needs no chip (it is the normal case);
+// FALLBACK says the levels were re-anchored to a finer degree after the main
+// frame died; WAIT means the row's levels are the dead set, kept only for shape.
+function stateChip(r) {
+  const st = String(r.state || 'MAIN').toUpperCase();
+  if (st === 'MAIN') return '';
+  const side = r.dead_side ? ' ' + r.dead_side : '';
+  if (st === 'WAIT') return `<span class="fb-badge fb-void" title="เสีย SL${side} และยังไม่มีขาใหม่ — ระดับในกรอบนี้ตายแล้ว">⛔ กรอบตาย</span>`;
+  return `<span class="fb-badge fb-open" title="กรอบ TF หลักเสีย SL${side} → ยึดขา TF${r.src_tf || '?'} แทน">↩ TF${r.src_tf || '?'}</span>`;
+}
+
 function fiboCard(r, outcomes) {
   return `
   <div class="fibo-card">
     <div class="fibo-card-head">
       <span class="fibo-seq">#${r._seq ?? r.seq ?? '?'}</span>
       <span class="fibo-sym">${r.symbol}${r.tf ? ' · TF' + r.tf : ''}</span>
+      ${stateChip(r)}
       <span class="fibo-mode">${r.zone_pts != null ? '±' + r.zone_pts + 'p' : ''}</span>
       <span class="fibo-time">${bkkDateStr(r.created_at)} ${bkkTimeStr(r.created_at)}</span>
     </div>

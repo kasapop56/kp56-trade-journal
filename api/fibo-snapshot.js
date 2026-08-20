@@ -11,6 +11,9 @@
 //     "seq":        1, "frame_no": 12,
 //     "entry_mode": "Focus 2.0", "zone_pts": 100,
 //     "frame_mode": "SYM"|"DIR", "leg_dir": "UP"|"DOWN", "active_side": "S"|"B"|"BOTH",
+//     "state": "MAIN"|"FALLBACK"|"WAIT",   // frame validity (Phase 8g)
+//     "src_tf": "15"|"5",                  // TF the levels are anchored on
+//     "dead_side": "S"|"B"|"BOTH"|"",      // which SL killed the main frame
 //     "price":      3345.67, "bar_time": 1723200000000,
 //     "fh": .., "fl": .., "mid": ..,
 //     "s_focus": .., "s_test": .., "s_tp1": .., "s_tp3": .., "s_sl": ..,
@@ -130,9 +133,25 @@ function buildSnapshotMessage(p) {
   const mode = p.entry_mode || '';
   const zone = p.zone_pts == null ? '' : `Zone ±${p.zone_pts}p`;
   const px   = p.price == null ? '' : `@ ${fmt(p.price)}`;
+  const state = String(p.state || 'MAIN').toUpperCase();
+  const side  = p.dead_side ? ` ${p.dead_side}` : '';
+
+  // WAIT = the frame is dead and nothing has replaced it. Posting levels here
+  // would be the exact lie this state exists to stop, so the message says so
+  // and stops. (A dead frame used to keep broadcasting as if it were live.)
+  if (state === 'WAIT') {
+    return `⛔ <b>Fibo Focus — กรอบตาย</b>\n` +
+           `${sym} · ${tf} ${px}\n` +
+           `เสีย SL${side} · TF รองยังไม่มี pivot ใหม่\n` +
+           `<i>รอขาใหม่ — ยังไม่มีโซนให้ใช้</i>`;
+  }
+
+  const badge = state === 'FALLBACK'
+    ? `\n↩ <b>ขาสำรอง TF${p.src_tf || '?'}</b> (TF${p.tf || '?'} เสีย SL${side})`
+    : '';
 
   const head = `🟧 <b>Fibo Focus — วาดใหม่</b>\n` +
-               `${sym} · ${tf} · <b>Seq #${seq}</b>\n` +
+               `${sym} · ${tf} · <b>Seq #${seq}</b>${badge}\n` +
                `เข้า: ${mode} · ${zone} ${px}`.trim();
 
   const sBlock = `\n\n🔴 <b>S ขาย</b>\n` +
@@ -214,7 +233,11 @@ function buildSignalMessage(p) {
   const zone   = isTest ? '⚠️ Test 1.272 (เสี่ยงกว่า)' : 'Focus 2.0 (หลัก)';
   const head   = isTest ? '⚠️ <b>Fibo — เข้าไม้ (aggressive)</b>' : '⚡️ <b>Fibo — เข้าไม้</b>';
   const seq    = p.seq == null ? '?' : p.seq;
-  return `${head}\n${sym} · ${dir} · <b>Seq #${seq}</b>\nโซน ${zone}\n` +
+  // A signal off a fallback-degree leg is a finer (noisier) swing than the main
+  // TF one — flag it so the trader sizes it knowing which degree it came from.
+  const deg    = String(p.state || 'MAIN').toUpperCase() === 'FALLBACK'
+    ? ` · ↩ ขาสำรอง TF${p.src_tf || '?'}` : '';
+  return `${head}\n${sym} · ${dir} · <b>Seq #${seq}</b>${deg}\nโซน ${zone}\n` +
          `Entry ${fmt(p.entry)} · 🛑 SL ${fmt(p.sl)}\n🎯 TP1 ${fmt(p.tp1)} · TP3 ${fmt(p.tp3)}`;
 }
 
@@ -337,6 +360,13 @@ module.exports = async (req, res) => {
     frame_mode: p.frame_mode ? String(p.frame_mode) : null,   // "SYM" | "DIR"
     leg_dir:    p.leg_dir ? String(p.leg_dir) : null,          // "UP" | "DOWN"
     active_side: p.active_side ? String(p.active_side) : null, // "S" | "B" | "BOTH"
+    // Frame validity (Phase 8g). MAIN = main-TF frame with its SL intact ·
+    // FALLBACK = main frame died on SL, levels re-anchored to a finer degree
+    // (src_tf) · WAIT = dead with no fresh leg — the levels below are the last
+    // dead set and must not be traded or quoted. NULL on pre-8g rows = MAIN.
+    state:      p.state ? String(p.state) : null,
+    src_tf:     p.src_tf ? String(p.src_tf) : null,
+    dead_side:  p.dead_side ? String(p.dead_side) : null,
     zone_pts:   num(p.zone_pts),
     price:      num(p.price),
     bar_time:   num(p.bar_time),

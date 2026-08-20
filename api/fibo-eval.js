@@ -124,6 +124,33 @@ function sideLevels(f, side, mode) {
   };
 }
 
+// Which snapshot rows are real frames to grade (Phase 8g).
+//
+// The indicator now also emits a snapshot when a frame's VALIDITY changes, not
+// only when a new frame is drawn, so two kinds of row must not become trades:
+//
+//   state WAIT — the frame died on its SL and nothing replaced it. The levels in
+//     the row are the dead set (carried so the payload shape stays stable), so
+//     replaying them would invent a second trade off a broken swing.
+//   re-activation — one fallback frame can be handed back and forth as the main
+//     frame dies, revives and dies again. Each hand-off emits a row, but it is
+//     the SAME underlying frame; grading each row would count one setup several
+//     times. Keep the earliest row per source frame (raw.frame_id) — that is the
+//     one whose bar_time is when those levels first went live on the chart.
+//
+// Replay still starts at bar_time (NOT frame_id): frame_id is the source TF's
+// bar open, which predates the snapshot on a lower-TF chart, and starting there
+// would re-open the look-ahead window Phase 8f closed.
+function usableFrames(rows) {
+  const live = rows.filter(f => String(f.state || 'MAIN').toUpperCase() !== 'WAIT');
+  const seen = new Map();
+  for (const f of [...live].sort((a, b) => Number(a.bar_time) - Number(b.bar_time))) {
+    const key = String(f.raw?.frame_id ?? f.bar_time);
+    if (!seen.has(key)) seen.set(key, f);
+  }
+  return [...seen.values()];
+}
+
 // Replay one (frame, side, mode) over the bar stream. Returns an outcome row.
 function replaySide(frame, side, mode, bars) {
   const { isTest, lvl, tp1, sl, mid, near, far, Z } = sideLevels(frame, side, mode);
@@ -288,7 +315,7 @@ module.exports = async (req, res) => {
       .gte('created_at', sinceISO)
       .order('created_at', { ascending: false });
     if (snapRes.error) throw new Error('snap: ' + snapRes.error.message);
-    const frames = snapRes.data || [];
+    const frames = usableFrames(snapRes.data || []);
 
     const bars = await loadBars(sinceISO);
 
