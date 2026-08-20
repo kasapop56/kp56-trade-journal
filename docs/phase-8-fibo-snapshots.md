@@ -228,10 +228,32 @@ The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
   same bar and falls straight back to M5 — which is what keeps the stale-`FH`
   garbage frames out without any extra range-sanity rule.
 
-**TF invariance (regression, fixed same day).** The first cut of this computed the
-SL touch at CHART level, on chart `high`/`low`, and the anti-lock valve read chart
-`time`. That made the whole state machine depend on which timeframe you happened to
-be looking at — switching the chart changed where the SL was detected, which changed
+**TF invariance (regression, two rounds).** Round one moved SL detection out of a
+chart-level helper. That was not enough: ANY accumulated `var` at chart level is
+TF-dependent by construction, because the script runs once per CHART bar and
+therefore samples the calc-TF values at chart-bar resolution. On an H1 chart a death
+and a recovery occurring inside one H1 bar are simply never seen. Observed live at
+21:44 — H1 showed MAIN while M15 and M5 showed WAIT, and H1 was the correct one (the
+M15 frame's sSL 4544.37 and bSL 4401.37 had neither been touched). **All persistent
+state now lives inside `f_box`**, which runs in the calc TF's own context; the chart
+level only reads values and derives, holding no `var` of its own. Only the alert
+hit-flags remain chart-level, which is the original intent.
+
+**Recovery is now a price-position test, not a pivot-count test.** "New pivots on
+BOTH sides after the death" proved far too strict: a clean one-way rally produces no
+confirmed pivot high for hours, so the frame sat in WAIT — blind — through a 50-dollar
+move it should have been reading. Replaced with: the M15 frame reclaims when it is
+newer than the death, not itself dead, and **price sits inside the frame's working
+band** (`FL − r/2 … FH + r/2`). That is the practical definition of "sensible": the
+frame brackets where price actually is. It separates the two real cases correctly —
+at 19:30 the stale frame (r=14, price 22 dollars below the band) is refused, while at
+21:44 the current frame (r=44, price inside) is taken. A frame that later runs away
+from price is killed by its SL as before, so the band test never has to catch that.
+
+The original round-one description follows, since the first fault is still worth
+knowing: it computed the SL touch at CHART level, on chart `high`/`low`, and the
+anti-lock valve read chart `time`. That made the state machine depend on which
+timeframe you happened to be looking at — switching the chart changed where the SL was detected, which changed
 MAIN/FALLBACK/WAIT, which changed the frame on screen. It broke the indicator's
 founding promise (`คำนวณกรอบจาก TF หลัก เสมอ -> ดูใน M5/M1 เส้นไม่เปลี่ยน`). SL
 detection now lives INSIDE `f_box`, so each lane judges its own frame on its own
