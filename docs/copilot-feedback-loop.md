@@ -577,6 +577,22 @@ entry/manage confusion, from opposite directions.
 
 ---
 
+## 18. Closing the small gaps (2026-08-20, `EVAL_REV 9k`)
+
+Five items that were each small on their own; two of them were silent-failure risks.
+
+| Gap | What it was | Verified |
+|---|---|---|
+| Report summarised the wrong metric | It read `basis=lean` attribution — the directional measure that grades a market order the prompt forbids | now `basis=plan` |
+| **Health was invisible** | The health block existed only inside an API response. Every failure here is quiet (a Pine alert stops firing, the EA goes down), so clean verdict badges could sit on missing data for weeks | one line in the nightly report + an amber banner on the co-pilot tab |
+| **`read_price_age_min` captured but ignored** | Excursions are measured *from* the read price; a stale snapshot makes every distance wrong | `STALE_PRICE` above `maxReadPriceAgeMin` (5 min). A *null* age is a pre-9c read — unknown, not stale — so it is still graded |
+| `sessionOf` assumed fixed UTC hours | London and New York change DST on different dates | asks Europe/London, America/New_York, Asia/Tokyo. **3 of 48 hour-slots reclassified**, all at session edges |
+| `write=1` unauthenticated | It cannot require a key — the dashboard calls it on every tab render — so quota was open to anyone with the URL | server-side throttle: 30 s since the last outcome refresh. Verified: `1st: write (18 rows)` → `2nd: throttled, retry_in 29` |
+
+`STALE_PRICE` and `UNGRADEABLE` join `manage` in being excluded from attribution.
+
+---
+
 ## 17. Step 6 — plan replay (2026-08-20)
 
 `EVAL_REV` 9c → **9h** across one session, because the first four versions produced
