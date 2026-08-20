@@ -32,7 +32,7 @@ const SYM   = 'XAUUSD';
 // outcome row so a later re-grade under different thresholds can never be silently
 // mixed with old outcomes (verdicts are recomputed on every run, so without this
 // a threshold tweak would rewrite all of history with no marker).
-const EVAL_REV = '9i';
+const EVAL_REV = '9j';
 const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
   .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
@@ -212,9 +212,16 @@ function replayLeg(leg, bars, buf, mode) {
   const zLo = Math.min(a, b2), zHi = Math.max(a, b2);
   const isBuy = String(leg.side) === 'buy';
   const sl = num(leg.sl), tp1 = num(leg.tp1);
+  // TP1 is scored as a FULL exit: the "close 50%" in the read is trading advice, not
+  // the measuring rule. So rr1 is the plan's reward-to-risk, full stop.
   const out = { side: leg.side, zone_lo: zLo, zone_hi: zHi, sl, tp1, status: 'NO_FILL',
-                entry_at: null, entry_px: null, rr1: null, mfe_r: null, mae_r: null, bars_held: 0 };
+                entry_at: null, entry_px: null, rr1: null, mfe_r: null, mae_r: null, bars_held: 0,
+                // how much further price ran AFTER the exit, before coming back to the
+                // entry price — what leaving at TP1 cost. Bounded at the return to
+                // entry because past that a runner would be at breakeven anyway.
+                beyond_tp1_pts: null, beyond_tp1_r: null, returned_to_entry: null };
   let entryPx = null, R = null, best = null, worst = null;
+  let winAt = null, extBest = null, returned = false;
   for (const b of bars) {
     if (entryPx == null) {
       if (!fillReached(mode, isBuy, zLo, zHi, b, buf)) continue;   // not deep enough to fill
@@ -251,10 +258,24 @@ function replayLeg(leg, bars, buf, mode) {
       const hitSl = isBuy ? b.l <= sl  : b.h >= sl;
       const hitTp = isBuy ? b.h >= tp1 : b.l <= tp1;
       if (hitSl) out.status = 'LOSS';        // tie inside one bar → LOSS
-      else if (hitTp) out.status = 'WIN';
+      else if (hitTp) { out.status = 'WIN'; winAt = b.t; }
+    }
+    // ── extension after a win ──
+    if (out.status === 'WIN' && !returned) {
+      const beyond = isBuy ? (b.h - tp1) : (tp1 - b.l);
+      if (beyond > 0) extBest = extBest == null ? beyond : Math.max(extBest, beyond);
+      // don't let the entry bar's own wick count as "came back" when the whole trade
+      // opened and hit target inside one bar
+      const backToEntry = isBuy ? (b.l <= entryPx) : (b.h >= entryPx);
+      if (b.t !== winAt && backToEntry) returned = true;
     }
   }
   if (R) { out.mfe_r = r2(best / R); out.mae_r = r2(worst / R); }
+  if (out.status === 'WIN') {
+    out.beyond_tp1_pts = extBest == null ? 0 : Math.round(extBest / POINT);
+    out.beyond_tp1_r = (R && extBest != null) ? r2(extBest / R) : (R ? 0 : null);
+    out.returned_to_entry = returned;    // false = still running when the day ended
+  }
   return out;
 }
 
@@ -280,6 +301,9 @@ function replayPlan(legs, bars, buf, dayOver, mode) {
     verdict: first ? first.status : (dayOver ? 'NO_FILL' : 'PENDING'),
     first_side: first ? first.side : null,
     rr1: first ? first.rr1 : null, mfe_r: first ? first.mfe_r : null, mae_r: first ? first.mae_r : null,
+    beyond_tp1_r: first ? first.beyond_tp1_r : null,
+    beyond_tp1_pts: first ? first.beyond_tp1_pts : null,
+    returned_to_entry: first ? first.returned_to_entry : null,
   };
 }
 
@@ -674,6 +698,9 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false, fill = nul
         side: r.meta.plan_replay ? r.meta.plan_replay.first_side : null,
         rr1: r.meta.plan_replay ? r.meta.plan_replay.rr1 : null,
         mfe_r: r.meta.plan_replay ? r.meta.plan_replay.mfe_r : null,
+        beyond_r: r.meta.plan_replay ? r.meta.plan_replay.beyond_tp1_r : null,
+        beyond_pts: r.meta.plan_replay ? r.meta.plan_replay.beyond_tp1_pts : null,
+        back_to_entry: r.meta.plan_replay ? r.meta.plan_replay.returned_to_entry : null,
         post: r.meta.post_max_atr, day: r.day_type, atr_src: r.atr_source,
       })),
     } };

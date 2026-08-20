@@ -108,7 +108,8 @@ module.exports = {
     // worst price), 'mid', or 'far' (deep edge). Not cosmetic — the co-pilot places
     // its SL just beyond the FAR edge, so 'near' inflates risk several-fold and
     // flips outcomes. Measure with ?fill= before settling on a default.
-    entryFill: 'near',
+    // 'mid' — the trader's own answer for where a zone entry actually fills.
+    entryFill: 'mid',
   },
 
   // ── carry-forward digest (Phase 9, descriptive) ──────────────────────────────
