@@ -75,7 +75,7 @@ Two fields carry the trader's own diagnosis of his worst habit, and they are ALR
 - kind: "single" | "scaled" (legs within 500 pts = intended, split for partial exits, FINE) | "averaged" (legs more than 500 pts apart = adding at distance, HIS STATED BAD HABIT).
 - adverse_adds: legs opened at a WORSE price than the running average (buy lower / sell higher) = averaging into a loser rather than pyramiding a winner.
 summary.netting compares averaged positions against everything else in dollars. LEAD WITH THAT NUMBER whenever averaged_positions > 0: it is the single most actionable line in the report. Say plainly whether the habit cost or made money today, in dollars. Do not moralise and do not repeat the lesson more than once.
-summary.adherence pre-splits followed / diverged / no_read with net USD for each — quote it rather than counting.
+summary.adherence pre-splits followed / diverged / advised_no_trade / no_read with net USD for each — quote it rather than counting. "advised_no_trade" means the co-pilot said stand aside and the trade was taken anyway; that is NOT the same as trading against a directional call, and if those trades made money say so plainly — the co-pilot being too cautious is a finding about the CO-PILOT, not a discipline failure by the trader.
 
 CRITICAL: the trader ALSO opens trades independently of the co-pilot's suggestions. Evaluate EVERY trade on its own merit. For each, note whether it MATCHED, DIVERGED FROM, or had NO co-pilot read at that time — and grade divergent trades fairly (an independent call can be right or wrong; say which).
 
@@ -211,8 +211,14 @@ function groupPositions(rows, signals) {
       const t = new Date(sg.ts).getTime();
       if (t <= openMs && (!read || t > new Date(read.ts).getTime())) read = sg;
     }
+    // "No trade" is the co-pilot's most common call, and folding it into
+    // "diverged" would conflate two different things: taking the opposite
+    // direction to a directional call, versus trading at all when the co-pilot
+    // said to stand aside. They carry different lessons, so they stay separate.
     const call = read ? String(read.bias_call || '').toLowerCase() : null;
-    const alignment = !read || !call || call === 'none' ? 'no_read'
+    const isDir = call === 'buy' || call === 'sell';
+    const alignment = !read ? 'no_read'
+                    : !isDir ? 'advised_no_trade'
                     : call === g.side ? 'followed' : 'diverged';
     return {
       n: i + 1, side: g.side, legs: g.legs.length, lots: round(lots, 2),
@@ -341,6 +347,9 @@ async function runReport(db, opts = {}) {
       followed_net_usd: sum(positions.filter(p => p.alignment === 'followed')),
       diverged: positions.filter(p => p.alignment === 'diverged').length,
       diverged_net_usd: sum(positions.filter(p => p.alignment === 'diverged')),
+      // co-pilot said stand aside and the trade was taken anyway — its own bucket
+      advised_no_trade: positions.filter(p => p.alignment === 'advised_no_trade').length,
+      advised_no_trade_net_usd: sum(positions.filter(p => p.alignment === 'advised_no_trade')),
       no_read: positions.filter(p => p.alignment === 'no_read').length,
       no_read_net_usd: sum(positions.filter(p => p.alignment === 'no_read')),
     },
