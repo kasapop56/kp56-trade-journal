@@ -502,6 +502,42 @@ only in `session` mode. The live config is **`chart`** mode, where `dayOpen` **i
 the first bar the EA happened to emit — an inflated ATR *and* a wrong anchor, from the
 same failure. #2 and #4 are one bug, not two.
 
+### 13.2b Found while backfilling: the co-pilot has never advised an entry
+
+Running the plan recovery over the 16 stored reads turned up something **neither
+review caught**, and it outranks finding #1.
+
+| Reads **with** a position open at read time | 4, 7, 9, 10, 11 → **Buy/Sell** · 12 → No trade |
+|---|---|
+| Reads with **no** position | 1, 2, 3, 5, 6, 8, 13, 14, 15, 16 → **all "No trade"** |
+
+The split is total. **Every directional call on record was made while a position was
+already open** — those reads are the 🧾 live-order coaching mode, and their `CALL:`
+word echoes the exposure the trader already has rather than advising an entry. Read 9
+is the clearest case: `bias_call: Buy`, and the entire body is management advice on an
+already-open 0.05 buy ("TP ไกลเกินจริง ควรดึงลงมา"). No entry was ever proposed.
+
+Consequences:
+
+1. Only `Buy`/`Sell` reads can produce `WIN`/`LOSS`, so **the entire live 1W/4L record
+   — the headline "hit rate" — is computed on reads that advised no entry at all.**
+   It measures whether the trader's *existing position* moved favourably, attributed
+   to the co-pilot as if it had called the trade.
+2. The mirror image explains the "too conservative" artifact from the other side: with
+   no position open the co-pilot has said "No trade" **10 times out of 10**. That is
+   structural (no position → nothing to coach → wait for the edge), not timidity, so
+   "lean more aggressive" is the wrong lesson twice over.
+3. The 🔴/🟢 markers are **not** a reliable entry signal either: with positions open the
+   model reuses them for existing trade groups (read 12: `🔴 ไม้เก่าทั้งหมด (entry
+   4386-4430)`). And a bare `Sell …` line is often the position block
+   (`Sell 0.01 @ 4340.36 · SL 4349.24 · TP 4314.81`) — the first version of the
+   fallback parser swept that into a fake $34-wide "advised zone", which is how the
+   whole pattern surfaced. A false plan is worse than no plan.
+
+So reads must be partitioned by **`read_kind`** (`entry` vs `manage`) before anything is
+graded, and management reads need their own yardstick (was the SL/TP advice good?),
+not the directional one. This is captured from now on (§14) and backfilled for history.
+
 ### 13.3 Where the review is softened
 
 1. **Plan-replay is not a drop-in replacement for the current yardstick.** The construct
@@ -526,6 +562,7 @@ history is free today and expensive in three months.
 | Step | Work | Findings | Status |
 |---|---|---|---|
 | **1** | **Capture what cannot be backfilled** — structured plan (side/zone/SL/TP1/TP2) into `kp_signals.meta`, plus `price_age_min`, `prompt_version`, `eval_version` | 1, 5, 8, 9, 14 | ✅ **DONE 2026-08-20** (§14) |
+| **1b** | **Partition reads by `read_kind`** — stop grading management notes as directional calls; management reads get their own yardstick | §13.2b | ✅ captured 2026-08-20 · grading split still ⬜ |
 | 2 | Cheap correctness cluster — one shared day fn + key `kp_atr` off the alert `ts`; exclude the boundary bar (`b.t − tfMs ≥ t0`); fix the `small_sample` denominator; drop `atr_day_type` from the attribution dims; add `UNGRADEABLE`; grade No-trade on post-read travel only | 2b, 4, 6, 7, 14 | ⬜ next |
 | 3 | Seed `kp_atr` from the 3-year Dukascopy M1 archive (`rainbow-research/data/`) → deletes the "13/15 OUTSIZED" artifact, makes verdicts deterministic | 2, 5 | ⬜ |
 | 4 | Phantom-read baseline at every SITREP + the health header | 8, 13 | ⬜ |
@@ -533,7 +570,9 @@ history is free today and expensive in three months.
 | 6 | Plan-replay grading (as a second track), R-multiples, persistent zone registry, censoring controls | 1, 10, 11, 12 | ⬜ deferred — revisit at ~3 months of data |
 
 **Standing conclusion (agreed):** the loop is trustworthy as *instrumentation*, not yet
-as a *learning device*. The "too conservative" finding is not actionable.
+as a *learning device*. The "too conservative" finding is not actionable — and per
+§13.2b, neither is the hit rate: **both** live headline numbers are artifacts of the
+entry/manage confusion, from opposite directions.
 
 ---
 
@@ -548,6 +587,11 @@ never be reconstructed afterwards.
   (one object per actionable side, `[]` for no trade).
 - `parsePlan()` — two parsers: the model's `PLAN:` JSON line, else a fallback that reads
   the visible 🔴/🟢 level block. The fallback also works on **already-stored** reads.
+- Legs carry `kind` (`entry` | `manage`) and each read carries `read_kind`, defaulted
+  from whether a position was open at read time (the model's explicit `PLAN` `kind`
+  wins). A leg starts **only** on a 🔴/🟢 marker, with the zone read before any SL/TP
+  label and section markers closing the leg — a bare `Sell …` line is the 🧾 position
+  block, not advice (§13.2b).
 - `callClaude()` strips the `PLAN:` line from the body (dashboard/Telegram output is
   byte-for-byte unchanged) and returns `plan`, `plan_source`, `prompt_version`.
 - `PROMPT_VERSION` = 8-char SHA-1 of `SYSTEM_PROMPT + OUTPUT_HINT + model + effort +
