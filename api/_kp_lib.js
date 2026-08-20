@@ -62,6 +62,29 @@ function mode(arr) {
   return best;
 }
 
+// ── zone freshness (read-time) ───────────────────────────────────────────────
+// How many times price already TESTED each nearest zone earlier today, from the
+// BAR feed — so the read can flag a re-used zone as weaker (fresh = strongest;
+// each retest consumes liquidity). Reuses the evaluator's bar loader + helpers.
+async function buildZoneUsage(state) {
+  if (!CFG.zoneFreshness) return null;
+  const zones = [state.nearestSupply, state.nearestDemand]
+    .filter(z => z && num(z.lo) != null && num(z.hi) != null);
+  if (!zones.length) return null;
+  let loadBars, bkkDay, zoneFreshness;
+  try { ({ loadBars, bkkDay, zoneFreshness } = require('./_kp_eval')); }
+  catch { return null; }
+  let bars;
+  try { bars = await loadBars(new Date(Date.now() - 36 * 3600e3).toISOString()); }
+  catch { return null; }
+  if (!bars || !bars.length) return null;
+  const today = bkkDay(Date.now());
+  return zones.map(z => {
+    const f = zoneFreshness(bars, { side: z.side, lo: num(z.lo), hi: num(z.hi) }, today, null);
+    return { side: z.side, label: z.label || `${z.lo}-${z.hi}`, tested: !f.fresh, tests: f.tests, broke: f.broke, source: z.source || null };
+  });
+}
+
 // ── carry-forward digest (Phase 9) ───────────────────────────────────────────
 // Descriptive context for the NEW day's read: today's ATR ladder frame + a short
 // summary of what price did on the most recent completed day (day type, key zones
@@ -474,6 +497,12 @@ CARRY-FORWARD (if a "carry_forward" block is present): use it as CONTEXT to laye
 - today_frame = today's daily-open ± ATR ladder (the same frame the trader sees on the chart). Anchor your levels to it: state whether price is in the balance zone (±0.25 ATR of open), stretched (near ±1 ATR = late to chase), and which ATR band a target/stop sits near. If a plausible target is already >1 ATR away, flag it as an extended/greedy target.
 - yesterday = what price actually did on the last completed day (day_type, direction, zones that HELD/BROKE/were swept, and the co-pilot's own lean vs how it resolved). Carry the still-relevant levels forward (a demand that HELD is a live buy reference; a zone that BROKE flips role). If yesterday was a BALANCE/stall day, warn against expecting a big move today without a catalyst. Keep this to a few words folded into the read — do not recite the whole block.
 
+ZONE FRESHNESS (if a "zone_usage" block is present): it lists, per nearest zone, how many times price has ALREADY TESTED it TODAY (tests) and whether it has closed THROUGH it (broke). A FRESH zone (tests=0) is the strongest; each retest consumes liquidity → weaker. When you put a zone in the plan:
+- tests=0 → treat as a clean first-touch setup.
+- tests≥1 (already used today) → say so and manage it TIGHTER: take partial faster, tighten SL, and require a FRESH rejection signal before entering again — a level that already gave its move is a worse re-entry.
+- broke=true → the zone is compromised; its role likely flipped (a broken supply becomes support, a broken demand becomes resistance) — do NOT keep trading it in the old direction.
+- If price is CONSOLIDATING inside a zone (grinding, not rejecting) on a retest, warn that it is likely to break through (continuation), not hold. Fold this into one short phrase in the plan/invalidation, do not lecture.
+
 LIVE POSITIONS: If the trader already has open positions (provided as "positions"), the read is about MANAGING them, not hunting new entries. FIRST compare each position to the structure above using with_m15_bias / with_fibo_leg and its entry location:
 - Alignment: is the position WITH structure (with the M15 bias and Fibo leg) or AGAINST it? A with-structure trade gets more room; an against-structure (counter-trend) trade should be managed tighter and taken partial faster.
 - Entry quality: was it entered at a zone edge (good) or mid-range/at POC (chasing)? Say it plainly.
@@ -553,6 +582,7 @@ async function callClaude(state, trigger) {
     price: state.price,
     freshness: { price_source: state.price_source, price_age_min: state.price_age_min, mt5_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min, positions_source: state.positions_source, positions_age_min: state.positions_age_min },
     carry_forward: state.carry || null,
+    zone_usage: state.zone_usage || null,
     structure,
     mt5: state.sitrep ? {
       bias_m15: state.bias_m15, bias_m5: state.bias_m5, vp_position: state.vp_position,
@@ -708,6 +738,10 @@ async function runAnalysis(db, opts = {}) {
   // non-fatal: a missing kp_atr / kp_read_outcomes table just yields no context.
   try { state.carry = await buildCarryForward(db); }
   catch (e) { console.warn('buildCarryForward failed (non-fatal):', e.message); state.carry = null; }
+
+  // zone freshness — how used/tested each nearest zone already is today
+  try { state.zone_usage = await buildZoneUsage(state); }
+  catch (e) { console.warn('buildZoneUsage failed (non-fatal):', e.message); state.zone_usage = null; }
 
   const commentary = await callClaude(state, trigger);
 

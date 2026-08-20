@@ -114,6 +114,12 @@ module.exports = {
   carryForward: true,
   carryLookbackDays: 3,   // how many prior days of outcomes to summarize
 
+  // Zone Freshness: at read time, count how many times price already TESTED each
+  // nearest zone today (from the BAR feed) → fed into the read so the co-pilot can
+  // flag a re-used zone as weaker (tighten / partial faster / require fresh
+  // rejection). Also stored as an attribution factor (fresh vs retested).
+  zoneFreshness: true,
+
   // ── factor attribution (Phase 9b) ────────────────────────────────────────────
   // Rolling "what works" learning: group read outcomes by the ingredients present
   // (Mario bias alignment, Fibo side, value-area, zone score/tags, ATR day-type,

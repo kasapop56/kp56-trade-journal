@@ -116,6 +116,27 @@ function normCall(s) {
   return null;
 }
 
+// Zone freshness: how many times price has already TESTED a zone earlier in the
+// trading day, and whether it has closed THROUGH it (broken). A fresh (untested)
+// zone is strongest; each retest consumes liquidity → weaker. `beforeMs` limits
+// the count to bars strictly before a reference time (e.g. a read's timestamp).
+//   zone = { side:'supply'|'demand', lo, hi }
+function zoneFreshness(bars, zone, dayIdx, beforeMs) {
+  const lo = num(zone.lo), hi = num(zone.hi);
+  if (lo == null || hi == null) return { tests: 0, fresh: true, broke: false };
+  const isSupply = String(zone.side) === 'supply';
+  let tests = 0, inside = false, broke = false;
+  for (const b of bars) {
+    if (bkkDay(b.t) !== dayIdx) continue;
+    if (beforeMs != null && b.t >= beforeMs) break;
+    const touched = b.h >= lo && b.l <= hi;     // bar overlapped the zone band
+    if (touched && !inside) { tests++; inside = true; }
+    if (!touched) inside = false;
+    if (isSupply ? b.c > hi : b.c < lo) broke = true;   // closed through = broken
+  }
+  return { tests, fresh: tests === 0, broke };
+}
+
 // buy/sell direction implied by a bias/leg/side word (Bull/Bear/UP/DOWN/S/B/…)
 function dirOf(s) {
   const v = String(s || '').toLowerCase();
@@ -168,6 +189,11 @@ function buildFactors(sig, stateRow, out) {
     zone_tier: zone?.tier ?? null,
     zone_score_bucket: scoreBucket(zone?.score),
     zone_tags: Array.isArray(zone?.tags) ? zone.tags.slice(0, 6) : (zone?.tags ? [zone.tags] : []),
+    // freshness of the target zone at read time (Zone Freshness): fresh zones are
+    // strongest; each prior retest consumes liquidity → weaker.
+    zone_fresh: out.zone_freshness ? out.zone_freshness.fresh : null,
+    zone_retest_count: out.zone_freshness ? out.zone_freshness.tests : null,
+    zone_state: out.zone_freshness ? (out.zone_freshness.fresh ? 'fresh' : 'retested') : null,
     atr_day_type: out.day_type,
     reached_band: out.reached_band,
     session: sessionOf(Date.parse(sig.ts)),
@@ -323,9 +349,15 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   // Attach the read's ingredients (Mario/Fibo/structure/ATR/session) so the
   // attribution layer can learn which factors drive wins. Stored in meta (no
   // schema change) — aggregated in JS by runAttribution().
+  // freshness of the target zone at read time — tests by price BEFORE this read today
+  const zoneFresh = target_zone
+    ? zoneFreshness(dayEntry.bars, { side: target_zone.side, lo: target_zone.lo, hi: target_zone.hi }, day, t0)
+    : null;
+  outObj.zone_retest_count = zoneFresh ? zoneFresh.tests : null;
+  outObj.zone_fresh = zoneFresh ? zoneFresh.fresh : null;
   outObj.meta.factors = buildFactors(sig, stateRow, {
     call_dir: dir === 1 ? 'buy' : dir === -1 ? 'sell' : null,
-    target_zone, day_type, reached_band,
+    target_zone, day_type, reached_band, zone_freshness: zoneFresh,
   });
   return outObj;
 }
@@ -428,6 +460,7 @@ function runAttributionRows(rows, minSamples) {
     bump('vp_bucket', f.vp_bucket, r.verdict);
     bump('zone_source', f.zone_source, r.verdict);
     bump('zone_score', f.zone_score_bucket, r.verdict);
+    bump('zone_state', f.zone_state, r.verdict);   // fresh vs retested (Zone Freshness)
     bump('atr_day_type', f.atr_day_type, r.verdict);
     bump('session', f.session, r.verdict);
     for (const tag of (f.zone_tags || [])) bump('zone_tag', tag, r.verdict);
@@ -474,3 +507,7 @@ module.exports = async (req, res) => {
 };
 module.exports.runEval = runEval;
 module.exports.runAttribution = runAttribution;
+// shared with _kp_lib for the read-time Zone Freshness context
+module.exports.loadBars = loadBars;
+module.exports.bkkDay = bkkDay;
+module.exports.zoneFreshness = zoneFreshness;
