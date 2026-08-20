@@ -29,9 +29,19 @@ function cpAgeMin(iso) {
   if (!iso) return null;
   return Math.round((Date.now() - new Date(iso).getTime()) / 60000);
 }
+const cp2 = (n) => String(n).padStart(2, '0');
+// Date + 2-digit year alongside the time. The feed spans several days, and a bare
+// HH:MM made yesterday's reads look like this morning's.
 function cpBkkTime(iso) {
   const t = new Date(new Date(iso).getTime() + 7 * 3600 * 1000);
-  return `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`;
+  return `${cp2(t.getUTCDate())}/${cp2(t.getUTCMonth() + 1)}/${String(t.getUTCFullYear()).slice(-2)}` +
+         ` ${cp2(t.getUTCHours())}:${cp2(t.getUTCMinutes())}`;
+}
+// The BROKER trading day (04:00 UTC rollover), which is what the evaluator groups
+// by — it differs from the Bangkok calendar date for any read before 11:00 Bangkok.
+function cpTradeDay(iso) {
+  const t = new Date(new Date(iso).getTime() - 4 * 3600 * 1000);
+  return `${cp2(t.getUTCDate())}/${cp2(t.getUTCMonth() + 1)}/${String(t.getUTCFullYear()).slice(-2)}`;
 }
 function cpAgeLabel(min) {
   if (min == null) return 'ไม่มีข้อมูล';
@@ -282,7 +292,7 @@ function cpRenderFeed(signals, outcomes) {
         ${bias}
         ${cpVerdictBadge(o)}
         ${s.price != null ? `<span class="cp-sig-px">@ ${cpFmt(s.price)}</span>` : ''}
-        <span class="cp-sig-time">${cpBkkTime(s.ts)}</span>
+        <span class="cp-sig-time" title="วันเทรด (ตัดวัน 11:00 น. ตามโบรก) ${cpTradeDay(s.ts)}">${cpBkkTime(s.ts)}</span>
       </div>
       ${s.headline ? `<div class="cp-sig-head">${String(s.headline).replace(/</g, '&lt;')}</div>` : ''}
       <div class="cp-sig-msg">${msg}</div>
