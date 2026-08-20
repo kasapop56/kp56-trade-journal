@@ -192,9 +192,13 @@ The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
   same bar and falls straight back to M5 — which is what keeps the stale-`FH`
   garbage frames out without any extra range-sanity rule.
 
-**Where the state shows up.** On-chart label beside price (🟢 TF15 / 🟡 TF5 ↩ /
-⛔ รอขาใหม่) + a "สถานะ" row in the table (dead levels print `✖`, and the TF row now
-names `src_tf`, not the configured TF) · `state` / `src_tf` / `dead_side` on every
+**Where the state shows up.** On-chart label hanging under the Mid line —
+`M15 based` / `M5 based · awaiting new M15` / `no frame · awaiting new M15`. It is
+anchored to `mid`, NOT to `close`: `mid` only moves when the frame changes, so the
+label sits still instead of chasing every tick (the first version anchored to price
+and was too distracting to read). Which side lost its SL is deliberately not on the
+chart — it is one row down in the table. Plus a "สถานะ" row in that table (dead
+levels print `✖`, and the TF row now names `src_tf`, not the configured TF) · `state` / `src_tf` / `dead_side` on every
 SNAPSHOT, ZONE and SIGNAL payload · Telegram (WAIT posts "กรอบตาย" with no levels;
 FALLBACK signals carry "↩ ขาสำรอง TF5") · a chip on the Fibo tab card.
 
