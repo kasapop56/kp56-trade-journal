@@ -77,6 +77,8 @@ Two fields carry the trader's own diagnosis of his worst habit, and they are ALR
 summary.netting compares averaged positions against everything else in dollars. LEAD WITH THAT NUMBER whenever averaged_positions > 0: it is the single most actionable line in the report. Say plainly whether the habit cost or made money today, in dollars. Do not moralise and do not repeat the lesson more than once.
 UNITS, and be strict about them: "ไม้" = an ORDER (summary.orders), "จังหวะ" = a POSITION (summary.positions). They are different numbers and swapping them makes the report wrong. Quote summary.sl_coverage_text verbatim for SL coverage — do not build it yourself.
 
+WHICH positions were decisive is ALREADY RANKED for you in summary.decisive (top_winners / top_losers, biggest first). Name only those. NEVER scan the positions list and pick your own "biggest" — on a previous run that produced a claim that the 3rd and 4th largest winners were the largest, because they happened to suit the narrative that had already been started. If the biggest winner contradicts the story you were about to tell, the story is wrong, not the number: say so.
+
 WHEN YOU CITE A POSITION, COPY ITS "cite" FIELD VERBATIM. It already contains side, average entry, whether it was เดี่ยว / ซอย / ถัวห่าง, the P&L with its sign, and how it ended. Do not rebuild that string from the other fields and do not re-word it: on the first live run doing so produced three wrong labels in one report — a 79pt scaled entry called "ถัวห่าง", a +19.85$ winner written as "-19.85$ ชนะ", and orders counted as positions. Only "ถัวห่าง" positions are the bad habit; "ซอย" is the intended split and must never be described as ถัว.
 
 summary.adherence pre-splits followed / diverged / advised_no_trade / no_read with net USD for each — quote it rather than counting. "advised_no_trade" means the co-pilot said stand aside and the trade was taken anyway. NEVER call these "สวนคำแนะนำ" — สวน is reserved for the "diverged" bucket, i.e. the co-pilot called a direction and the trader took the other one. Word it as "โคไพลอตบอกไม่เทรด แต่เข้าเอง N จังหวะ". If diverged is 0, say plainly that there were no directional calls to follow or fight today. That is NOT the same as trading against a directional call, and if those trades made money say so plainly — the co-pilot being too cautious is a finding about the CO-PILOT, not a discipline failure by the trader.
@@ -353,6 +355,18 @@ async function runReport(db, opts = {}) {
     no_sl_count: rows.filter(r => !r.had_sl_at_open).length,
     // pre-rendered so the model cannot mix up orders and positions here
     sl_coverage_text: `${rows.length - rows.filter(r => !r.had_sl_at_open).length}/${rows.length} ไม้`,
+    // The decisive positions, RANKED HERE. On the second live run the model
+    // ranked them itself and named the 3rd and 4th biggest winners as "the
+    // biggest" — because they were the two that fitted the story it had already
+    // started telling (that the day was won by small single entries). The actual
+    // top earner was a 6-leg scaled position and the runner-up an averaged one,
+    // which cut against that narrative. Ranking is arithmetic; it is done here.
+    decisive: {
+      top_winners: positions.slice().sort((a, b) => b.pl_usd - a.pl_usd).slice(0, 3)
+        .filter(p => p.pl_usd > 0).map(p => ({ cite: p.cite, pl_usd: p.pl_usd })),
+      top_losers: positions.slice().sort((a, b) => a.pl_usd - b.pl_usd).slice(0, 3)
+        .filter(p => p.pl_usd < 0).map(p => ({ cite: p.cite, pl_usd: p.pl_usd })),
+    },
     // the netting scorecard — "averaged" = entries more than 500 pts apart
     netting: {
       threshold_pts: ADD_NEAR_PTS,
