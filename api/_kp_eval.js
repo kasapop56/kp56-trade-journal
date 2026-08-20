@@ -32,7 +32,7 @@ const SYM   = 'XAUUSD';
 // outcome row so a later re-grade under different thresholds can never be silently
 // mixed with old outcomes (verdicts are recomputed on every run, so without this
 // a threshold tweak would rewrite all of history with no marker).
-const EVAL_REV = '9f';
+const EVAL_REV = '9g';
 const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
   .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
@@ -46,7 +46,15 @@ function db() {
   return _db;
 }
 
-const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+// Number(null) === 0 and Number('') === 0 — both finite — so the naive version
+// turned a MISSING level into a real-looking 0. A plan with no stop then got
+// risk = |entry − 0| = the whole gold price, a stop that can never be hit, and an
+// automatic WIN. Reject empty values before converting.
+const num = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 const isGold = (s) => typeof s === 'string' && s.toUpperCase().replace(/[^A-Z]/g, '').startsWith(SYM);
 // Trading-day boundary — selectable (see _kp_config.eval.dayWindow):
 //   'chart'   → day starts at dayCutUtcHour UTC (align to the broker's daily bar)
@@ -201,14 +209,23 @@ function replayLeg(leg, bars, buf) {
       // A stop inside (or a hair from) the entry zone is not a tradeable plan.
       if (risk != null && risk >= MIN_RISK) R = risk;
       out.rr1 = (R && tp1 != null) ? r2(Math.abs(tp1 - entryPx) / R) : null;
+      // A target sitting on the entry zone is not a target — it would "fill" on the
+      // same tick that enters, so it must not be scored as a win.
+      const reward = tp1 == null ? null : Math.abs(tp1 - entryPx);
       out.status = (sl == null || tp1 == null) ? 'NO_LEVELS'
-                 : (R == null) ? 'SL_IN_ZONE' : 'OPEN';
+                 : (R == null) ? 'SL_IN_ZONE'
+                 : (reward < MIN_RISK) ? 'TP_IN_ZONE' : 'OPEN';
     }
     out.bars_held++;
-    const fav = isBuy ? (b.h - entryPx) : (entryPx - b.l);
-    const adv = isBuy ? (entryPx - b.l) : (b.h - entryPx);
-    best  = best  == null ? fav : Math.max(best, fav);
-    worst = worst == null ? adv : Math.max(worst, adv);
+    // MFE/MAE describe the trade, so they stop when the trade does — accumulating
+    // to the end of the day reported 18R of "favourable excursion" on a plan that
+    // had already been stopped out hours earlier.
+    if (out.status === 'OPEN' || out.status === 'NO_LEVELS' || out.status === 'SL_IN_ZONE') {
+      const fav = isBuy ? (b.h - entryPx) : (entryPx - b.l);
+      const adv = isBuy ? (entryPx - b.l) : (b.h - entryPx);
+      best  = best  == null ? fav : Math.max(best, fav);
+      worst = worst == null ? adv : Math.max(worst, adv);
+    }
     if (out.status === 'OPEN') {
       const hitSl = isBuy ? b.l <= sl  : b.h >= sl;
       const hitTp = isBuy ? b.h >= tp1 : b.l <= tp1;
@@ -229,7 +246,7 @@ function replayPlan(legs, bars, buf, dayOver) {
   for (const r of results) if (r.status === 'OPEN') r.status = dayOver ? 'OPEN_END' : 'PENDING';
   // a leg that filled but carried no usable levels can't be scored — don't let it
   // stand in for the read's plan verdict if another leg can be scored
-  const scorable = (r) => r.status !== 'NO_LEVELS' && r.status !== 'SL_IN_ZONE';
+  const scorable = (r) => !['NO_LEVELS', 'SL_IN_ZONE', 'TP_IN_ZONE'].includes(r.status);
   const first = filled.find(scorable) || filled[0] || null;
   return {
     legs: results, filled: filled.length, legs_total: results.length,
