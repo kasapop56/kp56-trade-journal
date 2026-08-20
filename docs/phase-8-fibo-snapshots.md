@@ -228,6 +228,20 @@ The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
   same bar and falls straight back to M5 — which is what keeps the stale-`FH`
   garbage frames out without any extra range-sanity rule.
 
+**TF invariance (regression, fixed same day).** The first cut of this computed the
+SL touch at CHART level, on chart `high`/`low`, and the anti-lock valve read chart
+`time`. That made the whole state machine depend on which timeframe you happened to
+be looking at — switching the chart changed where the SL was detected, which changed
+MAIN/FALLBACK/WAIT, which changed the frame on screen. It broke the indicator's
+founding promise (`คำนวณกรอบจาก TF หลัก เสมอ -> ดูใน M5/M1 เส้นไม่เปลี่ยน`). SL
+detection now lives INSIDE `f_box`, so each lane judges its own frame on its own
+bars via `request.security`; the valve measures from `mFrId` (an M15 frame time)
+instead of chart `time`; and the chart-level latch dropped its `barstate.isconfirmed`
+gate, since every input it reads is already a security value that only moves on its
+own TF's close. Nothing in the frame or state path reads a chart bar any more — chart
+TF now affects only when zone/signal ALERTS fire, which was always the intent (run
+them on M5).
+
 **Where the state shows up.** On-chart label hanging under the Mid line —
 `M15 based` / `M5 based · awaiting new M15` / `no frame · awaiting new M15`. It is
 anchored to `mid`, NOT to `close`: `mid` only moves when the frame changes, so the
