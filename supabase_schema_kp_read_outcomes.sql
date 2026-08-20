@@ -1,5 +1,5 @@
 -- ── KP56 Co-pilot · Read outcomes (Phase 9) ─────────────────────────────────
--- One row per co-pilot read (kp_signals). Written by api/kp-eval.js, which
+-- One row per co-pilot read (kp_signals). Written by api/_kp_eval.js (via /api/fibo-eval?target=reads), which
 -- REPLAYS each read against the intraday BAR feed (trade_events, event='BAR',
 -- payload.ctx.bar1 OHLC) capped to the read's Bangkok trading day, and classifies
 -- what price ACTUALLY did — not just win/loss:

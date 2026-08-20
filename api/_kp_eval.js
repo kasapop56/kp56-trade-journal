@@ -11,9 +11,12 @@
 //   • zone_behavior — did the zone the read leaned on HOLD / BREAK / get swept
 //   • verdict    — WIN/LOSS/STALL/PARTIAL/OK_NOTRADE/MISSED/PENDING/EXPIRED/NO_BARS
 //
-// GET /api/kp-eval            → diagnostics only (read-only, default)
-// GET /api/kp-eval?write=1    → replay + upsert kp_read_outcomes, return tally
-// GET /api/kp-eval?days=30    → lookback window for reads (default from config)
+// Not a route itself (underscore prefix → not a serverless function, to stay under
+// the Hobby-plan 12-function cap). Invoked via /api/fibo-eval?target=reads and by
+// the nightly report (both call runEval), e.g.:
+//   GET /api/fibo-eval?target=reads            → diagnostics only (read-only)
+//   GET /api/fibo-eval?target=reads&write=1    → replay + upsert kp_read_outcomes
+//   GET /api/fibo-eval?target=reads&days=30    → lookback window (default from config)
 //
 // No Pine/EA change. Writes via service-role. Mirrors api/fibo-eval.js.
 

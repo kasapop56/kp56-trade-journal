@@ -275,7 +275,7 @@ let _cpEvalAt = 0;
 function cpKickEval() {
   if (Date.now() - _cpEvalAt < 60000) return;   // at most once per minute
   _cpEvalAt = Date.now();
-  fetch('/api/kp-eval?write=1&days=7').catch(() => { /* offline / cold start */ });
+  fetch('/api/fibo-eval?target=reads&write=1&days=7').catch(() => { /* offline / cold start */ });
 }
 
 // Debounced repaint for the outcomes realtime feed. A batch upsert emits many row

@@ -10,7 +10,7 @@
 // the co-pilot's suggestion — each is evaluated on its own merit.
 
 const { getDb, getAnthropic, sendTelegram, num, round, CFG } = require('./_kp_lib');
-const { runEval } = require('./kp-eval');
+const { runEval } = require('./_kp_eval');
 
 // Roll up today's read outcomes into a compact co-pilot self-accuracy summary:
 // how many reads played out (WIN) vs went against (LOSS) vs stalled, the day type

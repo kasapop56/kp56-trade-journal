@@ -1,8 +1,8 @@
 -- ── KP56 Co-pilot · Daily ATR frame (Phase 9) ───────────────────────────────
 -- One row per (symbol, Bangkok trading day). Fed by the "Daily ATR Zones"
 -- TradingView indicator, which fires ONE alert at each new day carrying the
--- day's open + the ATR value it draws its ±multiplier ladder from → api/kp-atr.js
--- upserts here. The read evaluator (api/kp-eval.js) reads this so its price-
+-- day's open + the ATR value it draws its ±multiplier ladder from → the
+-- type-routed webhook api/fibo-snapshot.js ("daily_atr") upserts here. The read evaluator (api/kp-eval.js) reads this so its price-
 -- behavior classification uses the SAME ladder the trader sees on the chart.
 --
 -- If the alert is missing for a day, the evaluator falls back to computing a

@@ -19,6 +19,7 @@
 //   Tie (one bar hits both TP1 and SL) = LOSS (conservative; OHLC can't order them).
 
 const { createClient } = require('@supabase/supabase-js');
+const { runEval: runReadEval } = require('./_kp_eval');   // co-pilot read evaluator (folded in to stay ≤12 fns)
 
 const POINT = 0.01;                 // XAUUSD 1 point in price
 const SYM   = 'XAUUSD';             // frame symbol; feed is 'XAUUSDr' (broker suffix)
@@ -225,6 +226,14 @@ function replaySide(frame, side, mode, bars) {
 
 module.exports = async (req, res) => {
   try {
+    // Co-pilot read evaluator shares this route (?target=reads) so it isn't a
+    // separate serverless function (Hobby-plan 12-fn cap). Same BAR-replay family.
+    if (String(req.query.target || '') === 'reads') {
+      const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
+      const { status, body } = await runReadEval({ days: rdays, write: req.query.write === '1' });
+      return res.status(status).json(body);
+    }
+
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
     const write = req.query.write === '1';
     const sinceISO = new Date(Date.now() - days * 86400e3).toISOString();

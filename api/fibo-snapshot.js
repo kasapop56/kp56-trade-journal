@@ -56,6 +56,50 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Bangkok (UTC+7) civil date "YYYY-MM-DD" for a ms epoch.
+function bkkDateStr(ms) {
+  const t = new Date(ms + 7 * 3600 * 1000);
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
+}
+
+// Daily ATR frame from the "Daily ATR Zones" indicator's once-a-day alert.
+// Merged here (instead of a separate api/kp-atr.js) to stay under the Hobby-plan
+// 12-function cap — it's just another TradingView webhook. Upserts one row per
+// (symbol, Bangkok date) into kp_atr; the read evaluator (_kp_eval) reads it.
+async function handleDailyAtr(res, p) {
+  const atr = num(p.atr), dayOpen = num(p.day_open);
+  if (atr == null || dayOpen == null) return bad(res, 400, 'missing_field: atr / day_open');
+
+  const tsMs = num(p.ts) != null ? num(p.ts) : Date.now();
+  const atrDate = bkkDateStr(tsMs);
+  const symbol = p.symbol || 'XAUUSD';
+
+  const mults = [0.25, 0.5, 0.75, 1.0, 1.25, -0.25, -0.5, -0.75, -1.0, -1.25];
+  const bands = {};
+  for (const m of mults) bands[String(m)] = Math.round((dayOpen + atr * m) * 100) / 100;
+
+  const row = {
+    symbol, atr_date: atrDate, day_open: dayOpen, atr,
+    atr_len: num(p.atr_len), method: p.method || null,
+    day_high: num(p.day_high), day_low: num(p.day_low),
+    bands, raw: p, ts: new Date(tsMs).toISOString(), updated_at: new Date().toISOString(),
+  };
+
+  try {
+    const db = getClient();
+    const { data, error } = await db.from('kp_atr')
+      .upsert(row, { onConflict: 'symbol,atr_date' }).select('id, atr_date').single();
+    if (error) {
+      const missing = error.code === '42P01';
+      return bad(res, missing ? 424 : 500,
+        missing ? 'kp_atr table missing — run supabase_schema_kp_atr.sql' : error.message);
+    }
+    return res.status(200).json({ ok: true, type: 'DAILY_ATR', id: data.id, atr_date: data.atr_date, atr, day_open: dayOpen });
+  } catch (e) {
+    return bad(res, 500, 'db_error: ' + e.message);
+  }
+}
+
 function fmt(v) {
   const n = num(v);
   return n === null ? '-' : String(n);
@@ -275,6 +319,7 @@ module.exports = async (req, res) => {
 
   // Route by type: lifecycle events go to fibo_events, everything else is a frame.
   const type = String(p.type || 'SNAPSHOT').toUpperCase();
+  if (type === 'DAILY_ATR') return handleDailyAtr(res, p);  // KP56 co-pilot ATR frame
   if (type === 'ZONE') return handleZone(res, p);      // heads-up ping, no DB
   if (type === 'SIGNAL') return handleSignal(res, p);  // entry signal, Telegram only
   if (type === 'ENTER' || type === 'WIN' || type === 'LOSS') {
