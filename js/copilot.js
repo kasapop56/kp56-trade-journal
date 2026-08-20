@@ -79,7 +79,7 @@ async function cpLoadLatest() {
       .order('ts', { ascending: false }).limit(30),
     db.from('kp_price').select('symbol, price, ts').order('ts', { ascending: false }).limit(1).maybeSingle(),
     db.from('kp_read_outcomes')
-      .select('signal_id, verdict, day_type, direction_actual, fav_atr, adv_atr, zone_behavior, behavior_note')
+      .select('signal_id, verdict, day_type, direction_actual, fav_atr, adv_atr, zone_behavior, behavior_note, meta')
       .order('read_ts', { ascending: false }).limit(30),
   ]);
   if (sitRes.error && sitRes.error.code !== 'PGRST116') throw sitRes.error;
@@ -114,7 +114,25 @@ function cpVerdictBadge(o) {
   };
   const [label, cls] = map[o.verdict] || [o.verdict, 'cp-vd-pending'];
   const title = o.behavior_note ? ` title="${String(o.behavior_note).replace(/"/g, '&quot;')}"` : '';
-  return `<span class="cp-vd ${cls}"${title}>${label}</span>`;
+  let out = `<span class="cp-vd ${cls}"${title}>${label}</span>`;
+  // Plan replay is the score for what the read ADVISED (a pending order at the zone),
+  // as opposed to the badge above, which is only the directional lean. Shown next to
+  // it, never instead of it.
+  const pr = o.meta && o.meta.plan_replay, pv = o.meta && o.meta.plan_verdict;
+  if (pv) {
+    const pmap = {
+      WIN:      ['🎯 แผนเข้าเป้า', 'cp-vd-win'],
+      LOSS:     ['🎯 แผนโดน SL', 'cp-vd-loss'],
+      NO_FILL:  ['🎯 ราคาไม่มาถึงโซน', 'cp-vd-pending'],
+      OPEN_END: ['🎯 เข้าแล้วค้าง', 'cp-vd-stall'],
+      PENDING:  ['🎯 รอราคามา', 'cp-vd-pending'],
+      NO_LEVELS:['🎯 ไม่มี SL/TP', 'cp-vd-pending'],
+    };
+    const [pl, pc] = pmap[pv] || [pv, 'cp-vd-pending'];
+    const rr = (pr && pr.rr1) ? ` · RR ${pr.rr1}` : '';
+    out += ` <span class="cp-vd ${pc}" title="แผนที่อ่านให้ไว้ (รอที่โซน + SL/TP)${rr}">${pl}</span>`;
+  }
+  return out;
 }
 
 // Merge the two sources into a price-anchored ladder of levels.

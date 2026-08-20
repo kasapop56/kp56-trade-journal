@@ -238,7 +238,8 @@ module.exports = async (req, res) => {
     if (String(req.query.target || '') === 'backfill_plans') {
       const { runPlanBackfill } = require('./_kp_lib');
       const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 120, 1), 400);
-      const { status, body } = await runPlanBackfill({ days: rdays, write: req.query.write === '1' });
+      const { status, body } = await runPlanBackfill({ days: rdays, write: req.query.write === '1',
+                                                       force: req.query.force === '1' });
       return res.status(status).json(body);
     }
     if (String(req.query.target || '') === 'attribution') {

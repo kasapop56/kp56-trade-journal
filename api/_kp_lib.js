@@ -949,7 +949,7 @@ async function runAnalysis(db, opts = {}) {
 // so the structured plan CAN be recovered for existing history (only the input
 // freshness and the prompt identity are truly lost — those are marked 'pre-9c').
 // Exposed at /api/fibo-eval?target=backfill_plans[&write=1]; safe to re-run.
-async function runPlanBackfill({ days = 120, write = false } = {}) {
+async function runPlanBackfill({ days = 120, write = false, force = false } = {}) {
   const db = getDb();
   const sinceISO = new Date(Date.now() - days * 86400e3).toISOString();
   const { data, error } = await db.from('kp_signals')
@@ -959,8 +959,9 @@ async function runPlanBackfill({ days = 120, write = false } = {}) {
 
   const todo = [], skipped = [];
   for (const s of data || []) {
-    // re-parse rows captured before read_stance existed (the parser's recall changed)
-    if (s.meta && s.meta.plan_source && s.meta.read_stance) { skipped.push(s.id); continue; }
+    // re-parse rows captured before read_stance existed (the parser's recall changed);
+    // ?force=1 re-parses everything, for when the extraction rules improve again
+    if (!force && s.meta && s.meta.plan_source && s.meta.read_stance) { skipped.push(s.id); continue; }
     const managed = !!(s.meta && s.meta.positions && s.meta.positions.count);
     const p = parsePlan('', s.message || '', managed);
     const stance = readStance(s.bias_call, p.legs, managed);

@@ -32,7 +32,7 @@ const SYM   = 'XAUUSD';
 // outcome row so a later re-grade under different thresholds can never be silently
 // mixed with old outcomes (verdicts are recomputed on every run, so without this
 // a threshold tweak would rewrite all of history with no marker).
-const EVAL_REV = '9e';
+const EVAL_REV = '9f';
 const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
   .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
@@ -174,6 +174,9 @@ function zoneFreshness(bars, zone, dayIdx, beforeMs) {
 // The entry bar is judged whole, so a bar that reaches into the zone and to the stop
 // in one move is a loss. That is the conservative reading and it matches fibo-eval.
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+// Minimum distance from fill to stop for a plan to be tradeable at all ($ on gold).
+// Below this the "risk" is spread noise and every R-multiple derived from it is junk.
+const MIN_RISK = 0.5;
 
 function replayLeg(leg, bars, buf) {
   const a = num(leg.zone_lo), b2 = num(leg.zone_hi) ?? num(leg.zone_lo);
@@ -186,11 +189,20 @@ function replayLeg(leg, bars, buf) {
   for (const b of bars) {
     if (entryPx == null) {
       if (b.h < zLo - buf || b.l > zHi + buf) continue;          // bar never reached the zone
-      entryPx = isBuy ? Math.min(zHi, b.o) : Math.max(zLo, b.o);
+      // Fill INSIDE the zone, always: at the bar's open if it opened within the
+      // band, otherwise at the edge the price approached (a buy limit sits at the
+      // upper edge, a sell limit at the lower edge). Taking the bar's open when it
+      // opened OUTSIDE the band let the fill land next to the stop — one read filled
+      // a sell at 4366.7 against a 4366.75 stop, R = $0.05, and every R-multiple
+      // downstream exploded (MFE 87R).
+      entryPx = (b.o >= zLo && b.o <= zHi) ? b.o : (isBuy ? zHi : zLo);
       out.entry_at = b.t; out.entry_px = r2(entryPx);
-      if (sl != null && Math.abs(entryPx - sl) > 0) R = Math.abs(entryPx - sl);
+      const risk = sl == null ? null : Math.abs(entryPx - sl);
+      // A stop inside (or a hair from) the entry zone is not a tradeable plan.
+      if (risk != null && risk >= MIN_RISK) R = risk;
       out.rr1 = (R && tp1 != null) ? r2(Math.abs(tp1 - entryPx) / R) : null;
-      out.status = (sl == null || tp1 == null) ? 'NO_LEVELS' : 'OPEN';
+      out.status = (sl == null || tp1 == null) ? 'NO_LEVELS'
+                 : (R == null) ? 'SL_IN_ZONE' : 'OPEN';
     }
     out.bars_held++;
     const fav = isBuy ? (b.h - entryPx) : (entryPx - b.l);
@@ -215,7 +227,10 @@ function replayPlan(legs, bars, buf, dayOver) {
   const results = legs.map(l => replayLeg(l, bars, buf));
   const filled = results.filter(r => r.entry_at != null).sort((x, y) => x.entry_at - y.entry_at);
   for (const r of results) if (r.status === 'OPEN') r.status = dayOver ? 'OPEN_END' : 'PENDING';
-  const first = filled[0] || null;
+  // a leg that filled but carried no usable levels can't be scored — don't let it
+  // stand in for the read's plan verdict if another leg can be scored
+  const scorable = (r) => r.status !== 'NO_LEVELS' && r.status !== 'SL_IN_ZONE';
+  const first = filled.find(scorable) || filled[0] || null;
   return {
     legs: results, filled: filled.length, legs_total: results.length,
     verdict: first ? first.status : (dayOver ? 'NO_FILL' : 'PENDING'),
