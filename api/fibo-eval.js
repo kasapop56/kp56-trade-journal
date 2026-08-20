@@ -243,7 +243,10 @@ module.exports = async (req, res) => {
     }
     if (String(req.query.target || '') === 'attribution') {
       const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
-      const { status, body } = await runAttribution({ days: rdays });
+      // basis=plan grades the advised pending order; default 'lean' is the
+      // directional ±ATR measure. Kept separate — they are different questions.
+      const basis = req.query.basis === 'plan' ? 'plan' : 'lean';
+      const { status, body } = await runAttribution({ days: rdays, basis });
       return res.status(status).json(body);
     }
 

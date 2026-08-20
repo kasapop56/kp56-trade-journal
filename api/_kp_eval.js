@@ -32,7 +32,7 @@ const SYM   = 'XAUUSD';
 // outcome row so a later re-grade under different thresholds can never be silently
 // mixed with old outcomes (verdicts are recomputed on every run, so without this
 // a threshold tweak would rewrite all of history with no marker).
-const EVAL_REV = '9d';
+const EVAL_REV = '9e';
 const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
   .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
@@ -158,6 +158,70 @@ function zoneFreshness(bars, zone, dayIdx, beforeMs) {
     if (isSupply ? b.c > hi : b.c < lo) broke = true;   // closed through = broken
   }
   return { tests, fresh: tests === 0, broke };
+}
+
+// ── plan replay ──────────────────────────────────────────────────────────────
+// Grades what the read actually ADVISED: a pending limit at a zone edge, with a stop
+// and a first target. This is the only honest yardstick for a "wait" read — the
+// directional ±ATR measure grades a market order the read explicitly told the trader
+// not to take. Mirrors replaySide() in fibo-eval.js so both evaluators agree.
+//
+//   entry   = the first bar that trades into the zone band (fill at the near edge,
+//             or at the bar's open if it opened already through the zone)
+//   outcome = TP1 or SL, whichever is touched first; a bar touching BOTH counts as
+//             LOSS, because OHLC cannot order what happened inside the bar
+//
+// The entry bar is judged whole, so a bar that reaches into the zone and to the stop
+// in one move is a loss. That is the conservative reading and it matches fibo-eval.
+const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+
+function replayLeg(leg, bars, buf) {
+  const a = num(leg.zone_lo), b2 = num(leg.zone_hi) ?? num(leg.zone_lo);
+  const zLo = Math.min(a, b2), zHi = Math.max(a, b2);
+  const isBuy = String(leg.side) === 'buy';
+  const sl = num(leg.sl), tp1 = num(leg.tp1);
+  const out = { side: leg.side, zone_lo: zLo, zone_hi: zHi, sl, tp1, status: 'NO_FILL',
+                entry_at: null, entry_px: null, rr1: null, mfe_r: null, mae_r: null, bars_held: 0 };
+  let entryPx = null, R = null, best = null, worst = null;
+  for (const b of bars) {
+    if (entryPx == null) {
+      if (b.h < zLo - buf || b.l > zHi + buf) continue;          // bar never reached the zone
+      entryPx = isBuy ? Math.min(zHi, b.o) : Math.max(zLo, b.o);
+      out.entry_at = b.t; out.entry_px = r2(entryPx);
+      if (sl != null && Math.abs(entryPx - sl) > 0) R = Math.abs(entryPx - sl);
+      out.rr1 = (R && tp1 != null) ? r2(Math.abs(tp1 - entryPx) / R) : null;
+      out.status = (sl == null || tp1 == null) ? 'NO_LEVELS' : 'OPEN';
+    }
+    out.bars_held++;
+    const fav = isBuy ? (b.h - entryPx) : (entryPx - b.l);
+    const adv = isBuy ? (entryPx - b.l) : (b.h - entryPx);
+    best  = best  == null ? fav : Math.max(best, fav);
+    worst = worst == null ? adv : Math.max(worst, adv);
+    if (out.status === 'OPEN') {
+      const hitSl = isBuy ? b.l <= sl  : b.h >= sl;
+      const hitTp = isBuy ? b.h >= tp1 : b.l <= tp1;
+      if (hitSl) out.status = 'LOSS';        // tie inside one bar → LOSS
+      else if (hitTp) out.status = 'WIN';
+    }
+  }
+  if (R) { out.mfe_r = r2(best / R); out.mae_r = r2(worst / R); }
+  return out;
+}
+
+// A read often advises both sides ("wait to sell up there / buy down there"). The
+// side that actually filled FIRST is the trade that would have happened, so that leg
+// carries the read's plan verdict.
+function replayPlan(legs, bars, buf, dayOver) {
+  const results = legs.map(l => replayLeg(l, bars, buf));
+  const filled = results.filter(r => r.entry_at != null).sort((x, y) => x.entry_at - y.entry_at);
+  for (const r of results) if (r.status === 'OPEN') r.status = dayOver ? 'OPEN_END' : 'PENDING';
+  const first = filled[0] || null;
+  return {
+    legs: results, filled: filled.length, legs_total: results.length,
+    verdict: first ? first.status : (dayOver ? 'NO_FILL' : 'PENDING'),
+    first_side: first ? first.side : null,
+    rr1: first ? first.rr1 : null, mfe_r: first ? first.mfe_r : null, mae_r: first ? first.mae_r : null,
+  };
 }
 
 // buy/sell direction implied by a bias/leg/side word (Bull/Bear/UP/DOWN/S/B/…)
@@ -409,6 +473,11 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   }
   const behavior_note = parts.filter(Boolean).join(' · ');
 
+  // ── plan replay: grade the advised pending order, not a market order at P0 ──
+  const planReplay = (readKind !== 'manage' && entryLegs.length && after.length)
+    ? replayPlan(entryLegs, after, E.zoneBufferPrice, day < today)
+    : null;
+
   const outObj = {
     ...base,
     day_open: dayOpen, atr: atr != null ? Math.round(atr * 100) / 100 : null, atr_source: atrSource || 'none',
@@ -420,8 +489,12 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
     meta: { day_high: dayHigh, day_low: dayLow, fav_ext: favExt, adv_ext: advExt, first_touch: result, ladder_open: ladderOpen, atr_source: atrSource || 'none',
             eval_version: EVAL_VERSION, read_price_age_min: num(sig.meta?.freshness?.price_age_min),
             prompt_version: sig.meta?.prompt_version ?? null, plan_source: sig.meta?.plan_source ?? null,
-            read_kind: readKind, post_max_atr: postMaxAtr, leg_touched: legTouched,
+            read_kind: readKind, read_stance: sig.meta?.read_stance ?? null,
+            post_max_atr: postMaxAtr, leg_touched: legTouched,
             entry_legs: entryLegs.length,
+            // the plan the read actually gave, replayed as a pending limit order —
+            // a SEPARATE track from `verdict` (which stays the directional lean)
+            plan_replay: planReplay, plan_verdict: planReplay ? planReplay.verdict : null,
             // hours of runway the read had before its day closed — late reads are
             // structurally more likely to end STALL/EXPIRED, so any cross-bucket
             // comparison has to be able to control for it
@@ -506,6 +579,8 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
 
     const tally = {};
     for (const r of rows) tally[r.verdict] = (tally[r.verdict] || 0) + 1;
+    const planTally = {};
+    for (const r of rows) if (r.meta.plan_verdict) planTally[r.meta.plan_verdict] = (planTally[r.meta.plan_verdict] || 0) + 1;
     // Health: every failure mode here fails PLAUSIBLE, not loud (a deactivated Pine
     // alert, an EA that went down, a day the ATR row never arrived). Surface it in
     // the response so a red number is visible instead of clean-looking stats.
@@ -516,6 +591,7 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
     return { status: 200, body: {
       ok: true, mode: write ? 'write' : 'dry', window_days: days,
       reads: signals.length, rows_upserted: write ? rows.length : 0, bars_used: bars.length,
+      plan_tally: planTally,
       bar_feed: { oldest: bars[0]?.t ?? null, newest: bars.at(-1)?.t ?? null, days: daysArr.length },
       atr_days: atrByDay.size, tally, eval_version: EVAL_VERSION,
       prompt_versions: [...new Set(signals.map(s => s.meta?.prompt_version ?? 'pre-9c'))],
@@ -534,8 +610,11 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
       },
       preview: write ? undefined : rows.map(r => ({
         id: r.signal_id, call: r.call, kind: r.meta.read_kind, verdict: r.verdict,
-        fav: r.fav_atr, adv: r.adv_atr, post: r.meta.post_max_atr,
-        touched: r.meta.leg_touched, day: r.day_type, atr_src: r.atr_source,
+        plan: r.meta.plan_verdict, filled: r.meta.plan_replay ? r.meta.plan_replay.filled : null,
+        side: r.meta.plan_replay ? r.meta.plan_replay.first_side : null,
+        rr1: r.meta.plan_replay ? r.meta.plan_replay.rr1 : null,
+        mfe_r: r.meta.plan_replay ? r.meta.plan_replay.mfe_r : null,
+        post: r.meta.post_max_atr, day: r.day_type, atr_src: r.atr_source,
       })),
     } };
   }
@@ -546,7 +625,10 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
 // dimension: what did price do when THIS ingredient was present? Groups verdicts
 // per bucket and computes a directional hit-rate (WIN / (WIN+LOSS)). Pure JS
 // aggregation — no new table. Meaningful only once enough reads accumulate.
-function runAttributionRows(rows, minSamples) {
+// basis 'lean' = the directional ±ATR measure (dense, symmetric, 50% null)
+// basis 'plan' = the replayed pending order (sparse, but the advice actually given).
+// Never mixed: they answer different questions and have different null rates.
+function runAttributionRows(rows, minSamples, basis) {
   const dims = {};
   const bump = (dim, value, verdict) => {
     if (value == null || value === 'na' || value === '') return;
@@ -566,23 +648,25 @@ function runAttributionRows(rows, minSamples) {
     if ((r.meta && r.meta.read_kind) === 'manage') { skipped_manage++; continue; }
     const f = r.meta && r.meta.factors;
     if (!f) continue;
+    const verdict = basis === 'plan' ? (r.meta.plan_verdict || 'NONE') : r.verdict;
+    if (basis === 'plan' && verdict === 'NONE') continue;
     total++;
-    if (r.verdict === 'WIN' || r.verdict === 'LOSS') decided++;
-    bump('call', f.call, r.verdict);
-    bump('call_vs_m15', f.call_vs_m15, r.verdict);
-    bump('call_vs_fibo_leg', f.call_vs_fibo_leg, r.verdict);
-    bump('mario_fibo_aligned', f.mario_fibo_aligned == null ? null : (f.mario_fibo_aligned ? 'aligned' : 'conflict'), r.verdict);
-    bump('bias_conflict', f.bias_conflict == null ? null : (f.bias_conflict ? 'm15≠m5' : 'm15=m5'), r.verdict);
-    bump('vp_bucket', f.vp_bucket, r.verdict);
-    bump('zone_source', f.zone_source, r.verdict);
-    bump('zone_score', f.zone_score_bucket, r.verdict);
-    bump('zone_state', f.zone_state, r.verdict);   // fresh vs retested (Zone Freshness)
+    if (verdict === 'WIN' || verdict === 'LOSS') decided++;
+    bump('call', f.call, verdict);
+    bump('call_vs_m15', f.call_vs_m15, verdict);
+    bump('call_vs_fibo_leg', f.call_vs_fibo_leg, verdict);
+    bump('mario_fibo_aligned', f.mario_fibo_aligned == null ? null : (f.mario_fibo_aligned ? 'aligned' : 'conflict'), verdict);
+    bump('bias_conflict', f.bias_conflict == null ? null : (f.bias_conflict ? 'm15≠m5' : 'm15=m5'), verdict);
+    bump('vp_bucket', f.vp_bucket, verdict);
+    bump('zone_source', f.zone_source, verdict);
+    bump('zone_score', f.zone_score_bucket, verdict);
+    bump('zone_state', f.zone_state, verdict);   // fresh vs retested (Zone Freshness)
     // atr_day_type is NOT aggregated: the realized day type is not knowable at read
     // time and is computed from the same travel that decides the verdict, so
     // "buy reads win on TREND days" is near-tautological and cannot be acted on
     // ex-ante. Kept as a descriptive column on the outcome row only.
-    bump('session', f.session, r.verdict);
-    for (const tag of (f.zone_tags || [])) bump('zone_tag', tag, r.verdict);
+    bump('session', f.session, verdict);
+    for (const tag of (f.zone_tags || [])) bump('zone_tag', tag, verdict);
   }
 
   // finalize: hit_rate + sort each dim by hit_rate (buckets with a decided base first)
@@ -604,10 +688,10 @@ function runAttributionRows(rows, minSamples) {
     }).sort((a, z) => (a.small_sample ? 1 : 0) - (z.small_sample ? 1 : 0)
                    || (z.hit_rate_pct ?? -1) - (a.hit_rate_pct ?? -1) || z.decided - a.decided);
   }
-  return { total_with_factors: total, decided, skipped_manage, min_samples: minSamples, dims: out };
+  return { basis: basis || 'lean', total_with_factors: total, decided, skipped_manage, min_samples: minSamples, dims: out };
 }
 
-async function runAttribution({ days = CFG.eval.lookbackDays, minSamples = 3 } = {}) {
+async function runAttribution({ days = CFG.eval.lookbackDays, minSamples = 3, basis = 'lean' } = {}) {
   const sinceISO = new Date(Date.now() - days * 86400e3).toISOString();
   const { data, error } = await db().from('kp_read_outcomes')
     .select('verdict, call, meta').gte('read_ts', sinceISO)
@@ -616,7 +700,7 @@ async function runAttribution({ days = CFG.eval.lookbackDays, minSamples = 3 } =
     const missing = error.code === '42P01';
     return { status: missing ? 424 : 500, body: { ok: false, error: missing ? 'kp_read_outcomes table missing' : error.message } };
   }
-  const agg = runAttributionRows(data || [], minSamples);
+  const agg = runAttributionRows(data || [], minSamples, basis);
   return { status: 200, body: { ok: true, window_days: days, ...agg } };
 }
 

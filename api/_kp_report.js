@@ -31,11 +31,17 @@ function copilotAccuracy(outcomes) {
     const c = String(o.call || '').toLowerCase();
     if (c === 'buy') buy++; else if (c === 'sell') sell++; else notrade++;
   }
+  // plan replay — the advised pending order, graded on its own terms
+  const pv = {};
+  for (const o of entry) { const v = o.meta && o.meta.plan_verdict; if (v) pv[v] = (pv[v] || 0) + 1; }
+  const planDecided = (pv.WIN || 0) + (pv.LOSS || 0);
   return {
     reads: outcomes.length,
     entry_reads: entry.length,
     manage_reads: manage,
     graded: graded.length,
+    plan: { tally: pv, decided: planDecided, filled: Object.entries(pv)
+              .filter(([k]) => k !== 'NO_FILL' && k !== 'PENDING').reduce((n, [, v]) => n + v, 0) },
     tally: t,
     hit_rate_pct: decided ? Math.round((wins / decided) * 100) : null,   // of decided reads only
     lean: { buy, sell, no_trade: notrade },
@@ -70,6 +76,8 @@ Grade on:
 2. Discipline scorecard — was an SL always set? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
 4. Co-pilot accuracy (INDEPENDENT of trades) — you also receive "copilot_accuracy": how each of today's co-pilot READS actually played out on the ATR ladder, whether or not the trader acted on it. Use it to grade the co-pilot ITSELF: hit_rate (of decided reads), how many STALLED (นิ่ง = read a move that never came) vs went AGAINST, what day_type the day turned out to be (BALANCE/NORMAL/TREND/OUTSIZED), and the directional lean (was the co-pilot too bull/bear vs what price did). Call out the pattern honestly, e.g. "co-pilot อ่าน buy 4/5 แต่วันทรงตัว → เอียง bull เกินไป โซนไม่วิ่ง" or "โซน sell ยืน 3/3 แม่น". This is observational — describe the tendency, don't overclaim from one day.
+4b. Plan replay — "copilot_accuracy.plan" grades what each read actually ADVISED: a pending order at the zone edge with SL and TP1 (entry = price reached the zone, then TP1 vs SL, first touch wins). This is the honest score for a "wait" read; the older verdict field is only a directional lean and is NOT the plan's result. Report it as plain counts in one or two lines (e.g. "แผนที่ราคามาถึงโซน 3 ไม้ · ถึง TP1 ก่อน 2 · โดน SL ก่อน 1 · ไม่ได้เข้า 4"). NO_FILL means price never came to the level — that is neither a win nor a loss, say so plainly. If plan.decided is 0, write one line: "ยังไม่มีแผนไหนที่ราคามาถึงโซนแล้วจบผล" and move on.
+
 5. Factor attribution (ROLLING, multi-day) — you also receive "factor_attribution": across the last ~30 days, verdict counts grouped by the INGREDIENTS present at each read — call_vs_m15 (with/against the M15 bias), call_vs_fibo_leg, mario_fibo_aligned, bias_conflict (M15 vs M5), vp_bucket, zone_source (MT5/Fibo), zone_score, zone_state (fresh vs retested), zone_tag (BOS/CHoCH), session. HARD RULE — the data is far too thin to name an edge, and a confident wrong lesson is worse than no lesson: report this block as COUNTS ONLY (e.g. "ตามทิศ M15: ชนะ 3 แพ้ 1 · สวน: ชนะ 0 แพ้ 2"), never as a percentage, and NEVER call anything an edge, a rule, a trap, or a pattern. Any bucket with small_sample=true is omitted entirely. If "decided" across all reads is under 20, write exactly one line — "ยังเก็บข้อมูลอยู่ ยังสรุปไม่ได้" — plus the raw counts, and nothing more. Never fabricate a number not in the data. Reads with read_kind "manage" are excluded upstream (they advised no entry, so they are neither hit nor miss); if manage_reads is non-zero, mention in one short line how many reads were position-coaching rather than entry calls.
 6. Lessons — 1–2 concrete, specific things to do differently tomorrow, and 1 note on how much to trust the co-pilot given today's accuracy + the strongest proven factor edge.
 Be specific with numbers and levels. Thai output, mobile-readable, no filler.

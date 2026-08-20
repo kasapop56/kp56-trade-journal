@@ -605,10 +605,14 @@ function planFromText(text, managed) {
   let inPlan = true;   // starts open: the oldest reads have no 🎯 header at all
   const flush = () => { if (cur) legs.push(cur); cur = null; };
   const g = (l, re) => { const m = l.match(re); const n = m ? Number(m[1]) : NaN; return gold(n) ? n : null; };
+  // Tolerate words between the label and the price — the model writes things like
+  // "SL ใต้ wick ~4337" and "TP1 ที่ 4355". A short window keeps an unrelated number
+  // further down the line from being captured.
   const levels = (l, o) => {
-    if (o.sl  == null) o.sl  = g(l, /SL\s*:?\s*([\d.]+)/i);
-    if (o.tp1 == null) o.tp1 = g(l, /TP1\s*:?\s*([\d.]+)/i);
-    if (o.tp2 == null) o.tp2 = g(l, /TP2\s*:?\s*([\d.]+)/i);
+    if (o.sl  == null) o.sl  = g(l, /\bSL\b[^0-9\n]{0,14}([\d.]+)/i);
+    if (o.tp1 == null) o.tp1 = g(l, /\bTP1\b[^0-9\n]{0,14}([\d.]+)/i);
+    if (o.tp2 == null) o.tp2 = g(l, /\bTP2\b[^0-9\n]{0,14}([\d.]+)/i);
+    if (o.tp1 == null) o.tp1 = g(l, /\bTP\b(?![12])[^0-9\n]{0,14}([\d.]+)/i);
   };
   for (const raw of String(text || '').split(/\r?\n/)) {
     const l = raw.trim();
