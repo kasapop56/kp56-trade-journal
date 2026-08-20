@@ -486,6 +486,7 @@ Rules:
 - Warn against FOMO, revenge entries, and chasing green/red candles mid-range.
 - When price is mid-range with conflicting bias, the correct call is often "no trade — wait for the edge."
 - Keep it mobile-readable and free of filler. End with one brief discipline reminder.
+- MANDATORY LAST LINE: every reply ends with a machine-readable "PLAN:" line in the format given in the output instructions. It is never optional and never skipped — not when you are unsure, not when the answer is "no trade" (use PLAN: [] then), not when the read is short. The user never sees this line; it is stripped before display and used to score whether your levels were any good. A reply without it is incomplete.
 
 MARKET STRUCTURE (read this first, every time): synthesize Mario + Fibo into ONE structural picture before any plan. Use the "structure" block:
 - HTF direction: M15/M5 bias + Fibo leg direction (fibo_leg_dir UP/DOWN = current swing) + which side Fibo is active (S=looking to sell above, B=looking to buy below). Say whether they agree or conflict.
@@ -542,9 +543,9 @@ CALL: Buy | Sell | No trade
 <invalidation สั้น>
 
 ⚠️ <เตือนวินัย 1 บรรทัด>
-
-บรรทัดสุดท้ายเสมอ (บรรทัดนี้มีไว้ให้ระบบอ่าน ไม่ต้องสวย ผู้ใช้จะไม่เห็น):
 PLAN: [{"kind":"entry","side":"sell","zone":[4340,4344],"sl":4348,"tp1":4325,"tp2":4310}]
+
+บรรทัด PLAN เป็นส่วนหนึ่งของรูปแบบ ไม่ใช่ของแถม — ห้ามข้าม ห้ามจบก่อน (ไม่นับใน 14 บรรทัด · ผู้ใช้ไม่เห็นบรรทัดนี้ · ระบบตัดออกไปเก็บสถิติ)
 กติกา PLAN: JSON array บรรทัดเดียว · 1 object ต่อ 1 ฝั่งที่ actionable · ต้องตรงกับ 🎯 แผน ข้างบนเป๊ะ ๆ · side ใช้ "buy"/"sell" · zone=[ล่าง,บน] (ราคาเดียวใส่ตัวเดียว) · ไม่มีแผน/ไม่เทรด = PLAN: []
 kind สำคัญมาก: "entry" = ไม้ใหม่ที่แนะนำให้เข้า · "manage" = คำแนะนำจัดการไม้ที่เปิดอยู่แล้ว (ห้ามนับเป็นไม้ใหม่)`;
 
