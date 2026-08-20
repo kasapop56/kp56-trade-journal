@@ -185,10 +185,16 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   };
 
   // ── ATR frame ──
+  // ATR is used ONLY as a size yardstick — daily volatility is ~broker-independent,
+  // so its value is robust. The DAY is measured on OUR consistent window (the
+  // Bangkok trading day, same cut as the report + Fibo) anchored to THAT window's
+  // OWN open. So the ATR source broker's daily-bar cut time is irrelevant and can
+  // no longer skew day_type. The chart's day_open (GBE, from kp_atr) is kept only
+  // as the ladder-level reference (meta.ladder_open) so on-chart levels still match.
   let atr = num(atrRow?.atr), atrSource = atr != null ? 'indicator' : null;
-  let dayOpen = num(atrRow?.day_open);
   if (atr == null) { atr = computeAtr(daysArr, day, atrRow?.atr_len || 10); atrSource = atr != null ? 'computed' : 'none'; }
-  if (dayOpen == null) dayOpen = dayEntry ? dayEntry.open : null;
+  const ladderOpen = num(atrRow?.day_open);
+  const dayOpen = dayEntry ? dayEntry.open : ladderOpen;   // session open = day_type anchor
 
   const dayHigh = dayEntry ? dayEntry.high : null;
   const dayLow  = dayEntry ? dayEntry.low  : null;
@@ -299,7 +305,7 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
     fav_atr, adv_atr, fav_pts, adv_pts, reached_band,
     target_zone, reached_target, zone_behavior,
     verdict, behavior_note, bars_seen: after.length,
-    meta: { day_high: dayHigh, day_low: dayLow, fav_ext: favExt, adv_ext: advExt, first_touch: result },
+    meta: { day_high: dayHigh, day_low: dayLow, fav_ext: favExt, adv_ext: advExt, first_touch: result, ladder_open: ladderOpen, atr_source: atrSource || 'none' },
   };
   // Attach the read's ingredients (Mario/Fibo/structure/ATR/session) so the
   // attribution layer can learn which factors drive wins. Stored in meta (no
