@@ -199,6 +199,14 @@ The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
   is **a new pivot on BOTH sides after the death** (`mFhTm >= deathT and mFlTm >=
   deathT`) = M15 genuinely built a new swing. `deathT` therefore persists ACROSS
   redraws (`f_dead` resets per frame; `deathT` does not) until that is satisfied.
+- **Anti-lock valve** (`fbMaxMin`, default 240 min). The both-sides rule normally
+  clears in ~1–3h, but a one-way trend can starve M15 of new pivot highs for a whole
+  session, which would strand the frame on M5 indefinitely. Past the deadline, the
+  next M15 frame created after the death wins outright, both-sides or not. If that
+  frame is in fact still bad it trips its own SL quickly and drops back to M5, so the
+  valve cannot wedge a broken frame in place — worst case it costs one SL width. The
+  snapshot carries `reclaim: "leg" | "timeout"` (in `raw`, no migration) so the two
+  routes can be compared later rather than assumed equivalent.
 - **Self-repair.** A newly drawn frame born already beyond its own SL dies on the
   same bar and falls straight back to M5 — which is what keeps the stale-`FH`
   garbage frames out without any extra range-sanity rule.
