@@ -853,6 +853,20 @@ never be reconstructed afterwards.
 **No SQL, no EA, no Pine change** — `kp_signals.meta` and `kp_read_outcomes.meta` are
 already `jsonb`.
 
+**Verified live, and it needed a fix first.** The first read through the new prompt
+(signal 17) wrote the visible format perfectly and simply **stopped at the ⚠️ line** —
+`plan_source: parsed`, the text-parser fallback. The instructions had been placed
+*after* the "ใช้รูปแบบนี้เป๊ะ ๆ ตามลำดับ" block, so they read as commentary about the
+format rather than part of it, and the ~14-line cap argued against adding a line.
+Moving `PLAN:` inside the ordered template (directly under ⚠️), stating it does not
+count toward the cap, and repeating it as a mandatory last line in the **system**
+prompt fixed it: signal 18 returned `plan_source: json` with both legs structured, and
+the line is stripped from the displayed message as intended.
+
+This is worth recording as a pattern: the capture layer degrades **silently** — for
+weeks it would have kept inferring plans from prose while appearing to work. Any
+future change to the output contract needs one live read to confirm it, not a deploy.
+
 **Deploy + one-off:**
 ```
 git push                                  # Vercel auto-deploy
