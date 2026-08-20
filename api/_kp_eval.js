@@ -253,7 +253,7 @@ async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
 
     // reads to grade
     const sigRes = await db().from('kp_signals')
-      .select('id, ts, symbol, price, bias_call, market_state_id')
+      .select('id, ts, price, bias_call, market_state_id')   // no symbol col on kp_signals → default in classify
       .gte('ts', sinceISO).order('ts', { ascending: true }).limit(2000);
     if (sigRes.error) throw new Error('kp_signals: ' + sigRes.error.message);
     const signals = sigRes.data || [];
