@@ -179,6 +179,17 @@ The trader's eye had already moved to the M5 leg 4467.73 → 4450.80.
   predate the death — the low that broke the SL is itself the new anchor.
 - **WAIT** when both degrees are out. No zones drawn, no signals, badge says so.
   Honest > invented.
+- **The fallback lane runs its own pivot strength** (`fbPiv`, default 2, separate
+  from the main `pivLen` of 3). Dropping the TF alone was not enough: `f_box` takes
+  the latest pivot high and the latest pivot low *independently*, so a 3-bar pivot
+  on M5 that is too coarse to register the newest pullback low leaves a **fresh high
+  paired with a stale low** — the M15 disease reproduced one degree down. Observed
+  live 2026-08-20 20:49: the M5 frame read 4451.19 → 4484.56 while the actual current
+  wave was 4469.30 → 4484.37; the tops agreed, only the low was stale. A finer pivot
+  narrows the window where an unregistered low can be skipped. It does not close it
+  completely — the independent-anchor design always permits some pairing gap — so
+  `fbPiv` is an input: go to 1 if it still lags. `piv_len` in the payload and the
+  table now report the ACTIVE lane's strength, not always the main one.
 - **M5 is a recovery lane, not a co-owner** — M15 takes back control the moment it
   has a real leg again, and draws fresh levels. But "a new M15 frame exists" is NOT
   the test: after an impulse the new frame usually drags the stale `FH` along (no
