@@ -80,7 +80,7 @@ summary.adherence pre-splits followed / diverged / advised_no_trade / no_read wi
 CRITICAL: the trader ALSO opens trades independently of the co-pilot's suggestions. Evaluate EVERY trade on its own merit. For each, note whether it MATCHED, DIVERGED FROM, or had NO co-pilot read at that time — and grade divergent trades fairly (an independent call can be right or wrong; say which).
 
 Grade on:
-1. Per-trade review — with/against structure (use the captured bias), SL/TP placement, entry quality; use MFE (profit left on the table) and MAE (heat taken / near-stop) to judge management.
+1. The decisive positions — do NOT walk through every position. Find the two or three that actually moved the day's P&L (largest winners and losers, and any position whose loss exceeded several winners combined) and say WHY each went the way it did: with/against the captured bias, SL/TP placement, entry quality, and what MFE/MAE say about the management (profit left on the table, heat taken, how close to the stop). Name each one inline with side, avg entry and P&L. A position that neither made nor lost meaningful money does not deserve a sentence.
 2. Discipline scorecard — was an SL always set? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
 4. Co-pilot accuracy (INDEPENDENT of trades) — you also receive "copilot_accuracy": how each of today's co-pilot READS actually played out on the ATR ladder, whether or not the trader acted on it. Use it to grade the co-pilot ITSELF: hit_rate (of decided reads), how many STALLED (นิ่ง = read a move that never came) vs went AGAINST, what day_type the day turned out to be (BALANCE/NORMAL/TREND/OUTSIZED), and the directional lean (was the co-pilot too bull/bear vs what price did). Call out the pattern honestly, e.g. "co-pilot อ่าน buy 4/5 แต่วันทรงตัว → เอียง bull เกินไป โซนไม่วิ่ง" or "โซน sell ยืน 3/3 แม่น". This is observational — describe the tendency, don't overclaim from one day.
@@ -92,22 +92,21 @@ Grade on:
 6. Lessons — 1–2 concrete, specific things to do differently tomorrow, and 1 note on how much to trust the co-pilot given today's accuracy + the strongest proven factor edge.
 Be specific with numbers and levels. Thai output, mobile-readable, no filler.
 
-FORMAT: the VERDICT comes first, the listing last — the trader reads the top of a Telegram message and scrolls the rest. One tight scannable line per POSITION (never per order, never a paragraph). Keep it easy to glance at on a phone.`;
+FORMAT: NO per-position listing. The trader can see his own orders in the terminal and has asked for it removed — every line you write must be analysis. Because there is no list to point at, NEVER refer to a position by number ("#3"): name it inline the one time you cite it, e.g. "buy 4495.33 ถัวห่าง 501pt -83.25$". Cite only the positions that actually decided the day — usually two or three. Keep it glanceable on a phone.`;
 
 // Per-trade review is BACK — but ONE tight line per trade, scannable like the
 // plan (emoji + levels + short tags). Not paragraphs, not an ultra-short digest.
 const REPORT_OUTPUT = `ตอบเป็นภาษาไทย อ่านง่ายบนมือถือ ห้าม markdown (** ## -).
-per-trade บรรทัดละไม้ สั้น กระชับ เหมือนหน้าตา "แผน" (emoji + ตัวเลข + แท็กสั้น). ใช้รูปแบบนี้:
+ห้ามไล่รายการไม้/จังหวะทั้งวัน — เทรดเดอร์ดูออเดอร์เองได้จาก terminal อยู่แล้ว
+ทุกบรรทัดต้องเป็น "การประเมิน" ไม่ใช่การรายงานว่าเทรดอะไรบ้าง
+พูดถึงเฉพาะจังหวะที่ตัดสินผลของวันจริงๆ (ปกติ 2-3 จังหวะ) และเรียกชื่อไม้เต็มๆ ในบรรทัดนั้น
+ใช้รูปแบบนี้:
 
-⚡️ <2-3 บรรทัด: วันนี้ "อะไร" ตัดสินผล ไม่ใช่เล่าว่าเทรดอะไรบ้าง — เช่น จังหวะไหนทำเงิน/เสียเงินจริง, ถัวห่างทำให้เสียเท่าไร, ถ้าไม่มีจังหวะแย่ 1-2 อันนั้นวันนี้จะเป็นยังไง>
+⚡️ <2-3 บรรทัด: วันนี้ "อะไร" ตัดสินผล ไม่ใช่เล่าว่าเทรดอะไรบ้าง — จังหวะไหนทำเงิน/เสียเงินจริง (เรียกชื่อไม้เต็มๆ ในบรรทัด เช่น "buy 4495.33 ถัวห่าง 501pt -83.25$" ห้ามอ้างเป็นเลขลำดับ), ถ้าไม่มีจังหวะแย่ 1-2 อันนั้นวันนี้จะเป็นยังไง>
 
 🎯 วินัย: <เกรด A-F> — <SL ครบกี่/กี่ไม้>
 ถัวห่าง >500pt: <กี่จังหวะ> <รวม$> · ที่เหลือ: <กี่จังหวะ> <รวม$>
 <1 บรรทัด: นิสัยถัวห่างวันนี้ได้หรือเสีย บอกเป็นเงิน ไม่ต้องสั่งสอนซ้ำ>
-
-🔍 รายโพซิชัน (<n> ไม้ = <m> จังหวะ)
-<เลข) 🔴/🟢 side avg_entry→exit ±$ · <ซอย N ไม้ / ถัวห่าง Xpt / เดี่ยว> · จบแบบ SL/TP/มือ · (ตาม/สวน/ไม่มี co-pilot)>
-(บรรทัดเดียวต่อจังหวะ ห้ามยืดเป็นย่อหน้า)
 
 🤖 ตาม vs สวน
 <สวน co-pilot: กี่ไม้ → โดน SL กี่ / ได้ TP กี่ · รวม$>
