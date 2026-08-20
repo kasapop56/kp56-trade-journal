@@ -104,6 +104,11 @@ module.exports = {
     dayTrendAtr:   1.0,   // day travel ≥ this × ATR = TREND day
     dayOutsizedAtr: 1.5,  // day travel ≥ this × ATR = OUTSIZED day
     zoneBufferPrice: 1.0, // $ tolerance for "price reached the zone"
+    // Where inside the advised zone the pending order fills: 'near' (first touch,
+    // worst price), 'mid', or 'far' (deep edge). Not cosmetic — the co-pilot places
+    // its SL just beyond the FAR edge, so 'near' inflates risk several-fold and
+    // flips outcomes. Measure with ?fill= before settling on a default.
+    entryFill: 'near',
   },
 
   // ── carry-forward digest (Phase 9, descriptive) ──────────────────────────────

@@ -230,7 +230,8 @@ module.exports = async (req, res) => {
     // separate serverless function (Hobby-plan 12-fn cap). Same BAR-replay family.
     if (String(req.query.target || '') === 'reads') {
       const rdays = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 120);
-      const { status, body } = await runReadEval({ days: rdays, write: req.query.write === '1' });
+      const fill = ['near', 'mid', 'far'].includes(req.query.fill) ? req.query.fill : null;
+      const { status, body } = await runReadEval({ days: rdays, write: req.query.write === '1', fill });
       return res.status(status).json(body);
     }
     // one-off maintenance: recover structured plans from past reads' message text

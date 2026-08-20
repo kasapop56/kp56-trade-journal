@@ -32,7 +32,7 @@ const SYM   = 'XAUUSD';
 // outcome row so a later re-grade under different thresholds can never be silently
 // mixed with old outcomes (verdicts are recomputed on every run, so without this
 // a threshold tweak would rewrite all of history with no marker).
-const EVAL_REV = '9h';
+const EVAL_REV = '9i';
 const EVAL_VERSION = EVAL_REV + '-' + crypto.createHash('sha1')
   .update(JSON.stringify(CFG.eval)).digest('hex').slice(0, 6);
 
@@ -186,7 +186,28 @@ const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 // Below this the "risk" is spread noise and every R-multiple derived from it is junk.
 const MIN_RISK = 0.5;
 
-function replayLeg(leg, bars, buf) {
+// WHERE in the zone the limit fills is genuinely ambiguous, and it is not a detail:
+// on read 1 the same plan is RR 1.0 filled at the near edge and RR 7.0 filled at the
+// far edge, because the stop sits just $1.25 beyond the far edge. It changes wins and
+// losses too — a $1.25 stop is far easier to hit than a $5.00 one.
+//   'near' = first touch of the band (most fills, worst prices)
+//   'mid'  = the middle of the zone
+//   'far'  = the deep edge (fewest fills, best prices — and the one the co-pilot's
+//            own stop placement implies)
+// Selectable so the sensitivity can be measured rather than assumed.
+function fillPrice(mode, isBuy, zLo, zHi, b) {
+  if (mode === 'far') return isBuy ? zLo : zHi;
+  if (mode === 'mid') return (zLo + zHi) / 2;
+  return (b.o >= zLo && b.o <= zHi) ? b.o : (isBuy ? zHi : zLo);
+}
+// has this bar traded deep enough for the chosen fill to happen?
+function fillReached(mode, isBuy, zLo, zHi, b, buf) {
+  const px = mode === 'near' ? null : fillPrice(mode, isBuy, zLo, zHi, b);
+  if (px == null) return b.h >= zLo - buf && b.l <= zHi + buf;
+  return isBuy ? b.l <= px + 1e-9 : b.h >= px - 1e-9;
+}
+
+function replayLeg(leg, bars, buf, mode) {
   const a = num(leg.zone_lo), b2 = num(leg.zone_hi) ?? num(leg.zone_lo);
   const zLo = Math.min(a, b2), zHi = Math.max(a, b2);
   const isBuy = String(leg.side) === 'buy';
@@ -196,14 +217,14 @@ function replayLeg(leg, bars, buf) {
   let entryPx = null, R = null, best = null, worst = null;
   for (const b of bars) {
     if (entryPx == null) {
-      if (b.h < zLo - buf || b.l > zHi + buf) continue;          // bar never reached the zone
+      if (!fillReached(mode, isBuy, zLo, zHi, b, buf)) continue;   // not deep enough to fill
       // Fill INSIDE the zone, always: at the bar's open if it opened within the
       // band, otherwise at the edge the price approached (a buy limit sits at the
       // upper edge, a sell limit at the lower edge). Taking the bar's open when it
       // opened OUTSIDE the band let the fill land next to the stop — one read filled
       // a sell at 4366.7 against a 4366.75 stop, R = $0.05, and every R-multiple
       // downstream exploded (MFE 87R).
-      entryPx = (b.o >= zLo && b.o <= zHi) ? b.o : (isBuy ? zHi : zLo);
+      entryPx = fillPrice(mode, isBuy, zLo, zHi, b);
       out.entry_at = b.t; out.entry_px = r2(entryPx);
       const risk = sl == null ? null : Math.abs(entryPx - sl);
       // A stop inside (or a hair from) the entry zone is not a tradeable plan.
@@ -240,8 +261,8 @@ function replayLeg(leg, bars, buf) {
 // A read often advises both sides ("wait to sell up there / buy down there"). The
 // side that actually filled FIRST is the trade that would have happened, so that leg
 // carries the read's plan verdict.
-function replayPlan(legs, bars, buf, dayOver) {
-  const results = legs.map(l => replayLeg(l, bars, buf));
+function replayPlan(legs, bars, buf, dayOver, mode) {
+  const results = legs.map(l => replayLeg(l, bars, buf, mode));
   const filled = results.filter(r => r.entry_at != null).sort((x, y) => x.entry_at - y.entry_at);
   for (const r of results) if (r.status === 'OPEN') r.status = dayOver ? 'OPEN_END' : 'PENDING';
   // a leg that filled but carried no usable levels can't be scored — don't let it
@@ -255,7 +276,7 @@ function replayPlan(legs, bars, buf, dayOver) {
   // filled first isn't scorable, the read isn't scorable — say so.
   const first = filled[0] || null;
   return {
-    legs: results, filled: filled.length, legs_total: results.length,
+    fill_mode: mode, legs: results, filled: filled.length, legs_total: results.length,
     verdict: first ? first.status : (dayOver ? 'NO_FILL' : 'PENDING'),
     first_side: first ? first.side : null,
     rr1: first ? first.rr1 : null, mfe_r: first ? first.mfe_r : null, mae_r: first ? first.mae_r : null,
@@ -513,7 +534,7 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
 
   // ── plan replay: grade the advised pending order, not a market order at P0 ──
   const planReplay = (readKind !== 'manage' && entryLegs.length && after.length)
-    ? replayPlan(entryLegs, after, E.zoneBufferPrice, day < today)
+    ? replayPlan(entryLegs, after, E.zoneBufferPrice, day < today, E.entryFill || 'near')
     : null;
 
   const outObj = {
@@ -557,7 +578,8 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
 
 // Core: (re)evaluate reads over a lookback window. Shared by the HTTP handler and
 // the nightly report (so the report always grades against fresh outcomes).
-async function runEval({ days = CFG.eval.lookbackDays, write = false } = {}) {
+async function runEval({ days = CFG.eval.lookbackDays, write = false, fill = null } = {}) {
+  if (fill) CFG.eval.entryFill = fill;      // dry-run override for sensitivity checks
   {
     const sinceISO = new Date(Date.now() - days * 86400e3).toISOString();
 
