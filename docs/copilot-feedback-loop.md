@@ -577,6 +577,72 @@ entry/manage confusion, from opposite directions.
 
 ---
 
+## 17. Step 6 — plan replay (2026-08-20)
+
+`EVAL_REV` 9c → **9h** across one session, because the first four versions produced
+numbers that were impossible rather than merely surprising.
+
+### 17.1 Mechanism
+
+For every non-`manage` read with entry legs, each advised leg is replayed as a
+pending limit order, in a track kept **separate** from the directional lean verdict:
+
+- **entry** — the first bar that trades into the zone band. Fill is always *inside*
+  the zone: the bar's open if it opened within the band, otherwise the edge price
+  approached (a buy limit at the upper edge, a sell at the lower).
+- **outcome** — TP1 vs SL, first touch wins; a bar touching both is a `LOSS`, since
+  OHLC cannot order intrabar. Records `rr1`, MFE/MAE in R, bars held.
+- **read verdict** — the leg that filled **first**, scorable or not. A read usually
+  advises both sides; the first fill is the trade that would have happened.
+- **not scored** — `NO_FILL` (price never came), `NO_LEVELS` (no SL or TP),
+  `SL_IN_ZONE` / `TP_IN_ZONE` (a level closer than $0.50 to the fill).
+
+Exposed as `?target=attribution&basis=plan` alongside the default `basis=lean`.
+Never mixed: different questions, different null rates.
+
+### 17.2 Four bugs, caught by output being impossible
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `MFE 87R` | Fill taken at the bar's **open** when the bar opened outside the band → a sell filled at 4366.70 against a 4366.75 stop, R = **$0.05** | Fill clamped inside the zone; `MIN_RISK` $0.50 floor → `SL_IN_ZONE` |
+| `RR 0` on a `WIN` | **`Number(null) === 0`** — finite, so a *missing* stop became a real-looking `0`. Risk = \|entry − 0\| = the whole gold price → a stop that can never be hit → automatic win | `num()` rejects null/undefined/`''` before converting |
+| `LOSS` with `MFE 18.58R` | MFE/MAE kept accumulating to the end of the day, long after the trade was stopped out | Excursions stop when the trade resolves |
+| Same setup, opposite verdicts 8 min apart (reads 1 vs 2) | When the first-filled leg couldn't be scored, the scorer fell through and graded *the other side* — so the verdict depended on parse completeness | First fill decides, scorable or not; otherwise the read is unscorable |
+
+**The `num(null)` bug reached well beyond plan replay.** In `zoneFreshness` a zone
+with a missing bound became the band `[0, 0]`, which nothing ever touches → `tests: 0`
+→ reported **`fresh: true`**. Fresh zones have been over-counted, which is part of why
+finding #11 called `zone_state` unusable — not only zone drift. It also made
+`zone_behavior` read `UNTESTED` for those zones, and a null read price would have been
+graded from `0` rather than skipped. **Every other `api/*.js` `num()` already had the
+guard; `_kp_eval.js` was the only one without it.**
+
+### 17.3 Result
+
+```
+plan:  LOSS 4 · WIN 2 · NO_LEVELS 2 · NO_FILL 1 · PENDING 1
+lean:  MISSED 6 · MANAGE 6 · OK_NOTRADE 1 · PENDING 3
+```
+
+Six decided plans, 2 wins. **This is not a win rate.** Reads 1 and 2 are the same
+setup eight minutes apart; 14, 15 and 16 are near-duplicates of one another. Six
+"decided" reads are roughly **four independent situations** — exactly the clustering
+finding #3 warned about, now visible in the data rather than argued in the abstract.
+Nothing here should be read as a result about the co-pilot's edge; what it does show
+is that the machinery finally measures the advice that was actually given.
+
+Two observations that *are* worth carrying forward, both descriptive:
+
+- The two wins (reads 14, 15) had `rr1` of **0.37 and 0.30** — the target was closer
+  than the stop. Winning at sub-1R reward-to-risk is a shape worth watching once
+  there is enough data to say anything: it is how a good hit rate can still lose money
+  (finding #12).
+- One read produced `NO_LEVELS` because its plan was prose ("รอราคาเด้งขึ้นไปแตะโซน
+  4351.5-4355.1 พร้อมสัญญาณกลับตัว") with no stop or target. The `PLAN:` line added in
+  §14 prevents that going forward.
+
+---
+
 ## 16. "No trade" was never no trade (2026-08-20)
 
 The trader asked whether the co-pilot's caution is simply what an edge-based method
