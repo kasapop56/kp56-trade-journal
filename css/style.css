@@ -661,3 +661,12 @@ code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-s
 .cp-tb-flip { background: color-mix(in srgb, #7c5cff 25%, transparent); color: #b3a1ff; }
 .cp-tb-mom { background: color-mix(in srgb, var(--bear) 22%, transparent); color: var(--bear); }
 .cp-tb-manual { background: var(--surface2); color: var(--text-dim); }
+
+/* read outcome (verdict) badge — how the read actually played out on the ATR ladder */
+.cp-vd { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 2px 8px; cursor: help; }
+.cp-vd-win { background: color-mix(in srgb, var(--bull) 22%, transparent); color: var(--bull); }
+.cp-vd-loss { background: color-mix(in srgb, var(--bear) 22%, transparent); color: var(--bear); }
+.cp-vd-stall { background: color-mix(in srgb, var(--gold) 20%, transparent); color: var(--gold); }
+.cp-vd-partial { background: var(--surface2); color: var(--text); }
+.cp-vd-pending { background: var(--surface2); color: var(--text-dim); }
+.cp-sig-outcome { margin-top: 6px; font-size: 12px; color: var(--text-dim); border-left: 2px solid var(--border); padding-left: 8px; }

@@ -67,7 +67,7 @@ function cpFreshestPrice(sitrep, fibo, live) {
 
 // ── data load ────────────────────────────────────────────────────────────────
 async function cpLoadLatest() {
-  const [sitRes, fiboRes, sigRes, priceRes] = await Promise.all([
+  const [sitRes, fiboRes, sigRes, priceRes, outRes] = await Promise.all([
     db.from('market_sitreps')
       .select('id, created_at, symbol, price, bias_m15, bias_m5, vp_position, poc, vah, val, ppoc, pvah, pval, supply_zones, demand_zones')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
@@ -78,13 +78,37 @@ async function cpLoadLatest() {
       .select('*')
       .order('ts', { ascending: false }).limit(30),
     db.from('kp_price').select('symbol, price, ts').order('ts', { ascending: false }).limit(1).maybeSingle(),
+    db.from('kp_read_outcomes')
+      .select('signal_id, verdict, day_type, direction_actual, fav_atr, adv_atr, zone_behavior, behavior_note')
+      .order('read_ts', { ascending: false }).limit(30),
   ]);
   if (sitRes.error && sitRes.error.code !== 'PGRST116') throw sitRes.error;
   if (fiboRes.error && fiboRes.error.code !== 'PGRST116') throw fiboRes.error;
-  // kp_signals / kp_price may not exist until the migration is run — treat "table missing" as empty.
+  // kp_signals / kp_price / kp_read_outcomes may not exist until the migration is run — treat "table missing" as empty.
   const signals = (sigRes.error && sigRes.error.code === '42P01') ? [] : (sigRes.data || []);
   const live = (priceRes && !priceRes.error) ? (priceRes.data || null) : null;
-  return { sitrep: sitRes.data || null, fibo: fiboRes.data || null, signals, live };
+  const outcomes = new Map();
+  if (!outRes.error) for (const o of (outRes.data || [])) outcomes.set(o.signal_id, o);
+  return { sitrep: sitRes.data || null, fibo: fiboRes.data || null, signals, live, outcomes };
+}
+
+// Verdict → compact Thai badge (how the READ actually played out on the ATR ladder).
+function cpVerdictBadge(o) {
+  if (!o) return '';
+  const map = {
+    WIN:        ['✅ เข้าเป้า', 'cp-vd-win'],
+    LOSS:       ['❌ สวน', 'cp-vd-loss'],
+    STALL:      ['⏸ นิ่ง', 'cp-vd-stall'],
+    PARTIAL:    ['◐ บางส่วน', 'cp-vd-partial'],
+    OK_NOTRADE: ['✅ ไม่เทรดถูก', 'cp-vd-win'],
+    MISSED:     ['· พลาดจังหวะ', 'cp-vd-partial'],
+    PENDING:    ['⏳ รอผล', 'cp-vd-pending'],
+    EXPIRED:    ['— หมดวัน', 'cp-vd-pending'],
+    NO_BARS:    ['— ไม่มีแท่ง', 'cp-vd-pending'],
+  };
+  const [label, cls] = map[o.verdict] || [o.verdict, 'cp-vd-pending'];
+  const title = o.behavior_note ? ` title="${String(o.behavior_note).replace(/"/g, '&quot;')}"` : '';
+  return `<span class="cp-vd ${cls}"${title}>${label}</span>`;
 }
 
 // Merge the two sources into a price-anchored ladder of levels.
@@ -214,36 +238,61 @@ function cpTriggerBadge(t) {
   return `<span class="cp-tb ${cls}">${label}</span>`;
 }
 
-function cpRenderFeed(signals) {
+function cpRenderFeed(signals, outcomes) {
   if (!signals.length) {
     return `<div class="cp-feed-empty">
       ยังไม่มีคอมเมนต์จากโคไพลอต — Phase 1 แสดง market state สด ๆ<br>
       Phase 3 (trigger + Claude) จะเริ่มพิมพ์ที่นี่เมื่อถึงจังหวะสำคัญ
     </div>`;
   }
+  const out = outcomes || new Map();
   return signals.map(s => {
     const bias = s.bias_call ? `<span class="cp-bias ${cpBiasClass(s.bias_call)}">${s.bias_call}</span>` : '';
     const delivered = (s.delivered_to || []).map(d => `<span class="cp-deliv">${d === 'telegram' ? '📨 TG' : '🖥️ Dash'}</span>`).join('');
     const msg = String(s.message || '').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+    const o = out.get(s.id);
+    const note = (o && o.behavior_note) ? `<div class="cp-sig-outcome">📈 ${String(o.behavior_note).replace(/</g, '&lt;')}</div>` : '';
     return `<div class="cp-sig">
       <div class="cp-sig-top">
         ${cpTriggerBadge(s.trigger_type)}
         ${bias}
+        ${cpVerdictBadge(o)}
         ${s.price != null ? `<span class="cp-sig-px">@ ${cpFmt(s.price)}</span>` : ''}
         <span class="cp-sig-time">${cpBkkTime(s.ts)}</span>
       </div>
       ${s.headline ? `<div class="cp-sig-head">${String(s.headline).replace(/</g, '&lt;')}</div>` : ''}
       <div class="cp-sig-msg">${msg}</div>
+      ${note}
       ${delivered ? `<div class="cp-sig-deliv">${delivered}</div>` : ''}
     </div>`;
   }).join('');
 }
 
+// Kick the read evaluator (replay → kp_read_outcomes), fire-and-forget, throttled.
+// Mirrors fibo.js's tab-render trigger — no cron. The realtime subscription then
+// repaints the feed with the fresh verdict badges when the upsert lands.
+let _cpEvalAt = 0;
+function cpKickEval() {
+  if (Date.now() - _cpEvalAt < 60000) return;   // at most once per minute
+  _cpEvalAt = Date.now();
+  fetch('/api/kp-eval?write=1&days=7').catch(() => { /* offline / cold start */ });
+}
+
+// Debounced repaint for the outcomes realtime feed. A batch upsert emits many row
+// events; coalesce them into one re-render (which itself won't re-fire the eval —
+// cpKickEval is throttled — so there's no loop).
+let _cpFeedTimer = null;
+function cpRenderFeedOnly() {
+  clearTimeout(_cpFeedTimer);
+  _cpFeedTimer = setTimeout(cpRender, 400);
+}
+
 async function cpRender() {
   const root = document.getElementById('copilotBody');
   if (!root) return;
+  cpKickEval();
   try {
-    const { sitrep, fibo, signals, live } = await cpLoadLatest();
+    const { sitrep, fibo, signals, live, outcomes } = await cpLoadLatest();
     if (!sitrep && !fibo) {
       root.innerHTML = `<div class="cp-empty">ยังไม่มีข้อมูล market state (รอ SITREP / Fibo webhook แรก)</div>`;
       return;
@@ -265,7 +314,7 @@ async function cpRender() {
       `<h3 class="cp-sub">Zone Ladder</h3>` +
       cpRenderLadder(ladder, price) +
       `<h3 class="cp-sub">คอมเมนต์โคไพลอต</h3>` +
-      cpRenderFeed(signals);
+      cpRenderFeed(signals, outcomes);
   } catch (e) {
     root.innerHTML = `<div class="cp-empty">โหลดไม่สำเร็จ: ${String(e.message || e)}</div>`;
   }
@@ -326,6 +375,8 @@ function cpSubscribe() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'kp_signals' }, cpRender)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'market_sitreps' }, cpRender)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fibo_snapshots' }, cpRender)
+    // verdict badges land here after the evaluator upserts — repaint the feed.
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'kp_read_outcomes' }, cpRenderFeedOnly)
     .subscribe();
 }
 

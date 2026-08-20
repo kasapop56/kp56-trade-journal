@@ -10,6 +10,36 @@
 // the co-pilot's suggestion — each is evaluated on its own merit.
 
 const { getDb, getAnthropic, sendTelegram, num, round, CFG } = require('./_kp_lib');
+const { runEval } = require('./kp-eval');
+
+// Roll up today's read outcomes into a compact co-pilot self-accuracy summary:
+// how many reads played out (WIN) vs went against (LOSS) vs stalled, the day type
+// each was read on, and the directional lean — so the coach can grade the co-pilot
+// itself, not only the trader's executed trades.
+function copilotAccuracy(outcomes) {
+  const graded = outcomes.filter(o => ['WIN', 'LOSS', 'STALL', 'PARTIAL', 'OK_NOTRADE', 'MISSED'].includes(o.verdict));
+  const t = {};
+  for (const o of outcomes) t[o.verdict] = (t[o.verdict] || 0) + 1;
+  const wins = t.WIN || 0, losses = t.LOSS || 0;
+  const decided = wins + losses;
+  let buy = 0, sell = 0, notrade = 0;
+  for (const o of outcomes) {
+    const c = String(o.call || '').toLowerCase();
+    if (c === 'buy') buy++; else if (c === 'sell') sell++; else notrade++;
+  }
+  return {
+    reads: outcomes.length,
+    graded: graded.length,
+    tally: t,
+    hit_rate_pct: decided ? Math.round((wins / decided) * 100) : null,   // of decided reads only
+    lean: { buy, sell, no_trade: notrade },
+    lines: outcomes.map(o => ({
+      time: o.read_ts, call: o.call, verdict: o.verdict,
+      day_type: o.day_type, dir: o.direction_actual,
+      fav_atr: o.fav_atr, adv_atr: o.adv_atr, zone: o.zone_behavior, note: o.behavior_note,
+    })),
+  };
+}
 
 // Bangkok "trading day" start (00:00 local) as a UTC ISO string.
 function dayStartIso(tzHours) {
@@ -33,7 +63,8 @@ Grade on:
 1. Per-trade review — with/against structure (use the captured bias), SL/TP placement, entry quality; use MFE (profit left on the table) and MAE (heat taken / near-stop) to judge management.
 2. Discipline scorecard — was an SL always set? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
-4. Lessons — 1–2 concrete, specific things to do differently tomorrow.
+4. Co-pilot accuracy (INDEPENDENT of trades) — you also receive "copilot_accuracy": how each of today's co-pilot READS actually played out on the ATR ladder, whether or not the trader acted on it. Use it to grade the co-pilot ITSELF: hit_rate (of decided reads), how many STALLED (นิ่ง = read a move that never came) vs went AGAINST, what day_type the day turned out to be (BALANCE/NORMAL/TREND/OUTSIZED), and the directional lean (was the co-pilot too bull/bear vs what price did). Call out the pattern honestly, e.g. "co-pilot อ่าน buy 4/5 แต่วันทรงตัว → เอียง bull เกินไป โซนไม่วิ่ง" or "โซน sell ยืน 3/3 แม่น". This is observational — describe the tendency, don't overclaim from one day.
+5. Lessons — 1–2 concrete, specific things to do differently tomorrow, and 1 note on how much to trust the co-pilot given today's accuracy.
 Be specific with numbers and levels. Thai output, mobile-readable, no filler.
 
 FORMAT: review every trade, but each as ONE tight scannable line (emoji + side + entry→exit + P&L + short tags) — like a clean trade plan, never a paragraph per trade. Aggregate the co-pilot follow-vs-diverge stats into short lines. If there are many near-identical ADD legs, you may merge them into one line. Keep it easy to glance on a phone.`;
@@ -56,7 +87,11 @@ per-trade บรรทัดละไม้ สั้น กระชับ เ�
 <ตาม co-pilot: กี่ไม้ → ผล · มีอันไหน co-pilot อ่านผิดไหม>
 <สรุป 1 บรรทัด: วันนี้ควร "ตาม" หรือ "อ่านเอง">
 
-📌 พรุ่งนี้: <1-2 ข้อ ชัดเจน ทำได้จริง>`;
+🎯 แม่นของโคไพลอต (จาก copilot_accuracy · แยกจากการเทรด)
+<อ่านกี่ครั้ง · เข้าเป้ากี่ / นิ่งกี่ / สวนกี่ · hit-rate% · วันนี้เป็นวันแบบไหน (ทรงตัว/เทรนด์)>
+<1 บรรทัด: เอียง bull/bear เกินไปไหม · โซนไหนแม่น/พลาด>
+
+📌 พรุ่งนี้: <1-2 ข้อ ชัดเจน ทำได้จริง + เชื่อโคไพลอตแค่ไหนจากวันนี้>`;
 
 // Merge a closed trade (mt5_trades) with its OPEN/CLOSE study events by ticket.
 function buildTrade(t, evByTicket) {
@@ -95,7 +130,12 @@ async function runReport(db, opts = {}) {
   const sinceIso = dayStartIso(CFG.reportTzOffsetHours);
   const account = CFG.studyAccount;
 
-  const [trRes, evRes, sigRes] = await Promise.all([
+  // Refresh the read outcomes first so the accuracy block grades today's reads —
+  // including the last ones of the day — not a stale snapshot. Non-fatal.
+  try { await runEval({ days: 2, write: true }); }
+  catch (e) { console.warn('runEval (report) failed (non-fatal):', e.message); }
+
+  const [trRes, evRes, sigRes, outRes] = await Promise.all([
     db.from('mt5_trades')
       .select('position_id, type, volume, open_time, close_time, open_price, close_price, sl, tp, profit, swap, commission, bias_m15, bias_m5, ob_status, mario_session, mario_decision')
       .eq('account_login', account).gte('close_time', sinceIso)
@@ -109,11 +149,15 @@ async function runReport(db, opts = {}) {
     db.from('kp_signals')
       .select('ts, trigger_type, headline, bias_call, price, message')
       .gte('ts', sinceIso).order('ts', { ascending: true }).limit(60),
+    db.from('kp_read_outcomes')
+      .select('signal_id, read_ts, call, verdict, day_type, direction_actual, fav_atr, adv_atr, zone_behavior, behavior_note')
+      .gte('read_ts', sinceIso).order('read_ts', { ascending: true }).limit(60),
   ]);
   if (trRes.error) return { ok: false, error: 'mt5_trades read: ' + trRes.error.message };
 
   const trades = trRes.data || [];
   const signals = (sigRes.error ? [] : (sigRes.data || []));
+  const outcomes = (outRes.error ? [] : (outRes.data || []));   // table may not exist pre-migration
 
   // index events by ticket → { open, close }
   const evByTicket = new Map();
@@ -155,7 +199,8 @@ async function runReport(db, opts = {}) {
     summary,
     trades: rows,
     copilot_reads: signals.map(s => ({ time: s.ts, trigger: s.trigger_type, call: s.bias_call, headline: s.headline })),
-    note: 'trader also trades independently of the co-pilot — grade every trade on merit, mark matched/diverged/no-read.',
+    copilot_accuracy: outcomes.length ? copilotAccuracy(outcomes) : null,
+    note: 'trader also trades independently of the co-pilot — grade every trade on merit, mark matched/diverged/no-read. copilot_accuracy grades the READS themselves on the ATR ladder, independent of whether the trader acted.',
   };
 
   const client = getAnthropic();

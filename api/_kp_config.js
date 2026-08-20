@@ -73,4 +73,29 @@ module.exports = {
   // 'low' = minimal thinking so max_tokens goes to the visible text (medium/high
   // thinking can eat the whole budget → empty body). Match the intraday reads.
   reportEffort: process.env.COPILOT_REPORT_EFFORT || 'low',
+
+  // ── read evaluator (Phase 9 feedback loop) ───────────────────────────────────
+  // api/kp-eval.js replays each co-pilot read (kp_signals) against the intraday
+  // BAR feed, capped to the read's Bangkok day, and classifies what price did in
+  // units of the DAILY ATR ladder (from kp_atr / the "Daily ATR Zones" indicator).
+  // All thresholds are FRACTIONS of that day's ATR — deliberately observational;
+  // tune from data after ~2 weeks (see project note), don't overfit early.
+  eval: {
+    lookbackDays: 30,     // how many days of reads to (re)evaluate per run
+    winAtr:      0.5,     // favorable move ≥ this × ATR (reached before adverse) = played out
+    lossAtr:     0.5,     // adverse move ≥ this × ATR first = went against the read
+    stallAtr:    0.25,    // both excursions < this × ATR = STALL ("นิ่ง")
+    dayBalanceAtr: 0.5,   // day travel from open < this × ATR = BALANCE day
+    dayTrendAtr:   1.0,   // day travel ≥ this × ATR = TREND day
+    dayOutsizedAtr: 1.5,  // day travel ≥ this × ATR = OUTSIZED day
+    zoneBufferPrice: 1.0, // $ tolerance for "price reached the zone"
+  },
+
+  // ── carry-forward digest (Phase 9, descriptive) ──────────────────────────────
+  // runAnalysis injects a compact "what price did yesterday + key levels still in
+  // play" block into the new day's read so today's read layers on top. Descriptive
+  // only for now (informational context, not a rule that changes the call) — the
+  // score-driven auto-adjust is deferred until the outcome data matures.
+  carryForward: true,
+  carryLookbackDays: 3,   // how many prior days of outcomes to summarize
 };

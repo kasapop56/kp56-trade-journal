@@ -48,6 +48,65 @@ function round(n, d = 2) {
   const f = 10 ** d;
   return Math.round(n * f) / f;
 }
+// Bangkok (UTC+7) civil date "YYYY-MM-DD" for a ms epoch.
+function bkkDateStr(ms) {
+  const t = new Date(ms + 7 * 3600 * 1000);
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
+}
+// Most frequent non-null value in a list (ties → first seen).
+function mode(arr) {
+  const c = new Map();
+  for (const v of arr) { if (v == null) continue; c.set(v, (c.get(v) || 0) + 1); }
+  let best = null, n = 0;
+  for (const [k, v] of c) if (v > n) { n = v; best = k; }
+  return best;
+}
+
+// ── carry-forward digest (Phase 9) ───────────────────────────────────────────
+// Descriptive context for the NEW day's read: today's ATR ladder frame + a short
+// summary of what price did on the most recent completed day (day type, key zones
+// that held/broke, the co-pilot's lean vs how the day actually resolved). Fed into
+// callClaude so today's read layers on top of yesterday's structure. Informational
+// only — it does not change the call by rule; the score-driven adjust is deferred.
+async function buildCarryForward(db) {
+  if (!CFG.carryForward) return null;
+  const today = bkkDateStr(Date.now());
+  const sinceDate = bkkDateStr(Date.now() - CFG.carryLookbackDays * 86400e3);
+  const [atrRes, outRes] = await Promise.all([
+    db.from('kp_atr').select('atr_date, day_open, atr, bands, day_high, day_low')
+      .gte('atr_date', sinceDate).order('atr_date', { ascending: false }),
+    db.from('kp_read_outcomes')
+      .select('bkk_date, read_ts, call, verdict, day_type, direction_actual, target_zone, zone_behavior, behavior_note')
+      .gte('bkk_date', sinceDate).order('read_ts', { ascending: true }),
+  ]);
+  const atrRows = atrRes.error ? [] : (atrRes.data || []);
+  const outs = outRes.error ? [] : (outRes.data || []);
+  const todayAtr = atrRows.find(r => r.atr_date === today) || null;
+
+  const priorDays = [...new Set(outs.map(o => o.bkk_date))].filter(d => d < today).sort();
+  const lastDay = priorDays[priorDays.length - 1] || null;
+  let yesterday = null;
+  if (lastDay) {
+    const d = outs.filter(o => o.bkk_date === lastDay);
+    const labels = (bhv) => [...new Set(d.filter(o => o.zone_behavior === bhv && o.target_zone).map(o => o.target_zone.label))].slice(0, 4);
+    const calls = { buy: 0, sell: 0, no_trade: 0 };
+    for (const o of d) { const c = String(o.call || '').toLowerCase(); if (c === 'buy') calls.buy++; else if (c === 'sell') calls.sell++; else calls.no_trade++; }
+    const atrRow = atrRows.find(r => r.atr_date === lastDay) || null;
+    yesterday = {
+      date: lastDay, day_type: mode(d.map(o => o.day_type)), direction: mode(d.map(o => o.direction_actual)),
+      day_high: atrRow ? atrRow.day_high : null, day_low: atrRow ? atrRow.day_low : null,
+      held_zones: labels('HELD'), broke_zones: labels('BROKE'), swept_zones: labels('SWEEP_RECLAIM'),
+      reads: d.length, lean: calls,
+      wins: d.filter(o => o.verdict === 'WIN').length, losses: d.filter(o => o.verdict === 'LOSS').length,
+      stalled: d.filter(o => o.verdict === 'STALL').length,
+    };
+  }
+  if (!todayAtr && !yesterday) return null;
+  return {
+    today_frame: todayAtr ? { day_open: num(todayAtr.day_open), atr: num(todayAtr.atr), ladder: todayAtr.bands || null } : null,
+    yesterday,
+  };
+}
 
 // ── merged market state ────────────────────────────────────────────────────────
 // Reads the two live tables and folds them into one object the trigger engine
@@ -403,6 +462,10 @@ MARKET STRUCTURE (read this first, every time): synthesize Mario + Fibo into ONE
 - Fibo frame: price inside the frame (high/low/mid) tells premium vs discount within the swing.
 Do this synthesis INTERNALLY, then express it in the read as ONE short, punchy sentence (or two at most) — do NOT dump every level/tag. The read stays crisp; the value goes into a sharper zone-level plan. When Mario and Fibo disagree, say so in a few words and favor the higher-timeframe / higher-confluence side.
 
+CARRY-FORWARD (if a "carry_forward" block is present): use it as CONTEXT to layer today's read on top of, not as a command.
+- today_frame = today's daily-open ± ATR ladder (the same frame the trader sees on the chart). Anchor your levels to it: state whether price is in the balance zone (±0.25 ATR of open), stretched (near ±1 ATR = late to chase), and which ATR band a target/stop sits near. If a plausible target is already >1 ATR away, flag it as an extended/greedy target.
+- yesterday = what price actually did on the last completed day (day_type, direction, zones that HELD/BROKE/were swept, and the co-pilot's own lean vs how it resolved). Carry the still-relevant levels forward (a demand that HELD is a live buy reference; a zone that BROKE flips role). If yesterday was a BALANCE/stall day, warn against expecting a big move today without a catalyst. Keep this to a few words folded into the read — do not recite the whole block.
+
 LIVE POSITIONS: If the trader already has open positions (provided as "positions"), the read is about MANAGING them, not hunting new entries. FIRST compare each position to the structure above using with_m15_bias / with_fibo_leg and its entry location:
 - Alignment: is the position WITH structure (with the M15 bias and Fibo leg) or AGAINST it? A with-structure trade gets more room; an against-structure (counter-trend) trade should be managed tighter and taken partial faster.
 - Entry quality: was it entered at a zone edge (good) or mid-range/at POC (chasing)? Say it plainly.
@@ -481,6 +544,7 @@ async function callClaude(state, trigger) {
     symbol: state.symbol,
     price: state.price,
     freshness: { price_source: state.price_source, price_age_min: state.price_age_min, mt5_age_min: state.sitrep_age_min, fibo_age_min: state.fibo_age_min, positions_source: state.positions_source, positions_age_min: state.positions_age_min },
+    carry_forward: state.carry || null,
     structure,
     mt5: state.sitrep ? {
       bias_m15: state.bias_m15, bias_m5: state.bias_m5, vp_position: state.vp_position,
@@ -632,6 +696,11 @@ async function runAnalysis(db, opts = {}) {
     }
   }
 
+  // carry-forward context (today's ATR ladder + yesterday's price behaviour) —
+  // non-fatal: a missing kp_atr / kp_read_outcomes table just yields no context.
+  try { state.carry = await buildCarryForward(db); }
+  catch (e) { console.warn('buildCarryForward failed (non-fatal):', e.message); state.carry = null; }
+
   const commentary = await callClaude(state, trigger);
 
   // deliver
@@ -664,4 +733,4 @@ async function runAnalysis(db, opts = {}) {
   return { ok: true, fired: true, trigger_type: trigger.trigger_type, signal_id: sig.id, delivered, commentary, positions: state.pos, state_id: stateId };
 }
 
-module.exports = { getDb, getAnthropic, buildState, evaluateTriggers, runAnalysis, callClaude, sendTelegram, num, round, CFG };
+module.exports = { getDb, getAnthropic, buildState, evaluateTriggers, runAnalysis, callClaude, buildCarryForward, sendTelegram, num, round, CFG };
