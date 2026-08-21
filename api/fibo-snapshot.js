@@ -65,6 +65,55 @@ function bkkDateStr(ms) {
   return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
 }
 
+// The alert fires on the first bar of the new day, so it can also report the day
+// that just CLOSED — the indicator tracks it on the chart's own bars rather than
+// through request.security("D"), which is still a day behind at that instant.
+// Those values belong on the PREVIOUS day's row, not today's.
+//
+// Deliberately not part of the main upsert: a failure here (migration not run
+// yet, no previous day tracked on a fresh chart) must never reject the webhook —
+// TradingView would surface it as a failing alert and the ATR frame, which the
+// evaluator actually depends on, would be lost over a nice-to-have column.
+async function writePrevDay(db, symbol, atrDate, p) {
+  const o = num(p.prev_o), h = num(p.prev_h), l = num(p.prev_l), c = num(p.prev_c);
+  const c2 = num(p.prev2_c), pts = num(p.prev_ts);
+  if (o == null || h == null || l == null || c == null || pts == null) return 'no_prev_in_payload';
+
+  const prevDate = bkkDateStr(pts);
+  if (prevDate === atrDate) return 'skipped: prev_ts lands on the same Bangkok day';
+
+  // TR needs the close before the previous day; without it fall back to the plain
+  // range, which only understates a gap day.
+  const tr = c2 == null ? h - l : Math.max(h - l, Math.abs(h - c2), Math.abs(l - c2));
+  const patch = {
+    day_high: h, day_low: l, day_close: c, tr,
+    prev_close: c2, updated_at: new Date().toISOString(),
+  };
+
+  try {
+    const upd = await db.from('kp_atr').update(patch)
+      .eq('symbol', symbol).eq('atr_date', prevDate).select('id');
+    if (upd.error) {
+      if (upd.error.code === '42703') return 'skipped: run db_kp_atr_daily_tr.sql';
+      return 'skipped: ' + upd.error.message;
+    }
+    if (upd.data && upd.data.length) return { atr_date: prevDate, tr: Math.round(tr * 100) / 100, updated: true };
+
+    // No row for that day (alert was down, or this is the chart's first rollover)
+    // — insert what we know. `atr` stays null, so tr_ratio is simply unavailable
+    // for that day rather than wrong.
+    const ins = await db.from('kp_atr').insert({
+      symbol, atr_date: prevDate, day_open: o, ...patch,
+      raw: { source: 'prev_day_from_daily_atr', prev_ts: pts },
+      ts: new Date(pts).toISOString(),
+    }).select('id');
+    if (ins.error) return 'skipped: ' + ins.error.message;
+    return { atr_date: prevDate, tr: Math.round(tr * 100) / 100, inserted: true };
+  } catch (e) {
+    return 'skipped: ' + e.message;
+  }
+}
+
 // Daily ATR frame from the "Daily ATR Zones" indicator's once-a-day alert.
 // Merged here (instead of a separate api/kp-atr.js) to stay under the Hobby-plan
 // 12-function cap — it's just another TradingView webhook. Upserts one row per
@@ -97,7 +146,8 @@ async function handleDailyAtr(res, p) {
       return bad(res, missing ? 424 : 500,
         missing ? 'kp_atr table missing — run supabase_schema_kp_atr.sql' : error.message);
     }
-    return res.status(200).json({ ok: true, type: 'DAILY_ATR', id: data.id, atr_date: data.atr_date, atr, day_open: dayOpen });
+    const prev_day = await writePrevDay(db, symbol, atrDate, p);
+    return res.status(200).json({ ok: true, type: 'DAILY_ATR', id: data.id, atr_date: data.atr_date, atr, day_open: dayOpen, prev_day });
   } catch (e) {
     return bad(res, 500, 'db_error: ' + e.message);
   }

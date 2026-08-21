@@ -1036,3 +1036,19 @@ git push                                  # Vercel auto-deploy
 /api/fibo-eval?target=backfill_plans&write=1
 ```
 
+
+---
+
+## Discretionary observations
+
+Chart patterns noticed by hand — untested hypotheses waiting for the evaluator —
+live in [`observations.md`](observations.md), not here. Nothing moves from there
+into the prompt or the Pine until it has been measured.
+
+### Daily true range (2026-08-21)
+
+`kp_atr` now also carries the completed previous day's `day_high` / `day_low` /
+`day_close` / `tr` / `prev_close`, written by `writePrevDay()` from the same
+`daily_atr` alert. `atr` is the 10-day regime; `tr / atr` is the day. Migration:
+`db_kp_atr_daily_tr.sql`. Rationale and the falsified hypothesis that produced it:
+[`observations.md`](observations.md).
