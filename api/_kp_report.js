@@ -75,22 +75,24 @@ Two fields carry the trader's own diagnosis of his worst habit, and they are ALR
 - kind: "single" | "scaled" (legs within 500 pts = intended, split for partial exits, FINE) | "averaged" (legs more than 500 pts apart = adding at distance, HIS STATED BAD HABIT).
 - adverse_adds: legs opened at a WORSE price than the running average (buy lower / sell higher) = averaging into a loser rather than pyramiding a winner.
 summary.netting compares averaged positions against everything else in dollars. LEAD WITH THAT NUMBER whenever averaged_positions > 0: it is the single most actionable line in the report. Say plainly whether the habit cost or made money today, in dollars. Do not moralise and do not repeat the lesson more than once.
-UNITS, and be strict about them: "ไม้" = an ORDER (summary.orders), "จังหวะ" = a POSITION (summary.positions). They are different numbers and swapping them makes the report wrong. Quote summary.sl_coverage_text verbatim for SL coverage — do not build it yourself.
+UNITS, and be strict about them: "ไม้" = an ORDER (summary.orders), "จังหวะ" = a POSITION (summary.positions). summary.deals is the raw MT5 deal count and is NEVER quoted — a position closed in parts books several deals, and quoting it reports orders the trader never placed. They are different numbers and swapping them makes the report wrong. Quote summary.sl_coverage_text verbatim for SL coverage — do not build it yourself.
 
 WHICH positions were decisive is ALREADY RANKED for you in summary.decisive (top_winners / top_losers, biggest first). Name only those. NEVER scan the positions list and pick your own "biggest" — on a previous run that produced a claim that the 3rd and 4th largest winners were the largest, because they happened to suit the narrative that had already been started. If the biggest winner contradicts the story you were about to tell, the story is wrong, not the number: say so.
 
 WHEN YOU CITE A POSITION, COPY ITS "cite" FIELD VERBATIM. It already contains side, average entry, whether it was เดี่ยว / ซอย / ถัวห่าง, the P&L with its sign, and how it ended. Do not rebuild that string from the other fields and do not re-word it: on the first live run doing so produced three wrong labels in one report — a 79pt scaled entry called "ถัวห่าง", a +19.85$ winner written as "-19.85$ ชนะ", and orders counted as positions. Only "ถัวห่าง" positions are the bad habit; "ซอย" is the intended split and must never be described as ถัว.
+An exit reading "โดน SL" is a real stop-out — a loss. "ปิดที่ BE/trail" is the OPPOSITE: the stop had already been moved to entry or beyond, so it fired at breakeven or in profit. NEVER describe a BE/trail exit as getting stopped out or as risk that materialised (on 2026-08-21 a +0.40$ trailed exit was written up as "โดน SL" and became the centrepiece of a risk story). exits.sl / exits.be / exits.tp carry the counts.
 
-summary.adherence pre-splits followed / diverged / advised_no_trade / no_read with net USD for each — quote it rather than counting. "advised_no_trade" means the co-pilot said stand aside and the trade was taken anyway. NEVER call these "สวนคำแนะนำ" — สวน is reserved for the "diverged" bucket, i.e. the co-pilot called a direction and the trader took the other one. Word it as "โคไพลอตบอกไม่เทรด แต่เข้าเอง N จังหวะ". If diverged is 0, say plainly that there were no directional calls to follow or fight today. That is NOT the same as trading against a directional call, and if those trades made money say so plainly — the co-pilot being too cautious is a finding about the CO-PILOT, not a discipline failure by the trader.
+summary.adherence pre-splits followed / diverged / advised_no_trade / no_read with net USD for each — quote it rather than counting. "advised_no_trade" means the co-pilot said stand aside and the trade was taken anyway. Only ENTRY reads are advice: reads taken while a position was already open (adherence.manage_reads_excluded) are live-order coaching and are excluded from every bucket, exactly as the accuracy block excludes them — the two can no longer disagree. Advice also EXPIRES: a position whose nearest entry read was more than adherence.max_read_age_min minutes old is scored "no_read" (adherence.stale_read counts them). NEVER describe a no_read position as following or fighting the co-pilot — there was no live read to act on, and it is not evidence about whose read is better. If followed + diverged is 0, say in one line that the co-pilot made no directional entry call the trader could act on today, and do not draw a "ตามหรืออ่านเอง" verdict from a day with no calls in it. NEVER call these "สวนคำแนะนำ" — สวน is reserved for the "diverged" bucket, i.e. the co-pilot called a direction and the trader took the other one. Word it as "โคไพลอตบอกไม่เทรด แต่เข้าเอง N จังหวะ". That is NOT the same as trading against a directional call, and if those trades made money say so plainly — the co-pilot being too cautious is a finding about the CO-PILOT, not a discipline failure by the trader.
 
 CRITICAL: the trader ALSO opens trades independently of the co-pilot's suggestions. Evaluate EVERY trade on its own merit. For each, note whether it MATCHED, DIVERGED FROM, or had NO co-pilot read at that time — and grade divergent trades fairly (an independent call can be right or wrong; say which).
 
 Grade on:
 1. The decisive positions — do NOT walk through every position. Find the two or three that actually moved the day's P&L (largest winners and losers, and any position whose loss exceeded several winners combined) and say WHY each went the way it did: with/against the captured bias, SL/TP placement, entry quality, and what MFE/MAE say about the management (profit left on the table, heat taken, how close to the stop). Name each one inline with side, avg entry and P&L. A position that neither made nor lost meaningful money does not deserve a sentence.
-2. Discipline scorecard — was an SL always set? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
+2. Discipline scorecard — was an SL always set, and HOW BIG was it? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
+   SL coverage only says a stop EXISTED. "summary.risk" says what it was worth: risk.worst is the position that put the most on the line (risk_usd, risk_pct of risk.equity_ref_usd, and the pl_usd it earned for carrying that), and risk.heavy lists every position that risked 10%+ of the account. QUOTE risk.worst in dollars AND percent whenever risk_pct >= 10, in the same sentence as what it made — "เสี่ยง X$ (Y% ของพอร์ต) เพื่อกำไร Z$" is the whole point. HARD RULE: if risk.worst.risk_pct >= 20 the grade cannot be above C, however complete SL coverage was; if >= 50 it cannot be above D. A day that made money on 60%-of-account risk is a day that got away with it, and the report must say so in those words rather than praising the P&L. risk.unbounded_positions counts positions with no stop at all — those are worse than any number here. If risk.basis is "sl_at_close" the stop may already have been trailed, so the figure is a FLOOR on the risk carried: say "อย่างน้อย" when quoting it.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
 4. Co-pilot accuracy (INDEPENDENT of trades) — you also receive "copilot_accuracy": how each of today's co-pilot READS actually played out on the ATR ladder, whether or not the trader acted on it. Use it to grade the co-pilot ITSELF: hit_rate (of decided reads), how many STALLED (นิ่ง = read a move that never came) vs went AGAINST, what day_type the day turned out to be (BALANCE/NORMAL/TREND/OUTSIZED), and the directional lean (was the co-pilot too bull/bear vs what price did). Call out the pattern honestly, e.g. "co-pilot อ่าน buy 4/5 แต่วันทรงตัว → เอียง bull เกินไป โซนไม่วิ่ง" or "โซน sell ยืน 3/3 แม่น". This is observational — describe the tendency, don't overclaim from one day.
-4a. Data health — "data_health" says whether today's numbers rest on complete data: atr_source (indicator vs computed), days_missing_atr, and a warn line. If warn is non-null or atr_source.computed outnumbers indicator, open the co-pilot section with ONE short Thai line saying the data is incomplete and the day-type/ATR numbers should not be trusted today (e.g. "⚠️ วันนี้ยังไม่มี ATR จริงจาก indicator — ตัวเลข day type ยังเชื่อไม่ได้"). Do not elaborate; one line, then continue.
+4a. Data health — ONLY "data_health.today" describes today: it counts the ATR source behind today's own reads. If today.atr_from_indicator is FALSE, open the co-pilot section with ONE short Thai line saying today's day-type/ATR numbers are not trustworthy (e.g. "⚠️ วันนี้ยังไม่มี ATR จริงจาก indicator — ตัวเลข day type ยังเชื่อไม่ได้"), then continue — one line, no elaboration. If it is TRUE, say NOTHING about ATR data quality at all. The top-level warn / days_missing_atr / atr_source fields count days across the whole evaluation WINDOW, i.e. earlier days, and must never be reported as a problem with today: on 2026-08-21 every read was graded on the real indicator ATR and the report still opened by warning the trader off its own day-type.
 
 4b. Plan replay — "copilot_accuracy.plan" grades what each read actually ADVISED: a pending order at the zone edge with SL and TP1 (entry = price reached the zone, then TP1 vs SL, first touch wins). This is the honest score for a "wait" read; the older verdict field is only a directional lean and is NOT the plan's result. Report it as plain counts in one or two lines (e.g. "แผนที่ราคามาถึงโซน 3 ไม้ · ถึง TP1 ก่อน 2 · โดน SL ก่อน 1 · ไม่ได้เข้า 4"). NO_FILL means price never came to the level — that is neither a win nor a loss, say so plainly. TP1 is scored as a FULL exit here (the "ปิด 50%" in a read is advice, not the measuring rule). For any WIN, "beyond_tp1_pts" is how far price kept running past TP1 before coming back to the entry price, and returned_to_entry false means it never came back that day — report it in one plain line when it is large (e.g. "ชนะ 2 ไม้ แต่ราคาไปต่ออีก ~530pt หลัง TP1 ทั้งคู่ ไม่ย้อนกลับมาที่ entry เลย") because it is the signal that targets are set too close. Do NOT call it a rule or an edge; it is a description of what happened. If plan.decided is 0, write one line: "ยังไม่มีแผนไหนที่ราคามาถึงโซนแล้วจบผล" and move on.
 
@@ -111,6 +113,7 @@ const REPORT_OUTPUT = `ตอบเป็นภาษาไทย อ่าน�
 ⚡️ <2-3 บรรทัด: วันนี้ "อะไร" ตัดสินผล ไม่ใช่เล่าว่าเทรดอะไรบ้าง — จังหวะไหนทำเงิน/เสียเงินจริง (เรียกชื่อไม้เต็มๆ ในบรรทัด เช่น "buy 4495.33 ถัวห่าง 501pt -83.25$" ห้ามอ้างเป็นเลขลำดับ), ถ้าไม่มีจังหวะแย่ 1-2 อันนั้นวันนี้จะเป็นยังไง>
 
 🎯 วินัย: <เกรด A-F> — <SL ครบกี่/กี่ไม้>
+เสี่ยงหนักสุด: <cite ของ risk.worst> เสี่ยง <risk_usd>$ (<risk_pct>% ของพอร์ต) เพื่อ <pl_usd>$   ← ตัดบรรทัดนี้ทิ้งได้เฉพาะตอน risk_pct < 10
 ถัวห่าง >500pt: <กี่จังหวะ> <รวม$> · ที่เหลือ: <กี่จังหวะ> <รวม$>
 <1 บรรทัด: นิสัยถัวห่างวันนี้ได้หรือเสีย บอกเป็นเงิน ไม่ต้องสั่งสอนซ้ำ>
 
@@ -132,6 +135,37 @@ const REPORT_OUTPUT = `ตอบเป็นภาษาไทย อ่าน�
 <ข้อ 2: อีกข้อ (ถ้ามีของจริง — ถ้าไม่มีอย่ายัด)>
 <เชื่อโคไพลอตแค่ไหนจากวันนี้>`;
 
+// ── deal → order ─────────────────────────────────────────────────────────────
+// MT5 books one mt5_trades row per CLOSING DEAL, so a position closed in parts
+// arrives as SEVERAL rows sharing one position_id. Counting those rows as orders
+// inflates the day (22 "ไม้" for 21 real orders on 2026-08-21) and — worse — made
+// groupPositions read a partial close as a scaled entry: "buy 4567.62 ซอย 2 ไม้
+// ห่าง 0pt" was one 0.05 lot buy closed 0.03 + 0.02. A 0pt spread is the tell.
+// Merge the deals back into the order they came from: volume and money add up,
+// the exit is volume-weighted, the order lives until its LAST deal closes, and
+// SL/TP come from that last deal. Context columns come from the earliest deal
+// (later ones carry null *_open context), with any leftover nulls filled in from
+// the rest. A position whose earlier parts closed on a previous day keeps only
+// today's deals here — that is the report's day window, not a merge artifact.
+function mergeDeals(trades) {
+  const byPos = new Map();
+  for (const t of trades) {
+    const k = String(t.position_id);
+    const prev = byPos.get(k);
+    if (!prev) { byPos.set(k, { ...t }); continue; }
+    const vPrev = num(prev.volume) || 0, vNew = num(t.volume) || 0, vTot = vPrev + vNew;
+    for (const f of ['profit', 'swap', 'commission']) prev[f] = (num(prev[f]) || 0) + (num(t[f]) || 0);
+    if (vTot) prev.close_price = round(((num(prev.close_price) || 0) * vPrev + (num(t.close_price) || 0) * vNew) / vTot, 2);
+    prev.volume = round(vTot, 2);
+    if (new Date(t.close_time) > new Date(prev.close_time)) {
+      prev.close_time = t.close_time; prev.sl = t.sl; prev.tp = t.tp;
+    }
+    if (new Date(t.open_time) < new Date(prev.open_time)) prev.open_time = t.open_time;
+    for (const [f, v] of Object.entries(t)) if (prev[f] == null && v != null) prev[f] = v;
+  }
+  return [...byPos.values()];
+}
+
 // Merge a closed trade (mt5_trades) with its OPEN/CLOSE study events by ticket.
 function buildTrade(t, evByTicket) {
   const evs = evByTicket.get(String(t.position_id)) || {};
@@ -139,7 +173,17 @@ function buildTrade(t, evByTicket) {
   const pl = (num(t.profit) || 0) + (num(t.swap) || 0) + (num(t.commission) || 0);
   // how the trade ended — the key learning signal for "SL or TP?"
   const reason = close ? close.reason : null;
-  const outcome = reason === 'sl' ? 'SL_hit'
+  // A stop sitting at or beyond entry is PROTECTION, not risk: when it fires the
+  // trade ended at breakeven or better. Calling that "โดน SL" is how the report
+  // for 2026-08-21 built a whole risk narrative on ticket 7292554177 — sell 4599,
+  // stop trailed to 4598.92, closed +0.40$. Split it out so a real stop-out and a
+  // trailed exit can never read the same.
+  const slPx = num(t.sl) || null;
+  const entryPx = num(t.open_price);
+  const stopProtected = reason === 'sl' && slPx != null && entryPx
+    ? (t.type === 'buy' ? slPx >= entryPx : slPx <= entryPx)
+    : false;
+  const outcome = reason === 'sl' ? (stopProtected ? 'SL_be' : 'SL_hit')
                 : reason === 'tp' ? 'TP_hit'
                 : reason === 'stopout' ? 'stopout'
                 : reason ? ('manual_' + reason)              // desktop/mobile/web = hand-closed
@@ -152,12 +196,16 @@ function buildTrade(t, evByTicket) {
     entry: num(t.open_price), exit: num(t.close_price),
     sl: num(t.sl) || null, tp: num(t.tp) || null,
     pl_usd: round(pl, 2),
-    outcome,                                 // SL_hit / TP_hit / manual_* / stopout
+    outcome,                                 // SL_hit / SL_be / TP_hit / manual_* / stopout
     mfe_pts: close ? num(close.mfe_pts) : null,
     mae_pts: close ? num(close.mae_pts) : null,
     held_min: heldMin,
     close_reason: reason,
     had_sl_at_open: open ? (num(open.sl) > 0) : (num(t.sl) > 0),
+    // the stop as first placed — what the trade actually risked. mt5_trades.sl is
+    // the LAST known stop, so on a trailed trade it understates the heat carried.
+    sl_at_open: open ? (num(open.sl) || null) : null,
+    balance_after: num(t.balance_after) || null,
     entry_origin: open ? open.origin : null,
     add_kind: open ? open.kind : null,     // FIRST/ADD/HEDGE/MIXED — averaging signal
     ctx_at_trade: { bias_m15: t.bias_m15, bias_m5: t.bias_m5, ob_status: t.ob_status, session: t.mario_session, mario_decision: t.mario_decision },
@@ -182,6 +230,38 @@ function buildTrade(t, evByTicket) {
 const ADD_NEAR_PTS = 500;
 const PT = 0.01;
 
+// ── which reads count as advice ──────────────────────────────────────────────
+// A read taken while a position was already open is live-order COACHING: it
+// advises no entry, so it cannot be "followed" or "diverged from". The accuracy
+// block already excludes those (read_kind "manage"); the adherence split did not,
+// and on 2026-08-21 the day's ONLY directional call was a manage read — which the
+// report then used to score three trades as "ตาม co-pilot" while the accuracy
+// block, reading the same row, threw it away. Same rule in both places now
+// (mirrors _kp_eval.js: sig.meta.read_kind, falling back to positions.count).
+function isEntryRead(sg) {
+  const m = sg && sg.meta;
+  const kind = (m && m.read_kind) || ((m && m.positions && m.positions.count) ? 'manage' : 'entry');
+  return kind !== 'manage';
+}
+// ── what a position actually risked ──────────────────────────────────────────
+// "SL ครบ 22/22 ไม้" grades whether a stop EXISTS. It says nothing about how big
+// it is, and on 2026-08-21 that produced a discipline grade of B on a day whose
+// worst position would have given back 1,580$ — 62% of a 2,546$ account — to earn
+// 17.70$. Risk is arithmetic, so it is computed here: stop distance × lots × the
+// contract multiplier, per leg, summed over the position. Measured from the stop
+// as FIRST placed where the study log has it (sl_at_open), else the last known
+// stop — which, on a trade whose stop was trailed up, understates the real heat.
+const USD_PER_DOLLAR_PER_LOT = CFG.usdPerDollarPerLot || 100;
+function legRisk(l) {
+  const sl = l.sl_at_open || l.sl;
+  if (!sl || !l.entry || !l.lots) return null;      // no stop → risk is not bounded
+  return Math.abs(sl - l.entry) * l.lots * USD_PER_DOLLAR_PER_LOT;
+}
+
+// …and advice expires. Beyond this the nearest read is not what the trader acted
+// on, it is just the last row in the table before his trade.
+const READ_MAX_AGE_MIN = CFG.reportMaxReadAgeMin || 90;
+
 function groupPositions(rows, signals) {
   const sorted = rows.slice().sort((a, b) => new Date(a.open_time) - new Date(b.open_time));
   const groups = [];
@@ -203,26 +283,31 @@ function groupPositions(rows, signals) {
       run = (run * runLots + l.entry * (l.lots || 0)) / (runLots + (l.lots || 0));
       runLots += l.lots || 0;
     }
-    const exits = { sl: 0, tp: 0, manual: 0 };
+    const exits = { sl: 0, be: 0, tp: 0, manual: 0 };
     for (const l of g.legs) {
       if (l.outcome === 'SL_hit') exits.sl++;
+      else if (l.outcome === 'SL_be') exits.be++;      // stop fired at/above entry
       else if (l.outcome === 'TP_hit') exits.tp++;
       else exits.manual++;
     }
-    // nearest co-pilot read BEFORE the position opened → followed / diverged
+    // nearest co-pilot ENTRY read BEFORE the position opened → followed / diverged
     const openMs = new Date(g.legs[0].open_time).getTime();
     let read = null;
     for (const sg of signals) {
+      if (!isEntryRead(sg)) continue;
       const t = new Date(sg.ts).getTime();
       if (t <= openMs && (!read || t > new Date(read.ts).getTime())) read = sg;
     }
+    const readAgeMin = read ? Math.round((openMs - new Date(read.ts).getTime()) / 60000) : null;
+    const readStale = read ? readAgeMin > READ_MAX_AGE_MIN : false;
     // "No trade" is the co-pilot's most common call, and folding it into
     // "diverged" would conflate two different things: taking the opposite
     // direction to a directional call, versus trading at all when the co-pilot
     // said to stand aside. They carry different lessons, so they stay separate.
     const call = read ? String(read.bias_call || '').toLowerCase() : null;
     const isDir = call === 'buy' || call === 'sell';
-    const alignment = !read ? 'no_read'
+    // a stale read is not advice the trader could have acted on → no_read
+    const alignment = (!read || readStale) ? 'no_read'
                     : !isDir ? 'advised_no_trade'
                     : call === g.side ? 'followed' : 'diverged';
     // Ready-to-quote citation. The model gets every field it would need to build
@@ -234,8 +319,12 @@ function groupPositions(rows, signals) {
                  : (spread <= ADD_NEAR_PTS ? `ซอย ${g.legs.length} ไม้ ห่าง ${spread}pt`
                                            : `ถัวห่าง ${spread}pt`);
     const plUsd = round(g.legs.reduce((n, l) => n + l.pl_usd, 0), 2);
-    const endTh = exits.sl ? (exits.sl === g.legs.length ? 'โดน SL' : `โดน SL ${exits.sl}/${g.legs.length} ไม้`)
-                : exits.tp ? 'ได้ TP' : 'ปิดมือ';
+    const n = g.legs.length;
+    const endParts = [];
+    if (exits.sl) endParts.push(exits.sl === n ? 'โดน SL' : `โดน SL ${exits.sl}/${n} ไม้`);
+    if (exits.be) endParts.push(exits.be === n ? 'ปิดที่ BE/trail' : `ปิดที่ BE/trail ${exits.be}/${n} ไม้`);
+    if (exits.tp) endParts.push(exits.tp === n ? 'ได้ TP' : `ได้ TP ${exits.tp}/${n} ไม้`);
+    const endTh = endParts.length ? endParts.join(' · ') : 'ปิดมือ';
     const cite = `${g.side} ${round(avgEntry, 2)} ${kindTh} ${plUsd >= 0 ? '+' : ''}${plUsd}$ · ${endTh}`;
 
     return {
@@ -247,13 +336,17 @@ function groupPositions(rows, signals) {
       adverse_adds: adverse,
       pl_usd: round(g.legs.reduce((n, l) => n + l.pl_usd, 0), 2),
       exits,
+      risk_usd: g.legs.some(l => legRisk(l) == null) ? null
+              : round(g.legs.reduce((sum, l) => sum + legRisk(l), 0), 2),
+      risk_basis: g.legs.every(l => l.sl_at_open) ? 'sl_at_open'
+                : g.legs.some(l => l.sl_at_open) ? 'mixed' : 'sl_at_close',
       had_sl_at_open: g.legs.every(l => l.had_sl_at_open),
       mfe_pts: Math.max(...g.legs.map(l => l.mfe_pts || 0)) || null,
       mae_pts: Math.max(...g.legs.map(l => l.mae_pts || 0)) || null,
       open: g.legs[0].open_time, close: g.last_close,
       held_min: Math.round((new Date(g.last_close) - new Date(g.legs[0].open_time)) / 60000),
       ctx: g.legs[0].ctx_at_trade,
-      copilot: read ? { call, headline: read.headline, min_before: Math.round((openMs - new Date(read.ts).getTime()) / 60000) } : null,
+      copilot: read ? { call, headline: read.headline, min_before: readAgeMin, stale: readStale } : null,
       alignment,
     };
   });
@@ -288,7 +381,7 @@ async function runReport(db, opts = {}) {
 
   const [trRes, evRes, sigRes, outRes] = await Promise.all([
     db.from('mt5_trades')
-      .select('position_id, type, volume, open_time, close_time, open_price, close_price, sl, tp, profit, swap, commission, bias_m15, bias_m5, ob_status, mario_session, mario_decision')
+      .select('position_id, type, volume, open_time, close_time, open_price, close_price, sl, tp, profit, swap, commission, balance_after, bias_m15, bias_m5, ob_status, mario_session, mario_decision')
       .eq('account_login', account).gte('close_time', sinceIso)
       .order('close_time', { ascending: true }).limit(CFG.reportMaxTrades),
     db.from('trade_events')
@@ -298,10 +391,10 @@ async function runReport(db, opts = {}) {
       // overflows — never the recent events. Reversed to chronological below.
       .in('event', ['OPEN', 'MODIFY', 'CLOSE']).order('created_at', { ascending: false }).limit(2000),
     db.from('kp_signals')
-      .select('ts, trigger_type, headline, bias_call, price, message')
+      .select('ts, trigger_type, headline, bias_call, price, message, meta')   // meta.read_kind → isEntryRead
       .gte('ts', sinceIso).order('ts', { ascending: true }).limit(60),
     db.from('kp_read_outcomes')
-      .select('signal_id, read_ts, call, verdict, day_type, direction_actual, fav_atr, adv_atr, zone_behavior, behavior_note, meta')
+      .select('signal_id, read_ts, call, verdict, day_type, direction_actual, fav_atr, adv_atr, zone_behavior, behavior_note, atr_source, meta')
       .gte('read_ts', sinceIso).order('read_ts', { ascending: true }).limit(60),
   ]);
   if (trRes.error) return { ok: false, error: 'mt5_trades read: ' + trRes.error.message };
@@ -330,7 +423,9 @@ async function runReport(db, opts = {}) {
     return { ok: true, posted: tg.ok, reason: 'no_trades_manual' };
   }
 
-  const rows = trades.map(t => buildTrade(t, evByTicket));
+  // deals → orders first: several rows can share one position_id (partial close)
+  const orders = mergeDeals(trades);
+  const rows = orders.map(t => buildTrade(t, evByTicket));
   let net = 0, wins = 0, losses = 0, grossWin = 0, grossLoss = 0;
   for (const r of rows) {
     net += r.pl_usd;
@@ -346,8 +441,17 @@ async function runReport(db, opts = {}) {
   const sum = (a) => round(a.reduce((n, p) => n + p.pl_usd, 0), 2);
   const posWins = positions.filter(p => p.pl_usd >= 0).length;
 
+  // Account size for the risk block: the balance the day actually ended on.
+  // trades come back close_time-ascending, so the last non-null wins.
+  let equityRef = null;
+  for (const t of trades) if (num(t.balance_after)) equityRef = num(t.balance_after);
+  const pctOf = (usd) => (equityRef && usd != null) ? round((usd / equityRef) * 100, 1) : null;
+  for (const p of positions) p.risk_pct = pctOf(p.risk_usd);
+  const byRisk = positions.filter(p => p.risk_usd != null).sort((a, b) => b.risk_usd - a.risk_usd);
+
   const summary = {
     orders: rows.length,
+    deals: trades.length,          // > orders when a position was closed in parts
     positions: positions.length,
     net_usd: round(net, 2), wins, losses, winrate_pct: winrate,
     position_wins: posWins, position_losses: positions.length - posWins,
@@ -375,6 +479,24 @@ async function runReport(db, opts = {}) {
       worst_averaged_usd: avgPos.length ? Math.min(...avgPos.map(p => p.pl_usd)) : null,
       scaled_positions: positions.filter(p => p.kind === 'scaled').length,
     },
+    // What the day RISKED, not what it made. A stop that exists but is sized at a
+    // fifth of the account is not discipline, and the SL-coverage line cannot see
+    // that. worst = the position that had the most on the line, with what it earned
+    // for carrying it — the two numbers belong in one sentence.
+    risk: {
+      equity_ref_usd: equityRef,
+      usd_per_dollar_per_lot: USD_PER_DOLLAR_PER_LOT,
+      worst: byRisk.length ? {
+        cite: byRisk[0].cite, risk_usd: byRisk[0].risk_usd,
+        risk_pct: byRisk[0].risk_pct, pl_usd: byRisk[0].pl_usd,
+        lots: byRisk[0].lots, basis: byRisk[0].risk_basis,
+      } : null,
+      // every position that put 10%+ of the account on the line, biggest first
+      heavy: byRisk.filter(p => p.risk_pct != null && p.risk_pct >= 10)
+        .map(p => ({ cite: p.cite, risk_usd: p.risk_usd, risk_pct: p.risk_pct, pl_usd: p.pl_usd })),
+      unbounded_positions: positions.filter(p => p.risk_usd == null).length,
+      total_risk_usd: round(byRisk.reduce((n, p) => n + p.risk_usd, 0), 2),
+    },
     adherence: {
       followed: positions.filter(p => p.alignment === 'followed').length,
       followed_net_usd: sum(positions.filter(p => p.alignment === 'followed')),
@@ -385,8 +507,30 @@ async function runReport(db, opts = {}) {
       advised_no_trade_net_usd: sum(positions.filter(p => p.alignment === 'advised_no_trade')),
       no_read: positions.filter(p => p.alignment === 'no_read').length,
       no_read_net_usd: sum(positions.filter(p => p.alignment === 'no_read')),
+      // why a position can land in no_read even though reads exist
+      max_read_age_min: READ_MAX_AGE_MIN,
+      stale_read: positions.filter(p => p.copilot && p.copilot.stale).length,
+      manage_reads_excluded: signals.filter(s => !isEntryRead(s)).length,
     },
   };
+
+  // evalHealth.warn counts days across the whole evaluation window, so on 2026-08-21
+  // it said "1/3 days have no ATR row" and the report opened the co-pilot section by
+  // telling the trader today's day-type could not be trusted — while every one of
+  // that day's reads had been graded on the real indicator ATR. The missing day was
+  // an EARLIER one. So the report gets a block that only describes TODAY, built from
+  // the ATR source recorded on today's own reads.
+  const todaySrc = {};
+  for (const o of outcomes) todaySrc[o.atr_source || 'none'] = (todaySrc[o.atr_source || 'none'] || 0) + 1;
+  const dataHealth = (evalHealth || outcomes.length) ? {
+    ...(evalHealth || {}),
+    today: {
+      reads: outcomes.length,
+      atr_source: todaySrc,
+      // true = every read today was graded on the indicator's real ATR
+      atr_from_indicator: outcomes.length > 0 && (todaySrc.indicator || 0) === outcomes.length,
+    },
+  } : null;
 
   const payload = {
     date: bkkDateLabel(CFG.reportTzOffsetHours), account, symbol: 'XAUUSD',
@@ -398,7 +542,7 @@ async function runReport(db, opts = {}) {
     positions,
     copilot_reads: signals.map(s => ({ time: s.ts, trigger: s.trigger_type, call: s.bias_call, headline: s.headline })),
     copilot_accuracy: outcomes.length ? copilotAccuracy(outcomes) : null,
-    data_health: evalHealth,
+    data_health: dataHealth,
     factor_attribution: attribution,   // rolling multi-day: which ingredients drove wins
     note: 'trader also trades independently of the co-pilot — grade every trade on merit, mark matched/diverged/no-read. copilot_accuracy grades the READS themselves on the ATR ladder, independent of whether the trader acted.',
   };
@@ -434,7 +578,8 @@ async function runReport(db, opts = {}) {
     });
     const nt = summary.netting;
     body = `สรุปอัตโนมัติ (โมเดลไม่ส่งข้อความ)\n\n🔍 รายโพซิชัน (${rows.length} ไม้ = ${positions.length} จังหวะ)\n${lines.join('\n')}\n\n` +
-           `🎯 SL ครบ ${rows.length - summary.no_sl_count}/${rows.length}\n` +
+           `🎯 SL ครบ ${rows.length - summary.no_sl_count}/${rows.length}` +
+           (summary.risk.worst ? ` · เสี่ยงหนักสุด ${summary.risk.worst.risk_usd}$ (${summary.risk.worst.risk_pct}%) เพื่อ ${summary.risk.worst.pl_usd}$` : '') + `\n` +
            `ถัวห่าง >${nt.threshold_pts}pt: ${nt.averaged_positions} จังหวะ ${nt.averaged_net_usd}$ · ที่เหลือ ${nt.other_positions} จังหวะ ${nt.other_net_usd}$`;
   }
 

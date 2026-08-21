@@ -80,6 +80,12 @@ module.exports = {
   // 'low' = minimal thinking so max_tokens goes to the visible text (medium/high
   // thinking can eat the whole budget → empty body). Match the intraday reads.
   reportEffort: process.env.COPILOT_REPORT_EFFORT || 'low',
+  // How long a co-pilot read stays actionable for the adherence check. A trade
+  // opened later than this is scored "no_read" — the read was not live advice any
+  // more. Without a cap the report credited a 06:02 read for trades opened 7.5 and
+  // 7.9 HOURS later (2026-08-21) and then concluded from them that the trader
+  // reads better than the co-pilot. 90min ~ the horizon of an M5/M15 zone read.
+  reportMaxReadAgeMin: 90,
 
   // ── read evaluator (Phase 9 feedback loop) ───────────────────────────────────
   // api/kp-eval.js replays each co-pilot read (kp_signals) against the intraday
