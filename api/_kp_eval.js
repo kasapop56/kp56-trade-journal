@@ -428,8 +428,10 @@ function classify(sig, stateRow, atrRow, dayMap, daysArr) {
   // so its value is robust. The DAY is measured on OUR consistent window (the
   // Bangkok trading day, same cut as the report + Fibo) anchored to THAT window's
   // OWN open. So the ATR source broker's daily-bar cut time is irrelevant and can
-  // no longer skew day_type. The chart's day_open (GBE, from kp_atr) is kept only
-  // as the ladder-level reference (meta.ladder_open) so on-chart levels still match.
+  // no longer skew day_type. The chart's day_open (GBE via TradingView, from kp_atr)
+  // is kept only as the ladder-level reference (meta.ladder_open) so on-chart levels
+  // still match — it is NOT the anchor in 'session' mode, which is the point: the
+  // BAR feed replayed here is HFM (XAUUSDr), a different broker from the ATR source.
   let atr = num(atrRow?.atr), atrSource = atr != null ? 'indicator' : null;
   if (atr == null) { atr = computeAtr(daysArr, day, atrRow?.atr_len || 10); atrSource = atr != null ? 'computed' : 'none'; }
   const ladderOpen = num(atrRow?.day_open);

@@ -98,10 +98,26 @@ module.exports = {
     //               the chart you read are the same broker.
     //   'session' = Bangkok civil day (00:00 +07) → internally consistent with the
     //               report + Fibo cut; ATR used only as a magnitude. Broker-agnostic.
-    dayWindow: 'chart',
-    // For 'chart' mode: the UTC hour the broker's DAILY bar opens. GBE gold ≈ 04:00
-    // UTC (from the D-bar countdown). Change this per broker if you move the ATR
-    // source. Ignored in 'session' mode.
+    //
+    // THIS SETUP SPANS TWO BROKERS, so 'chart' mode's precondition does not hold:
+    //   · levels + ATR source = TradingView "GBEBROKERS:XAUUSD" (its daily bar opens
+    //     04:00 UTC = 11:00 Bangkok — measured from the alert's own timestamp)
+    //   · execution + the BAR feed the evaluator replays = MT5 HFM "XAUUSDr"
+    //     (daily bar opens 00:00 server, GMT+3/+2 with DST = 04:00/05:00 Bangkok)
+    // In 'chart' mode the anchor open came from GBE while every price compared
+    // against it came from HFM, and the 11:00–11:00 window disagreed with the
+    // report + Fibo (which cut at 00:00 Bangkok). 'session' anchors the day to the
+    // BAR feed's OWN first bar, so anchor and prices are both HFM and the whole
+    // system shares one cut. ATR stays the indicator's — daily volatility is
+    // ~broker-independent, and it is used only as a magnitude. kp_atr.day_open
+    // survives as meta.ladder_open so on-chart level references still match TV.
+    // Bonus: the ingest stamps atr_date as a Bangkok civil date, so only in
+    // 'session' mode does that string agree with the evaluator's day index at every
+    // hour of the clock (see the ATR-join note in _kp_eval.js).
+    dayWindow: 'session',
+    // For 'chart' mode ONLY: the UTC hour the ATR source broker's DAILY bar opens.
+    // 4 = GBE gold, verified 2026-08-21 (its once-a-day alert landed 04:00:01 UTC).
+    // Ignored in 'session' mode — kept so switching back is one word.
     dayCutUtcHour: 4,
 
     winAtr:      0.5,     // favorable move ≥ this × ATR (reached before adverse) = played out
