@@ -89,14 +89,14 @@ CRITICAL: the trader ALSO opens trades independently of the co-pilot's suggestio
 Grade on:
 1. The decisive positions — do NOT walk through every position. Find the two or three that actually moved the day's P&L (largest winners and losers, and any position whose loss exceeded several winners combined) and say WHY each went the way it did: with/against the captured bias, SL/TP placement, entry quality, and what MFE/MAE say about the management (profit left on the table, heat taken, how close to the stop). Name each one inline with side, avg entry and P&L. A position that neither made nor lost meaningful money does not deserve a sentence.
 2. Discipline scorecard — was an SL always set, and HOW BIG was it? hold time reasonable? any averaging-down or revenge (ADD/HEDGE against a loser)? Give a short daily grade A–F.
-   SL coverage only says a stop EXISTED. "summary.risk" says what it was worth: risk.worst is the position that put the most on the line (risk_usd, risk_pct of risk.equity_ref_usd, and the pl_usd it earned for carrying that), and risk.heavy lists every position that risked 10%+ of the account. QUOTE risk.worst in dollars AND percent whenever risk_pct >= 10, in the same sentence as what it made — "เสี่ยง X$ (Y% ของพอร์ต) เพื่อกำไร Z$" is the whole point. HARD RULE: if risk.worst.risk_pct >= 20 the grade cannot be above C, however complete SL coverage was; if >= 50 it cannot be above D. A day that made money on 60%-of-account risk is a day that got away with it, and the report must say so in those words rather than praising the P&L. risk.unbounded_positions counts positions with no stop at all — those are worse than any number here. If risk.basis is "sl_at_close" the stop may already have been trailed, so the figure is a FLOOR on the risk carried: say "อย่างน้อย" when quoting it.
+   SL coverage only says a stop EXISTED. "summary.risk" says what it was worth: risk.worst is the position that put the most on the line (risk_usd, risk_pct of risk.equity_ref_usd, and the pl_usd it earned for carrying that), and risk.heavy lists every position that risked 10%+ of the account. QUOTE risk.worst in dollars AND percent whenever risk_pct >= 10, in the same sentence as what it made — "เสี่ยง X$ (Y% ของพอร์ต) เพื่อกำไร Z$" is the whole point. HARD RULE: if risk.worst.risk_pct >= 20 the grade cannot be above C, however complete SL coverage was; if >= 50 it cannot be above D. A day that made money on 60%-of-account risk is a day that got away with it, and the report must say so in those words rather than praising the P&L. risk.unbounded_positions counts positions with no stop at all — those are worse than any number here. risk_usd is the WIDEST stop the position ever carried, which is not what it opened with: risk.worst.risk_at_open_usd is that, and risk.widened lists every position whose stop was pushed FURTHER from entry after the trade was on (from_usd → to_usd). When risk.widened is non-empty that is the single most damning fact of the day and it goes in the discipline block in one line — "เปิดด้วย SL X$ แล้วขยายเป็น Y$ (Z% ของพอร์ต)" — because moving a stop away is the ถัวห่าง habit in its purest form: the risk was never the one that was accepted at entry. Grade on the widened number, never on the opening one.
 3. Co-pilot loop check — split the day's trades into FOLLOWED vs DIVERGED (vs the nearest co-pilot read before the trade opened). For the DIVERGED trades, this is the key learning: report each one's OUTCOME field (SL_hit / TP_hit / manual exit) and P&L, then draw the honest conclusion — did ignoring the co-pilot lead to stops or targets today? Also flag any trade where the trader FOLLOWED the co-pilot but it still lost (the co-pilot was wrong). Over time this teaches what to follow and what to trust your own read on. Be concrete: "สวนคำแนะนำ 2 ไม้ → โดน SL ทั้งคู่ (−$X)" or "สวน 1 ไม้ แต่ได้ TP (+$Y) — จังหวะนี้อ่านเองแม่นกว่า".
 4. Co-pilot accuracy (INDEPENDENT of trades) — you also receive "copilot_accuracy": how each of today's co-pilot READS actually played out on the ATR ladder, whether or not the trader acted on it. Use it to grade the co-pilot ITSELF: hit_rate (of decided reads), how many STALLED (นิ่ง = read a move that never came) vs went AGAINST, what day_type the day turned out to be (BALANCE/NORMAL/TREND/OUTSIZED), and the directional lean (was the co-pilot too bull/bear vs what price did). Call out the pattern honestly, e.g. "co-pilot อ่าน buy 4/5 แต่วันทรงตัว → เอียง bull เกินไป โซนไม่วิ่ง" or "โซน sell ยืน 3/3 แม่น". This is observational — describe the tendency, don't overclaim from one day.
 4a. Data health — ONLY "data_health.today" describes today: it counts the ATR source behind today's own reads. If today.atr_from_indicator is FALSE, open the co-pilot section with ONE short Thai line saying today's day-type/ATR numbers are not trustworthy (e.g. "⚠️ วันนี้ยังไม่มี ATR จริงจาก indicator — ตัวเลข day type ยังเชื่อไม่ได้"), then continue — one line, no elaboration. If it is TRUE, say NOTHING about ATR data quality at all. The top-level warn / days_missing_atr / atr_source fields count days across the whole evaluation WINDOW, i.e. earlier days, and must never be reported as a problem with today: on 2026-08-21 every read was graded on the real indicator ATR and the report still opened by warning the trader off its own day-type.
 
 4b. Plan replay — "copilot_accuracy.plan" grades what each read actually ADVISED: a pending order at the zone edge with SL and TP1 (entry = price reached the zone, then TP1 vs SL, first touch wins). This is the honest score for a "wait" read; the older verdict field is only a directional lean and is NOT the plan's result. Report it as plain counts in one or two lines (e.g. "แผนที่ราคามาถึงโซน 3 ไม้ · ถึง TP1 ก่อน 2 · โดน SL ก่อน 1 · ไม่ได้เข้า 4"). NO_FILL means price never came to the level — that is neither a win nor a loss, say so plainly. TP1 is scored as a FULL exit here (the "ปิด 50%" in a read is advice, not the measuring rule). For any WIN, "beyond_tp1_pts" is how far price kept running past TP1 before coming back to the entry price, and returned_to_entry false means it never came back that day — report it in one plain line when it is large (e.g. "ชนะ 2 ไม้ แต่ราคาไปต่ออีก ~530pt หลัง TP1 ทั้งคู่ ไม่ย้อนกลับมาที่ entry เลย") because it is the signal that targets are set too close. Do NOT call it a rule or an edge; it is a description of what happened. If plan.decided is 0, write one line: "ยังไม่มีแผนไหนที่ราคามาถึงโซนแล้วจบผล" and move on.
 
-5. Factor attribution (ROLLING, multi-day) — you also receive "factor_attribution": across the last ~30 days, verdict counts grouped by the INGREDIENTS present at each read — call_vs_m15 (with/against the M15 bias), call_vs_fibo_leg, mario_fibo_aligned, bias_conflict (M15 vs M5), vp_bucket, zone_source (MT5/Fibo), zone_score, zone_state (fresh vs retested), zone_tag (BOS/CHoCH), session. HARD RULE — the data is far too thin to name an edge, and a confident wrong lesson is worse than no lesson: report this block as COUNTS ONLY (e.g. "ตามทิศ M15: ชนะ 3 แพ้ 1 · สวน: ชนะ 0 แพ้ 2"), never as a percentage, and NEVER call anything an edge, a rule, a trap, or a pattern. Any bucket with small_sample=true is omitted entirely. If "decided" across all reads is under 20, write exactly one line — "ยังเก็บข้อมูลอยู่ ยังสรุปไม่ได้" — plus the raw counts, and nothing more. Never fabricate a number not in the data. Reads with read_kind "manage" are excluded upstream (they advised no entry, so they are neither hit nor miss); if manage_reads is non-zero, mention in one short line how many reads were position-coaching rather than entry calls.
+5. Factor attribution (ROLLING, multi-day) — you also receive "factor_attribution": across the last ~30 days, verdict counts grouped by the INGREDIENTS present at each read — call_vs_m15 (with/against the M15 bias), call_vs_fibo_leg, mario_fibo_aligned, bias_conflict (M15 vs M5), vp_bucket, zone_source (MT5/Fibo), zone_score, zone_state (fresh vs retested), zone_tag (BOS/CHoCH), session. HARD RULE — the data is far too thin to name an edge, and a confident wrong lesson is worse than no lesson: report this block as COUNTS ONLY (below 20 decided reads the hit-rate field is stripped from the data entirely and hit_rate_withheld says so — do NOT reconstruct the percentage yourself from win/loss, that is the same forbidden number by another route) (e.g. "ตามทิศ M15: ชนะ 3 แพ้ 1 · สวน: ชนะ 0 แพ้ 2"), never as a percentage, and NEVER call anything an edge, a rule, a trap, or a pattern. Any bucket with small_sample=true is omitted entirely. If "decided" across all reads is under 20, write exactly one line — "ยังเก็บข้อมูลอยู่ ยังสรุปไม่ได้" — plus the raw counts, and nothing more. Never fabricate a number not in the data. Reads with read_kind "manage" are excluded upstream (they advised no entry, so they are neither hit nor miss); if manage_reads is non-zero, mention in one short line how many reads were position-coaching rather than entry calls.
 6. Lessons — 1–2 concrete, specific things to do differently tomorrow, and 1 note on how much to trust the co-pilot given today's accuracy + the strongest proven factor edge.
 Be specific with numbers and levels. Thai output, mobile-readable, no filler.
 
@@ -113,7 +113,8 @@ const REPORT_OUTPUT = `ตอบเป็นภาษาไทย อ่าน�
 ⚡️ <2-3 บรรทัด: วันนี้ "อะไร" ตัดสินผล ไม่ใช่เล่าว่าเทรดอะไรบ้าง — จังหวะไหนทำเงิน/เสียเงินจริง (เรียกชื่อไม้เต็มๆ ในบรรทัด เช่น "buy 4495.33 ถัวห่าง 501pt -83.25$" ห้ามอ้างเป็นเลขลำดับ), ถ้าไม่มีจังหวะแย่ 1-2 อันนั้นวันนี้จะเป็นยังไง>
 
 🎯 วินัย: <เกรด A-F> — <SL ครบกี่/กี่ไม้>
-เสี่ยงหนักสุด: <cite ของ risk.worst> เสี่ยง <risk_usd>$ (<risk_pct>% ของพอร์ต) เพื่อ <pl_usd>$   ← ตัดบรรทัดนี้ทิ้งได้เฉพาะตอน risk_pct < 10
+เสี่ยงหนักสุด: <cite ของ risk.worst> เสี่ยง <risk_usd>$ (<risk_pct>% ของพอร์ต) เพื่อ <pl_usd>$   ← ตัดบรรทัดนี้ทิ้งได้เฉพาะตอน risk_pct < 10 และ risk.widened ว่าง
+<ถ้า risk.widened ไม่ว่าง: ขยาย SL: <cite> เปิด <from_usd>$ → <to_usd>$ (<to_pct>%)>
 ถัวห่าง >500pt: <กี่จังหวะ> <รวม$> · ที่เหลือ: <กี่จังหวะ> <รวม$>
 <1 บรรทัด: นิสัยถัวห่างวันนี้ได้หรือเสีย บอกเป็นเงิน ไม่ต้องสั่งสอนซ้ำ>
 
@@ -188,6 +189,23 @@ function buildTrade(t, evByTicket) {
                 : reason === 'stopout' ? 'stopout'
                 : reason ? ('manual_' + reason)              // desktop/mobile/web = hand-closed
                 : (pl >= 0 ? 'manual_win' : 'manual_loss');  // no close event logged → infer by P&L
+  // The stop that mattered is not the one it opened with. On 2026-08-21 the
+  // 8-leg ถัวห่าง basket opened every leg with a ~5.50$ stop (220$ across the
+  // basket, 8.6% of the account) and then pushed the stops OUT to 4620.37 as
+  // price went against it — 1,579.90$, 61.6%. Measuring at open reports the
+  // small number and hides the habit the risk block exists to expose, so take
+  // the stop that sat FURTHEST on the losing side across the trade's whole life:
+  // the opening stop, every MODIFY, and the stop it finally closed with.
+  // Distance is signed by side, so a stop parked in profit counts as no risk
+  // rather than as risk equal to the locked-in gain.
+  const adverse = (sl) => (sl && entryPx) ? (t.type === 'buy' ? entryPx - sl : sl - entryPx) : null;
+  const stops = [];
+  if (open && num(open.sl)) stops.push({ sl: num(open.sl), src: 'open' });
+  for (const m of (evs.mods || [])) if (num(m.sl)) stops.push({ sl: num(m.sl), src: 'modify' });
+  if (num(t.sl)) stops.push({ sl: num(t.sl), src: 'close' });
+  let worst = null;
+  for (const c of stops) if (!worst || adverse(c.sl) > adverse(worst.sl)) worst = c;
+
   const heldMin = (t.open_time && t.close_time)
     ? Math.round((new Date(t.close_time) - new Date(t.open_time)) / 60000)
     : (close && close.held_sec != null ? Math.round(close.held_sec / 60) : null);
@@ -205,6 +223,8 @@ function buildTrade(t, evByTicket) {
     // the stop as first placed — what the trade actually risked. mt5_trades.sl is
     // the LAST known stop, so on a trailed trade it understates the heat carried.
     sl_at_open: open ? (num(open.sl) || null) : null,
+    sl_worst: worst ? worst.sl : null,        // furthest stop on the losing side
+    sl_worst_src: worst ? worst.src : null,   // open / modify / close
     balance_after: num(t.balance_after) || null,
     entry_origin: open ? open.origin : null,
     add_kind: open ? open.kind : null,     // FIRST/ADD/HEDGE/MIXED — averaging signal
@@ -252,11 +272,18 @@ function isEntryRead(sg) {
 // as FIRST placed where the study log has it (sl_at_open), else the last known
 // stop — which, on a trade whose stop was trailed up, understates the real heat.
 const USD_PER_DOLLAR_PER_LOT = CFG.usdPerDollarPerLot || 100;
-function legRisk(l) {
-  const sl = l.sl_at_open || l.sl;
+// Money at risk if THIS stop had been hit. Signed by side, floored at zero: a
+// stop sitting in profit is protection, not exposure.
+function riskAt(l, sl) {
   if (!sl || !l.entry || !l.lots) return null;      // no stop → risk is not bounded
-  return Math.abs(sl - l.entry) * l.lots * USD_PER_DOLLAR_PER_LOT;
+  const adverse = l.side === 'buy' ? (l.entry - sl) : (sl - l.entry);
+  return Math.max(0, adverse) * l.lots * USD_PER_DOLLAR_PER_LOT;
 }
+// What the leg actually carried (worst stop it ever had) vs what it was opened
+// with. The GAP between them is the finding: a stop moved away is the ถัวห่าง
+// habit made visible, and it is invisible in either number on its own.
+const legRisk     = (l) => riskAt(l, l.sl_worst || l.sl_at_open || l.sl);
+const legRiskOpen = (l) => riskAt(l, l.sl_at_open || l.sl_worst || l.sl);
 
 // …and advice expires. Beyond this the nearest read is not what the trader acted
 // on, it is just the last row in the table before his trade.
@@ -338,8 +365,10 @@ function groupPositions(rows, signals) {
       exits,
       risk_usd: g.legs.some(l => legRisk(l) == null) ? null
               : round(g.legs.reduce((sum, l) => sum + legRisk(l), 0), 2),
-      risk_basis: g.legs.every(l => l.sl_at_open) ? 'sl_at_open'
-                : g.legs.some(l => l.sl_at_open) ? 'mixed' : 'sl_at_close',
+      risk_at_open_usd: g.legs.some(l => legRiskOpen(l) == null) ? null
+              : round(g.legs.reduce((sum, l) => sum + legRiskOpen(l), 0), 2),
+      // where the worst stop came from: the entry, a later move, or the exit
+      risk_basis: [...new Set(g.legs.map(l => l.sl_worst_src).filter(Boolean))].join('+') || 'none',
       had_sl_at_open: g.legs.every(l => l.had_sl_at_open),
       mfe_pts: Math.max(...g.legs.map(l => l.mfe_pts || 0)) || null,
       mae_pts: Math.max(...g.legs.map(l => l.mae_pts || 0)) || null,
@@ -377,6 +406,17 @@ async function runReport(db, opts = {}) {
     // trader should be shown.
     const r = await runAttribution({ days: CFG.attributionLookbackDays || 30, basis: 'plan' });
     if (r.status === 200 && r.body.ok) attribution = r.body;
+    // The prompt bans percentages here in capitals ("COUNTS ONLY") because the
+    // sample is far too thin to carry one — and the report printed "hit 23% ·
+    // hit 25% · hit 14% · hit 33%" anyway, off n=6 and n=7. It was printing what
+    // it was handed. Below the reporting threshold the field simply does not
+    // travel: a number that must not be shown should not be in the payload.
+    if (attribution && (attribution.decided || 0) < 20) {
+      for (const buckets of Object.values(attribution.dims || {})) {
+        for (const b of buckets) delete b.hit_rate_pct;
+      }
+      attribution.hit_rate_withheld = 'sample below 20 decided reads';
+    }
   } catch (e) { console.warn('runAttribution (report) failed (non-fatal):', e.message); }
 
   const [trRes, evRes, sigRes, outRes] = await Promise.all([
@@ -411,6 +451,9 @@ async function runReport(db, opts = {}) {
     let rec = evByTicket.get(k);
     if (!rec) { rec = {}; evByTicket.set(k, rec); }
     if (ev.event === 'OPEN' && !rec.open) rec.open = ev.payload || {};
+    // MODIFY was fetched and thrown away. It carries every stop the trade ever
+    // had, which is the only way to see a stop being MOVED AWAY — see sl_worst.
+    if (ev.event === 'MODIFY') (rec.mods = rec.mods || []).push(ev.payload || {});
     if (ev.event === 'CLOSE') rec.close = ev.payload || {};
   }
 
@@ -446,7 +489,13 @@ async function runReport(db, opts = {}) {
   let equityRef = null;
   for (const t of trades) if (num(t.balance_after)) equityRef = num(t.balance_after);
   const pctOf = (usd) => (equityRef && usd != null) ? round((usd / equityRef) * 100, 1) : null;
-  for (const p of positions) p.risk_pct = pctOf(p.risk_usd);
+  for (const p of positions) {
+    p.risk_pct = pctOf(p.risk_usd);
+    p.risk_at_open_pct = pctOf(p.risk_at_open_usd);
+    // stop moved away from entry after the trade was on — the habit, in one flag
+    p.stop_widened_usd = (p.risk_usd != null && p.risk_at_open_usd != null)
+      ? round(p.risk_usd - p.risk_at_open_usd, 2) : null;
+  }
   const byRisk = positions.filter(p => p.risk_usd != null).sort((a, b) => b.risk_usd - a.risk_usd);
 
   const summary = {
@@ -490,10 +539,18 @@ async function runReport(db, opts = {}) {
         cite: byRisk[0].cite, risk_usd: byRisk[0].risk_usd,
         risk_pct: byRisk[0].risk_pct, pl_usd: byRisk[0].pl_usd,
         lots: byRisk[0].lots, basis: byRisk[0].risk_basis,
+        risk_at_open_usd: byRisk[0].risk_at_open_usd,
+        risk_at_open_pct: byRisk[0].risk_at_open_pct,
+        stop_widened_usd: byRisk[0].stop_widened_usd,
       } : null,
       // every position that put 10%+ of the account on the line, biggest first
       heavy: byRisk.filter(p => p.risk_pct != null && p.risk_pct >= 10)
         .map(p => ({ cite: p.cite, risk_usd: p.risk_usd, risk_pct: p.risk_pct, pl_usd: p.pl_usd })),
+      // positions whose stop was pushed further from entry after opening, worst first
+      widened: positions.filter(p => p.stop_widened_usd != null && p.stop_widened_usd > 0)
+        .sort((a, b) => b.stop_widened_usd - a.stop_widened_usd)
+        .map(p => ({ cite: p.cite, from_usd: p.risk_at_open_usd, to_usd: p.risk_usd,
+                     to_pct: p.risk_pct, pl_usd: p.pl_usd })),
       unbounded_positions: positions.filter(p => p.risk_usd == null).length,
       total_risk_usd: round(byRisk.reduce((n, p) => n + p.risk_usd, 0), 2),
     },
